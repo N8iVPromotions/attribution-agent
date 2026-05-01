@@ -1,0 +1,10 @@
+prefect>=2.14.0
+requests>=2.31.0
+hubspot-api-client>=8.1.0
+databricks-sql-connector>=3.0.0
+pandas>=2.0.0
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+tenacity>=8.2.0
+loguru>=0.7.0
+stripe>=7.0.0
