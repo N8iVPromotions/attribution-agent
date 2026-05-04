@@ -324,7 +324,7 @@ Ad Spend:       ${report.total_spend:,.0f}
 ROI:            {report.overall_roi:.1f}x
 
 ---
-Generated automatically by your Attribution Agent.
+Powered by N8iV Promotions.
     """.strip()
 
     html_content = _build_html(report, powerbi_url, agency_config)
