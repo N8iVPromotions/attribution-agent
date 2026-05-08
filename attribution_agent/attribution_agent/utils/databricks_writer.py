@@ -27,8 +27,13 @@ def _get_spark():
 
 def _get_connection():
     from databricks import sql
+    # DATABRICKS_HOST is auto-injected by Databricks Apps; strip the scheme if present
+    hostname = os.environ.get("DATABRICKS_SERVER_HOSTNAME") or \
+        os.environ.get("DATABRICKS_HOST", "").lstrip("https://").rstrip("/")
+    if not hostname:
+        raise EnvironmentError("DATABRICKS_SERVER_HOSTNAME (or DATABRICKS_HOST) is not set")
     return sql.connect(
-        server_hostname=os.environ["DATABRICKS_SERVER_HOSTNAME"],
+        server_hostname=hostname,
         http_path=os.environ["DATABRICKS_HTTP_PATH"],
         access_token=os.environ["DATABRICKS_TOKEN"],
     )
