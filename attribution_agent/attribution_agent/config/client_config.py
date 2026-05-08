@@ -85,6 +85,7 @@ CLIENT_REGISTRY: dict[str, ClientConfig] = {
         hubspot_pipeline_id="",
         databricks_schema="workspace.attribution_demo_client",
         lookback_days=30,
+        client_report_email="Zajen@n8ivpromotions.com",
     ),
     # "second_client": ClientConfig(...)
 }

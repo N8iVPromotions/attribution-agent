@@ -7,8 +7,8 @@
 --
 -- Usage (Python in agency_flow.py):
 --   union_clauses = "\nUNION ALL\n".join([
---       f"SELECT '{cid}' AS client_id, '{name}' AS client_name, * "
---       f"FROM workspace.attribution_{cid}.channel_performance"
+--       f"SELECT '{{cid}}' AS client_id, '{{name}}' AS client_name, * "
+--       f"FROM workspace.attribution_{{cid}}.channel_performance"
 --       for cid, name in client_pairs
 --   ])
 --   sql = open("transforms/agency_benchmark.sql").read()

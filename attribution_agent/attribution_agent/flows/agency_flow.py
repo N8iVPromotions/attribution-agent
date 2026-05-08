@@ -69,7 +69,7 @@ def run_agency_benchmark_sql(agency: AgencyConfig) -> None:
         union_all_clause = _build_union_all(agency)
         sql_dir = Path(__file__).parent.parent / "transforms"
 
-        for sql_file in ("agency_benchmark.sql", "agency_dashboard.sql"):
+        for sql_file in ("agency_dashboard.sql", "agency_benchmark.sql"):
             path = sql_dir / sql_file
             if not path.exists():
                 logger.warning(f"[Agency] SQL file not found: {sql_file}")
