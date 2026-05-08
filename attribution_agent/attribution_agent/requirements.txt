@@ -9,3 +9,4 @@ tenacity>=8.2.0
 loguru>=0.7.0
 stripe>=7.0.0
 streamlit>=1.35.0
+databricks-sdk>=0.28.0
