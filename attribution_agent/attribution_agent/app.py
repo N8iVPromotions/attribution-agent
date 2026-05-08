@@ -45,157 +45,63 @@ st.markdown("""
 [data-testid="stSidebar"],
 [data-testid="collapsedControl"] { display: none !important; }
 
-[data-testid="stAppViewContainer"] { background: #fafafa; }
-
 .main .block-container {
-    max-width: 660px;
-    padding: 4rem 2rem 6rem;
+    max-width: 680px;
+    padding: 3.5rem 2rem 5rem;
 }
 
-/* ── Typography ── */
+/* ── Headings — Instrument Serif ── */
 h1 {
     font-family: 'Instrument Serif', Georgia, serif !important;
-    font-size: 3rem !important;
+    font-size: 2.8rem !important;
     font-weight: 400 !important;
-    letter-spacing: -0.03em !important;
-    line-height: 1.05 !important;
-    color: #0d0d0d !important;
+    letter-spacing: -0.02em !important;
+    line-height: 1.1 !important;
+    color: #111 !important;
     margin-bottom: 0 !important;
 }
 h2 {
     font-family: 'Instrument Serif', Georgia, serif !important;
-    font-size: 1.3rem !important;
+    font-size: 1.35rem !important;
     font-weight: 400 !important;
-    color: #0d0d0d !important;
-    margin-bottom: 0.5rem !important;
+    color: #111 !important;
+    margin-bottom: 0.4rem !important;
 }
 h3 {
     font-family: 'Instrument Serif', Georgia, serif !important;
-    font-size: 1rem !important;
+    font-size: 1.1rem !important;
     font-weight: 400 !important;
-    color: #0d0d0d !important;
+    color: #111 !important;
 }
 
-/* ── Labels (uppercase small caps) ── */
-[data-testid="stSelectbox"]  > label > div,
-[data-testid="stMultiSelect"] > label > div,
-[data-testid="stCheckbox"]   > label > p {
-    font-size: 0.65rem !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.14em !important;
-    text-transform: uppercase !important;
-    color: #999 !important;
-}
+/* ── Divider ── */
+hr { border: none; border-top: 1px solid #e2e2e2; margin: 1.75rem 0; }
 
-/* ── Inputs ── */
-[data-testid="stSelectbox"] > div > div,
-[data-testid="stMultiSelect"] > div > div {
-    border-color: #e8e8e8 !important;
-    border-radius: 6px !important;
-    background: #fff !important;
-}
-
-/* ── Primary button ── */
-button[kind="primary"] {
-    background: #7a63ff !important;
-    color: #fff !important;
-    border: none !important;
-    border-radius: 6px !important;
-    font-size: 0.72rem !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.13em !important;
-    text-transform: uppercase !important;
-    padding: 0.65rem 1.5rem !important;
-    transition: opacity 0.15s ease !important;
-    box-shadow: 0 2px 12px rgba(122,99,255,0.25) !important;
-}
-button[kind="primary"]:hover { opacity: 0.82 !important; }
-button[kind="primary"]:active { opacity: 0.7 !important; }
-
-/* ── Secondary button ── */
-button[kind="secondary"] {
-    background: transparent !important;
-    color: #7a63ff !important;
-    border: 1px solid #d4ccff !important;
-    border-radius: 6px !important;
-    font-size: 0.68rem !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.1em !important;
-    text-transform: uppercase !important;
-}
-button[kind="secondary"]:hover {
-    background: #f3f0ff !important;
-    border-color: #7a63ff !important;
-}
-
-/* ── Metrics ── */
+/* ── Metric cards ── */
 [data-testid="metric-container"] {
     background: #fff !important;
-    border: 1px solid #efefef !important;
+    border: 1px solid #e8e8e8 !important;
     border-radius: 10px !important;
-    padding: 1.2rem 1rem !important;
+    padding: 1.1rem 1rem !important;
 }
 [data-testid="stMetricValue"] {
     font-family: 'Instrument Serif', serif !important;
-    font-size: 2rem !important;
+    font-size: 1.9rem !important;
     font-weight: 400 !important;
-    color: #0d0d0d !important;
+    color: #111 !important;
 }
 [data-testid="stMetricLabel"] {
-    font-size: 0.62rem !important;
+    font-size: 0.75rem !important;
     font-weight: 600 !important;
-    letter-spacing: 0.14em !important;
+    letter-spacing: 0.1em !important;
     text-transform: uppercase !important;
-    color: #bbb !important;
+    color: #555 !important;
 }
-
-/* ── Expanders ── */
-details[data-testid="stExpander"] {
-    background: #fff !important;
-    border: 1px solid #efefef !important;
-    border-radius: 10px !important;
-    padding: 0.25rem 0.5rem !important;
-}
-details[data-testid="stExpander"] summary {
-    font-size: 0.82rem !important;
-    color: #444 !important;
-}
-details[data-testid="stExpander"] summary:hover { color: #7a63ff !important; }
-
-/* ── Code / log block ── */
-[data-testid="stCode"] > div {
-    background: #0d0d0d !important;
-    border-radius: 8px !important;
-    font-size: 0.72rem !important;
-    line-height: 1.6 !important;
-}
-
-/* ── Alerts ── */
-[data-testid="stAlert"][data-baseweb="notification"] {
-    border-radius: 8px !important;
-    border: none !important;
-}
-div[data-testid="stSuccessMessage"] { background: #f0fdf4 !important; }
-div[data-testid="stErrorMessage"]   { background: #fef2f2 !important; }
-div[data-testid="stInfoMessage"]    { background: #f3f0ff !important; color: #5b44d4 !important; }
-
-/* ── Divider ── */
-hr { border: none; border-top: 1px solid #ebebeb; margin: 2rem 0; }
-
-/* ── Spinner ── */
-[data-testid="stSpinner"] > div { border-top-color: #7a63ff !important; }
 
 /* ── Caption ── */
 [data-testid="stCaptionContainer"] p {
-    color: #bbb !important;
-    font-size: 0.72rem !important;
-    letter-spacing: 0.06em !important;
-}
-
-/* ── Checkbox ── */
-[data-testid="stCheckbox"] input:checked + div {
-    background: #7a63ff !important;
-    border-color: #7a63ff !important;
+    color: #666 !important;
+    font-size: 0.82rem !important;
 }
 
 /* ── Scrollbar ── */
