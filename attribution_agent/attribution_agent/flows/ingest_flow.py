@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 try:
     _root = str(Path(__file__).parent.parent)
 except NameError:
-    _root = "/Workspace/Users/zajen@n8ivpromotions.com/attributionAgent/attribution_agent/attribution_agent"
+    import inspect as _inspect
+    _root = str(Path(_inspect.getfile(_inspect.currentframe())).parent.parent)
 sys.path.insert(0, _root)
 
 
