@@ -3,16 +3,17 @@ bundle:
 
 workspace:
   host: https://8259555645755006.6.gcp.databricks.com
-  root_path: /Workspace/Users/zajen@n8ivpromotions.com/attribution-agent/${bundle.target}
 
 targets:
   production:
     mode: production
     default: true
+    workspace:
+      root_path: /Workspace/Users/zajen@n8ivpromotions.com/.bundle/${bundle.name}/${bundle.target}
 
 resources:
 
-  # ── Scheduled Job ────────────────────────────────────────────────────────────
+  # ── Scheduled Job (serverless compute) ───────────────────────────────────────
   jobs:
     attribution_pipeline:
       name: "[Attribution] Monthly Pipeline"
@@ -30,37 +31,22 @@ resources:
           spark_python_task:
             python_file: attribution_agent/attribution_agent/flows/agency_flow.py
             # No --agency arg → runs all agencies via run_all_agencies()
-          job_cluster_key: pipeline_cluster
-          libraries:
-            - pypi: {package: "requests>=2.31.0"}
-            - pypi: {package: "hubspot-api-client>=8.1.0"}
-            - pypi: {package: "pandas>=2.0.0"}
-            - pypi: {package: "python-dotenv>=1.0.0"}
-            - pypi: {package: "tenacity>=8.2.0"}
-            - pypi: {package: "loguru>=0.7.0"}
-            - pypi: {package: "stripe>=7.0.0"}
-            - pypi: {package: "anthropic>=0.97.0"}
-            - pypi: {package: "databricks-sdk>=0.28.0"}
+          environment_key: default
 
-      job_clusters:
-        - job_cluster_key: pipeline_cluster
-          new_cluster:
-            spark_version: "15.4.x-scala2.12"
-            node_type_id: "n2-standard-4"
-            num_workers: 0
-            spark_conf:
-              spark.databricks.cluster.profile: singleNode
-              spark.master: "local[*]"
-            custom_tags:
-              ResourceClass: SingleNode
-            spark_env_vars:
-              # Secrets injected from the "attribution" secret scope
-              META_ACCESS_TOKEN:      "{{secrets/attribution/META_ACCESS_TOKEN}}"
-              HUBSPOT_ACCESS_TOKEN:   "{{secrets/attribution/HUBSPOT_ACCESS_TOKEN}}"
-              STRIPE_SECRET_KEY:      "{{secrets/attribution/STRIPE_SECRET_KEY}}"
-              ANTHROPIC_API_KEY:      "{{secrets/attribution/ANTHROPIC_API_KEY}}"
-              GMAIL_SENDER:           "{{secrets/attribution/GMAIL_SENDER}}"
-              GMAIL_APP_PASSWORD:     "{{secrets/attribution/GMAIL_APP_PASSWORD}}"
+      environments:
+        - environment_key: default
+          spec:
+            client: "1"
+            dependencies:
+              - "requests>=2.31.0"
+              - "hubspot-api-client>=8.1.0"
+              - "pandas>=2.0.0"
+              - "python-dotenv>=1.0.0"
+              - "tenacity>=8.2.0"
+              - "loguru>=0.7.0"
+              - "stripe>=7.0.0"
+              - "anthropic>=0.97.0"
+              - "databricks-sdk>=0.28.0"
 
       email_notifications:
         on_failure:
@@ -68,7 +54,6 @@ resources:
         on_success:
           - zajen@n8ivpromotions.com
 
-      max_retries: 1
       timeout_seconds: 3600
 
   # ── Streamlit App ────────────────────────────────────────────────────────────
