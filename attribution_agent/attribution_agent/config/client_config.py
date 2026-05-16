@@ -28,7 +28,7 @@ class ClientConfig:
     client_id: str                          # short slug, e.g. "acme_co"
     client_name: str                        # display name
     attribution_model: Literal[
-        "last_touch", "linear", "time_decay"
+        "last_touch", "first_touch", "linear", "time_decay", "u_shape", "w_shape"
     ] = "last_touch"
 
     # ── Meta ──────────────────────────────────────────────────────────────────
