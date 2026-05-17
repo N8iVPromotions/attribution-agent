@@ -35,15 +35,22 @@ python flows/agency_flow.py --agency demo_agency --dry-run   # skip email
 The pipeline runs as a Databricks Job and the UI is hosted as a Databricks App.
 Both are defined in `databricks.yml` (Databricks Asset Bundle).
 
+### Secrets — never paste tokens in chat or code
+All credentials live in `attribution_agent/attribution_agent/.env` (gitignored).
+Copy `.env.example` → `.env` and fill in real values before running anything locally.
+For CI / cloud sessions, export them as environment variables:
+```bash
+export DATABRICKS_HOST=https://8259555645755006.6.gcp.databricks.com
+export DATABRICKS_TOKEN=<from .env>
+```
+
 ### First-time secret setup (run once)
 ```bash
-# Install the Databricks CLI
-pip install databricks-cli
+# Install the Databricks CLI v2 (Asset Bundles)
+curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
 
-# Configure auth
-databricks configure --token
-# Host: https://8259555645755006.6.gcp.databricks.com
-# Token: <your DATABRICKS_TOKEN from .env>
+# Configure auth — reads DATABRICKS_HOST + DATABRICKS_TOKEN from env, or prompts interactively
+databricks auth login
 
 # Push all secrets into the "attribution" scope
 databricks secrets create-scope attribution
@@ -57,10 +64,7 @@ databricks secrets put --scope attribution --key STRIPE_SECRET_KEY
 
 ### Deploy (run after merging to main)
 ```bash
-# Install the Databricks CLI v2 (Asset Bundles)
-pip install databricks-cli
-
-# Deploy the Job + App to production
+# From repo root — credentials are picked up from env vars or ~/.databrickscfg
 databricks bundle deploy
 
 # Verify
