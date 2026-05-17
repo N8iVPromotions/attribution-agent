@@ -41,138 +41,345 @@ st.set_page_config(
 # ── Global styles ─────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@300;400;500;600&display=swap');
 
+/* ── Reset sidebar ── */
 [data-testid="stSidebar"],
 [data-testid="collapsedControl"] { display: none !important; }
 
-.main .block-container {
-    max-width: 1200px;
-    padding: 2.5rem 2.5rem 5rem;
+/* ── Root font ── */
+html, body, [class*="css"] {
+    font-family: 'Inter', system-ui, sans-serif !important;
 }
 
+/* ── Layout ── */
+.main .block-container {
+    max-width: 1240px;
+    padding: 0 2.5rem 6rem;
+}
+
+/* ── Headings ── */
 h1 {
     font-family: 'Instrument Serif', Georgia, serif !important;
-    font-size: 2.4rem !important;
+    font-size: 2.6rem !important;
     font-weight: 400 !important;
-    letter-spacing: -0.02em !important;
+    letter-spacing: -0.025em !important;
     line-height: 1.1 !important;
-    color: #111 !important;
+    color: #f0f0ff !important;
     margin-bottom: 0 !important;
 }
 h2 {
     font-family: 'Instrument Serif', Georgia, serif !important;
-    font-size: 1.2rem !important;
+    font-size: 1.15rem !important;
     font-weight: 400 !important;
-    color: #111 !important;
-    margin-bottom: 0.4rem !important;
+    color: #d0d0e8 !important;
+    margin-bottom: 0.3rem !important;
 }
 h3 {
     font-family: 'Instrument Serif', Georgia, serif !important;
     font-size: 1rem !important;
     font-weight: 400 !important;
-    color: #111 !important;
+    color: #c8c8e0 !important;
 }
 
-hr { border: none; border-top: 1px solid #e2e2e2; margin: 1.5rem 0; }
-
-[data-testid="metric-container"] {
-    background: #fff !important;
-    border: 1px solid #e8e8e8 !important;
-    border-radius: 10px !important;
-    padding: 1rem !important;
+/* ── Top nav bar ── */
+.top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.25rem 0 1rem;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    margin-bottom: 2rem;
 }
-[data-testid="stMetricValue"] {
-    font-family: 'Instrument Serif', serif !important;
-    font-size: 1.7rem !important;
-    font-weight: 400 !important;
-    color: #111 !important;
+.top-bar-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
 }
-[data-testid="stMetricLabel"] {
-    font-size: 0.72rem !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.1em !important;
-    text-transform: uppercase !important;
-    color: #555 !important;
+.top-bar-logo {
+    width: 28px; height: 28px;
+    background: linear-gradient(135deg, #7a63ff, #a78bfa);
+    border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.8rem; color: #fff; font-weight: 700;
+    box-shadow: 0 0 16px rgba(122,99,255,0.5);
 }
-
-[data-testid="stCaptionContainer"] p {
-    color: #666 !important;
-    font-size: 0.82rem !important;
-}
-
-/* Section cards */
-.cc-card {
-    background: #fafafa;
-    border: 1px solid #ebebeb;
-    border-radius: 12px;
-    padding: 1.4rem 1.5rem;
-    margin-bottom: 1rem;
-}
-.cc-label {
-    font-size: 0.62rem;
-    font-weight: 700;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: #999;
-    margin-bottom: 0.6rem;
-}
-.cc-chip {
-    display: inline-block;
-    background: #f0eeff;
-    color: #5a45e0;
-    font-size: 0.7rem;
+.top-bar-title {
+    font-size: 0.78rem;
     font-weight: 600;
     letter-spacing: 0.06em;
-    padding: 0.25rem 0.65rem;
-    border-radius: 20px;
-    margin-right: 0.35rem;
+    text-transform: uppercase;
+    color: #7070a0;
 }
+.env-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 0.3rem 0.8rem;
+    border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.04);
+}
+.env-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+/* ── Section label ── */
+.sec-label {
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: #4a4a6a;
+    margin-bottom: 0.75rem;
+    display: block;
+}
+
+/* ── Glass card ── */
+.glass {
+    background: rgba(255,255,255,0.025);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 16px;
+    padding: 1.5rem 1.6rem;
+}
+
+/* ── Divider ── */
+.divider {
+    border: none;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    margin: 1.8rem 0;
+}
+
+/* ── Client rows ── */
 .client-row {
     display: flex;
     justify-content: space-between;
-    align-items: baseline;
-    padding: 0.65rem 0;
-    border-bottom: 1px solid #f5f5f5;
+    align-items: center;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
 }
 .client-row:last-child { border-bottom: none; }
+.client-name {
+    font-family: 'Instrument Serif', serif;
+    font-size: 0.95rem;
+    color: #d4d4ee;
+}
+.client-sources {
+    display: flex;
+    gap: 0.3rem;
+}
+.src-badge {
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    padding: 0.18rem 0.55rem;
+    border-radius: 20px;
+    text-transform: uppercase;
+}
+.src-meta    { background: rgba(122,99,255,0.15); color: #9b8aff; border: 1px solid rgba(122,99,255,0.25); }
+.src-hubspot { background: rgba(255,120,80,0.12); color: #ff9070; border: 1px solid rgba(255,120,80,0.25); }
+.src-stripe  { background: rgba(80,200,150,0.12); color: #5de0a0; border: 1px solid rgba(80,200,150,0.25); }
 
+/* ── Credit chips ── */
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    background: rgba(122,99,255,0.12);
+    color: #a090ff;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 0.25rem 0.7rem;
+    border-radius: 20px;
+    border: 1px solid rgba(122,99,255,0.22);
+    margin: 0 0.25rem 0.35rem 0;
+}
+.chip-pct {
+    color: #7a63ff;
+    font-weight: 700;
+}
+
+/* ── Model description ── */
+.model-desc {
+    font-size: 0.82rem;
+    color: #6a6a90;
+    line-height: 1.55;
+    margin: 0.3rem 0 1.2rem;
+    font-weight: 400;
+}
+
+/* ── Streamlit widgets override ── */
+/* Selectbox */
+[data-testid="stSelectbox"] > div > div {
+    background: rgba(255,255,255,0.04) !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 10px !important;
+}
+/* Radio */
+[data-testid="stRadio"] label {
+    font-size: 0.82rem !important;
+    font-weight: 500 !important;
+}
+/* Toggle */
+[data-testid="stToggle"] label {
+    font-size: 0.82rem !important;
+}
+/* Multiselect */
+[data-testid="stMultiSelect"] > div > div {
+    background: rgba(255,255,255,0.04) !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 10px !important;
+}
+
+/* ── Buttons ── */
+[data-testid="baseButton-primary"] {
+    background: linear-gradient(135deg, #7a63ff 0%, #5a43df 100%) !important;
+    border: none !important;
+    border-radius: 10px !important;
+    font-family: 'Inter', sans-serif !important;
+    font-weight: 600 !important;
+    font-size: 0.82rem !important;
+    letter-spacing: 0.04em !important;
+    box-shadow: 0 0 24px rgba(122,99,255,0.35), 0 2px 8px rgba(0,0,0,0.3) !important;
+    transition: box-shadow 0.2s ease !important;
+}
+[data-testid="baseButton-primary"]:hover {
+    box-shadow: 0 0 32px rgba(122,99,255,0.55), 0 4px 12px rgba(0,0,0,0.3) !important;
+}
+[data-testid="baseButton-secondary"] {
+    background: rgba(255,255,255,0.05) !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 10px !important;
+    font-family: 'Inter', sans-serif !important;
+    font-weight: 500 !important;
+    font-size: 0.82rem !important;
+}
+
+/* ── Metrics ── */
+[data-testid="metric-container"] {
+    background: rgba(122,99,255,0.06) !important;
+    border: 1px solid rgba(122,99,255,0.18) !important;
+    border-radius: 14px !important;
+    padding: 1.2rem 1.1rem !important;
+}
+[data-testid="stMetricValue"] {
+    font-family: 'Instrument Serif', serif !important;
+    font-size: 1.9rem !important;
+    font-weight: 400 !important;
+    color: #e8e8ff !important;
+}
+[data-testid="stMetricLabel"] {
+    font-family: 'Inter', sans-serif !important;
+    font-size: 0.65rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.14em !important;
+    text-transform: uppercase !important;
+    color: #5a5a80 !important;
+}
+
+/* ── Captions ── */
+[data-testid="stCaptionContainer"] p {
+    color: #4e4e70 !important;
+    font-size: 0.78rem !important;
+}
+
+/* ── Alerts ── */
+[data-testid="stAlert"] {
+    border-radius: 12px !important;
+    border-left-width: 3px !important;
+}
+
+/* ── Code block (log viewer) ── */
+[data-testid="stCode"] {
+    background: rgba(0,0,0,0.4) !important;
+    border: 1px solid rgba(255,255,255,0.06) !important;
+    border-radius: 10px !important;
+    font-size: 0.75rem !important;
+}
+
+/* ── Run summary pill ── */
+.run-summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.72rem;
+    color: #5a5a80;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 20px;
+    padding: 0.35rem 1rem;
+    margin-bottom: 1rem;
+}
+.run-summary strong { color: #7a63ff; }
+
+/* ── Checkbox ── */
+[data-testid="stCheckbox"] label {
+    font-size: 0.82rem !important;
+    font-weight: 400 !important;
+    color: #7070a0 !important;
+}
+
+/* ── Recent runs ── */
+.run-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    font-size: 0.78rem;
+}
+.run-row:last-child { border-bottom: none; }
+.run-ts { color: #5a5a80; }
+.run-state { font-weight: 600; letter-spacing: 0.08em; font-size: 0.68rem; }
+
+/* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-thumb { background: #d4ccff; border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: rgba(122,99,255,0.35); border-radius: 4px; }
 </style>
 """, unsafe_allow_html=True)
 
 
-# ── Attribution model definitions ────────────────────────────
+# ── Attribution model definitions ─────────────────────────────
 ATTRIBUTION_MODELS: dict[str, dict] = {
     "last_touch": {
         "label": "Last Touch",
-        "description": "100% credit to the final touchpoint before conversion.",
+        "description": "All conversion credit goes to the final touchpoint. Simple and easy to action — best when your closing channel is clear.",
         "credits": {"Paid Social": 0, "Paid Search": 0, "Email": 0, "Organic": 0, "Direct": 100},
     },
     "first_touch": {
         "label": "First Touch",
-        "description": "100% credit to the first channel that introduced the lead.",
+        "description": "Full credit to the channel that first introduced the lead. Useful for evaluating top-of-funnel awareness spend.",
         "credits": {"Paid Social": 100, "Paid Search": 0, "Email": 0, "Organic": 0, "Direct": 0},
     },
     "linear": {
         "label": "Linear",
-        "description": "Equal credit distributed evenly across all touchpoints.",
+        "description": "Credit split evenly across every touchpoint in the journey. No channel is weighted over another.",
         "credits": {"Paid Social": 40, "Paid Search": 20, "Email": 20, "Organic": 0, "Direct": 20},
     },
     "time_decay": {
         "label": "Time Decay",
-        "description": "Recency-weighted — later touchpoints receive progressively more credit.",
+        "description": "Channels closer to conversion earn exponentially more credit. Emphasizes what drove the final decision.",
         "credits": {"Paid Social": 29, "Paid Search": 6, "Email": 13, "Organic": 0, "Direct": 52},
     },
     "u_shape": {
         "label": "U-Shape",
-        "description": "40% first touch, 40% last touch, 20% split across middle touchpoints.",
+        "description": "40% to first touch, 40% to last touch, 20% shared across the middle. Balances acquisition and close.",
         "credits": {"Paid Social": 47, "Paid Search": 7, "Email": 6, "Organic": 0, "Direct": 40},
     },
     "w_shape": {
         "label": "W-Shape",
-        "description": "30% first, 30% lead-stage conversion, 30% close — 10% across middle.",
+        "description": "30% each to first touch, lead creation, and close — 10% across middle. Best for longer B2B sales cycles.",
         "credits": {"Paid Social": 35, "Paid Search": 5, "Email": 30, "Organic": 0, "Direct": 30},
     },
 }
@@ -202,36 +409,56 @@ def _render_comparison_chart(selected_model: str) -> None:
             rows.append({
                 "Model": meta["label"],
                 "Channel": channel,
-                "Credit %": pct,
-                "_selected": key == selected_model,
+                "Credit": pct,
+                "is_selected": key == selected_model,
             })
 
     df = pd.DataFrame(rows)
 
     channel_colors = {
         "Paid Social": "#7a63ff",
-        "Paid Search": "#4fc3f7",
-        "Email":       "#81c784",
-        "Organic":     "#ffb74d",
-        "Direct":      "#e0e0e0",
+        "Paid Search": "#38bdf8",
+        "Email":       "#34d399",
+        "Organic":     "#fbbf24",
+        "Direct":      "#334155",
     }
 
     model_order = [v["label"] for v in ATTRIBUTION_MODELS.values()]
-    channel_order = ["Paid Social", "Paid Search", "Email", "Organic", "Direct"]
+    channel_order = list(channel_colors.keys())
+
+    selected_label = ATTRIBUTION_MODELS[selected_model]["label"]
 
     chart = (
         alt.Chart(df)
-        .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+        .mark_bar(width={"band": 0.72})
         .encode(
             x=alt.X(
                 "Model:N",
                 sort=model_order,
-                axis=alt.Axis(labelAngle=0, title=None, labelFontSize=11),
+                axis=alt.Axis(
+                    labelAngle=0,
+                    title=None,
+                    labelFontSize=10.5,
+                    labelFont="Inter, sans-serif",
+                    labelColor="#555580",
+                    tickColor="transparent",
+                    domainColor="transparent",
+                ),
             ),
             y=alt.Y(
-                "Credit %:Q",
+                "Credit:Q",
                 stack="normalize",
-                axis=alt.Axis(format="%", title=None, labelFontSize=10, grid=True, gridColor="#f0f0f0"),
+                axis=alt.Axis(
+                    format="%",
+                    title=None,
+                    labelFontSize=9,
+                    labelFont="Inter, sans-serif",
+                    labelColor="#444460",
+                    grid=True,
+                    gridColor="rgba(255,255,255,0.04)",
+                    domainColor="transparent",
+                    tickColor="transparent",
+                ),
             ),
             color=alt.Color(
                 "Channel:N",
@@ -240,28 +467,39 @@ def _render_comparison_chart(selected_model: str) -> None:
                     domain=list(channel_colors.keys()),
                     range=list(channel_colors.values()),
                 ),
-                legend=alt.Legend(title=None, orient="bottom", columns=5, labelFontSize=11),
+                legend=alt.Legend(
+                    title=None,
+                    orient="bottom",
+                    columns=5,
+                    labelFontSize=10,
+                    labelFont="Inter, sans-serif",
+                    labelColor="#555580",
+                    symbolSize=80,
+                    symbolType="square",
+                    padding=12,
+                ),
             ),
             opacity=alt.condition(
-                alt.datum["Model"] == ATTRIBUTION_MODELS[selected_model]["label"],
+                alt.datum["Model"] == selected_label,
                 alt.value(1.0),
-                alt.value(0.55),
+                alt.value(0.28),
             ),
             tooltip=[
-                alt.Tooltip("Model:N"),
-                alt.Tooltip("Channel:N"),
-                alt.Tooltip("Credit %:Q", format=".0f"),
+                alt.Tooltip("Model:N", title="Model"),
+                alt.Tooltip("Channel:N", title="Channel"),
+                alt.Tooltip("Credit:Q", title="Credit %", format=".0f"),
             ],
         )
-        .properties(height=260)
-        .configure_view(strokeWidth=0)
-        .configure_axis(domainWidth=0)
+        .properties(height=230, background="transparent")
+        .configure_view(strokeWidth=0, fill="transparent")
     )
 
     st.altair_chart(chart, use_container_width=True)
-    st.caption(
-        "Based on a sample 5-touch journey: Paid Social → Paid Search → Email → Paid Social → Direct  ·  "
-        "Selected model is highlighted."
+    st.markdown(
+        '<p style="font-size:0.68rem;color:#3a3a58;margin-top:0.1rem;">'
+        'Sample journey: Paid Social → Paid Search → Email → Paid Social → Direct'
+        '</p>',
+        unsafe_allow_html=True,
     )
 
 
@@ -288,7 +526,8 @@ def _trigger_databricks_job(agency_id: str, client_filter: list, dry_run: bool) 
     host = os.environ.get("DATABRICKS_HOST", "").lstrip("https://")
     st.markdown(
         f'<a href="https://{host}/#job/{job.job_id}/run/{run_id}" target="_blank" '
-        f'style="font-size:0.75rem;color:#7a63ff;text-decoration:none;letter-spacing:0.06em;">'
+        f'style="font-size:0.75rem;color:#7a63ff;text-decoration:none;letter-spacing:0.04em;'
+        f'font-family:Inter,sans-serif;">'
         f'↗ View run {run_id} in Databricks</a>',
         unsafe_allow_html=True,
     )
@@ -331,15 +570,14 @@ def _show_recent_runs() -> None:
     import datetime
     for r in runs:
         state = r.state.result_state.value if r.state and r.state.result_state else "RUNNING"
-        color = "#22c55e" if state == "SUCCESS" else ("#ef4444" if state == "FAILED" else "#7a63ff")
+        color = "#34d399" if state == "SUCCESS" else ("#f87171" if state == "FAILED" else "#7a63ff")
         start = r.start_time // 1000 if r.start_time else 0
         ts = datetime.datetime.fromtimestamp(start).strftime("%b %d, %H:%M") if start else "—"
         st.markdown(
-            f'<div style="display:flex;justify-content:space-between;align-items:center;'
-            f'padding:0.5rem 0;border-bottom:1px solid #f0f0f0;">'
-            f'<span style="font-size:0.8rem;color:#444;">{ts}</span>'
-            f'<span style="font-size:0.7rem;color:{color};letter-spacing:0.08em;">'
-            f'● {state}</span></div>',
+            f'<div class="run-row">'
+            f'<span class="run-ts">{ts}</span>'
+            f'<span class="run-state" style="color:{color};">● {state}</span>'
+            f'</div>',
             unsafe_allow_html=True,
         )
 
@@ -381,8 +619,6 @@ def _run_local(agency_id: str, client_filter: list, dry_run: bool) -> None:
 
 
 def _render_results(result: dict, dry_run: bool) -> None:
-    st.markdown("<hr>", unsafe_allow_html=True)
-
     processed, failed = result["clients_processed"], result["clients_failed"]
     if failed == 0:
         st.success(f"Complete — {processed} client{'s' if processed != 1 else ''} processed.")
@@ -402,7 +638,7 @@ def _render_results(result: dict, dry_run: bool) -> None:
             m4.metric("Stripe Rows", r["stripe_rows"])
             st.caption(
                 f"Top channel · {r['top_channel']}   ·   "
-                + ("Email skipped (dry run)" if dry_run
+                + ("Dry run — email skipped" if dry_run
                    else f"Sent · {cfg.client_report_email}" if r["email_sent"]
                    else "Email not sent")
             )
@@ -411,32 +647,43 @@ def _render_results(result: dict, dry_run: bool) -> None:
         st.error(f"**{e['client_id']}** — {e['error']}")
 
 
-# ── Header ────────────────────────────────────────────────────
-col_hd, col_env = st.columns([5, 1])
-with col_hd:
-    st.markdown(
-        '<p style="font-size:0.6rem;letter-spacing:0.2em;text-transform:uppercase;'
-        'color:#bbb;margin-bottom:0.3rem;">N8iV Promotions · Internal</p>',
-        unsafe_allow_html=True,
-    )
-    st.markdown("# Attribution Command Center")
-with col_env:
-    env_label = "Databricks" if _DATABRICKS_MODE else "Local"
-    env_color = "#7a63ff" if _DATABRICKS_MODE else "#888"
-    st.markdown(
-        f'<div style="text-align:right;padding-top:2rem;">'
-        f'<span style="font-size:0.65rem;color:{env_color};font-weight:600;'
-        f'letter-spacing:0.1em;text-transform:uppercase;">● {env_label}</span></div>',
-        unsafe_allow_html=True,
-    )
+# ═══════════════════════════════════════════════
+# UI
+# ═══════════════════════════════════════════════
 
-st.markdown("<hr>", unsafe_allow_html=True)
+# ── Top nav bar ───────────────────────────────
+env_label = "Databricks" if _DATABRICKS_MODE else "Local"
+env_dot_color = "#7a63ff" if _DATABRICKS_MODE else "#34d399"
 
-# ── Target + Model selection ──────────────────────────────────
-left_col, right_col = st.columns([1, 1], gap="large")
+st.markdown(
+    f'<div class="top-bar">'
+    f'  <div class="top-bar-brand">'
+    f'    <div class="top-bar-logo">◆</div>'
+    f'    <span class="top-bar-title">Attribution Command Center</span>'
+    f'  </div>'
+    f'  <div class="env-badge">'
+    f'    <span class="env-dot" style="background:{env_dot_color};'
+    f'          box-shadow:0 0 6px {env_dot_color};"></span>'
+    f'    <span style="color:#5a5a80;">{env_label}</span>'
+    f'  </div>'
+    f'</div>',
+    unsafe_allow_html=True,
+)
 
+# ── Page heading ──────────────────────────────
+st.markdown("# Run Attribution Pipeline")
+st.markdown(
+    '<p style="font-size:0.88rem;color:#3e3e5e;margin:-0.2rem 0 2rem;font-weight:400;">'
+    'Select a target, choose your attribution model, and execute the pipeline.</p>',
+    unsafe_allow_html=True,
+)
+
+# ── Two-column layout: Target | Model ─────────
+left_col, spacer, right_col = st.columns([5, 1, 6])
+
+# ── LEFT — Target selection ───────────────────
 with left_col:
-    st.markdown('<div class="cc-label">Target</div>', unsafe_allow_html=True)
+    st.markdown('<span class="sec-label">Target</span>', unsafe_allow_html=True)
 
     run_mode = st.radio(
         "Run mode",
@@ -445,7 +692,7 @@ with left_col:
         label_visibility="collapsed",
     )
 
-    st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:0.6rem'></div>", unsafe_allow_html=True)
 
     agency_id: str = ""
     client_filter: list[str] = []
@@ -456,16 +703,15 @@ with left_col:
             "Agency",
             agencies,
             format_func=lambda a: AGENCY_REGISTRY[a].agency_name,
-            label_visibility="visible",
         )
         agency = get_agency(agency_id)
 
-        select_all = st.toggle("Select all clients", value=True)
+        select_all = st.toggle("All clients", value=True)
         if select_all:
             client_filter = list(agency.client_ids)
         else:
             client_filter = st.multiselect(
-                "Clients",
+                "Select clients",
                 agency.client_ids,
                 default=agency.client_ids,
                 format_func=lambda c: CLIENT_REGISTRY[c].client_name if c in CLIENT_REGISTRY else c,
@@ -477,40 +723,43 @@ with left_col:
             "Business account",
             all_clients,
             format_func=lambda c: CLIENT_REGISTRY[c].client_name if c in CLIENT_REGISTRY else c,
-            label_visibility="visible",
         )
-        # For business mode, find the agency or run standalone
         cfg = get_client(selected_client)
         agency_id = cfg.agency_id or (list_agencies()[0] if list_agencies() else "")
         client_filter = [selected_client]
 
-    # Client preview list
+    # Client preview
     if client_filter:
-        st.markdown("<div style='height:0.4rem'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
         for cid in client_filter:
             if cid not in CLIENT_REGISTRY:
                 continue
             cfg = get_client(cid)
-            sources = " · ".join(filter(None, [
-                "Meta" if cfg.meta_enabled else "",
-                "HubSpot" if cfg.hubspot_enabled else "",
-                "Stripe" if cfg.stripe_enabled else "",
-            ])) or "No sources"
+            src_badges = ""
+            if cfg.meta_enabled:
+                src_badges += '<span class="src-badge src-meta">Meta</span>'
+            if cfg.hubspot_enabled:
+                src_badges += '<span class="src-badge src-hubspot">HubSpot</span>'
+            if cfg.stripe_enabled:
+                src_badges += '<span class="src-badge src-stripe">Stripe</span>'
+            if not src_badges:
+                src_badges = '<span style="font-size:0.68rem;color:#3a3a58;">No sources</span>'
+
             st.markdown(
                 f'<div class="client-row">'
-                f'<span style="font-family:\'Instrument Serif\',serif;font-size:0.95rem;color:#111;">'
-                f'{cfg.client_name}</span>'
-                f'<span style="font-size:0.68rem;color:#bbb;letter-spacing:0.04em;">{sources}</span>'
+                f'  <span class="client-name">{cfg.client_name}</span>'
+                f'  <div class="client-sources">{src_badges}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
 
 
+# ── RIGHT — Attribution model ─────────────────
 with right_col:
-    st.markdown('<div class="cc-label">Attribution Model</div>', unsafe_allow_html=True)
+    st.markdown('<span class="sec-label">Attribution Model</span>', unsafe_allow_html=True)
 
     selected_label = st.selectbox(
-        "Attribution model",
+        "Model",
         _MODEL_LABELS,
         index=0,
         label_visibility="collapsed",
@@ -519,60 +768,72 @@ with right_col:
     model_meta = ATTRIBUTION_MODELS[selected_model]
 
     st.markdown(
-        f'<p style="font-size:0.82rem;color:#555;margin:0.4rem 0 1rem;">'
-        f'{model_meta["description"]}</p>',
+        f'<p class="model-desc">{model_meta["description"]}</p>',
         unsafe_allow_html=True,
     )
 
-    # Credit breakdown chips for selected model
-    st.markdown('<div class="cc-label">Credit distribution (sample journey)</div>', unsafe_allow_html=True)
-    chips_html = ""
+    # Credit chips
+    st.markdown('<span class="sec-label">Credit distribution</span>', unsafe_allow_html=True)
+    chips = ""
     for channel, pct in model_meta["credits"].items():
         if pct > 0:
-            chips_html += f'<span class="cc-chip">{channel} {pct}%</span>'
-    st.markdown(f'<div style="margin-bottom:1rem;">{chips_html}</div>', unsafe_allow_html=True)
+            chips += (
+                f'<span class="chip">{channel}'
+                f' <span class="chip-pct">{pct}%</span></span>'
+            )
+    st.markdown(f'<div style="margin-bottom:1.4rem;">{chips}</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="cc-label">Model comparison</div>', unsafe_allow_html=True)
+    # Comparison chart
+    st.markdown('<span class="sec-label">Model comparison</span>', unsafe_allow_html=True)
     _render_comparison_chart(selected_model)
 
 
-# ── Run controls ──────────────────────────────────────────────
-st.markdown("<hr>", unsafe_allow_html=True)
+# ── Run controls ──────────────────────────────
+st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
-ctrl_left, ctrl_mid, ctrl_right = st.columns([2, 1, 1])
+ctrl_l, ctrl_m, ctrl_r = st.columns([3, 1, 1])
 
-with ctrl_left:
+with ctrl_l:
     dry_run = st.checkbox("Dry run — generate report, skip email delivery")
 
-with ctrl_mid:
-    run_selected = st.button(
-        f"Run {'All' if run_mode == 'Agency' and len(client_filter) == len(get_agency(agency_id).client_ids if agency_id else client_filter) else 'Selected'} ({len(client_filter)})",
+n_clients = len(client_filter)
+btn_label = f"Run All ({n_clients})" if (
+    run_mode == "Agency" and agency_id and
+    n_clients == len(AGENCY_REGISTRY.get(agency_id, type('', (), {'client_ids': []})()).client_ids)
+) else f"Run Selected ({n_clients})"
+
+with ctrl_m:
+    run_btn = st.button(
+        btn_label,
         type="primary",
         use_container_width=True,
         disabled=not client_filter,
     )
 
-with ctrl_right:
+with ctrl_r:
     if _DATABRICKS_MODE:
-        show_runs_btn = st.button("Recent runs", type="secondary", use_container_width=True)
-        if show_runs_btn:
+        if st.button("Recent runs", type="secondary", use_container_width=True):
             st.session_state["show_runs"] = not st.session_state.get("show_runs", False)
 
 if _DATABRICKS_MODE and st.session_state.get("show_runs"):
-    st.markdown("<hr>", unsafe_allow_html=True)
+    st.markdown('<hr class="divider">', unsafe_allow_html=True)
     st.markdown("## Recent runs")
     _show_recent_runs()
 
-# ── Execute ───────────────────────────────────────────────────
-if run_selected and client_filter and agency_id:
-    st.markdown("<hr>", unsafe_allow_html=True)
+# ── Execute ───────────────────────────────────
+if run_btn and client_filter and agency_id:
+    run_type = "Dry run" if dry_run else "Live"
     st.markdown(
-        f'<p style="font-size:0.75rem;color:#888;letter-spacing:0.06em;">'
-        f'Model · <strong style="color:#7a63ff">{model_meta["label"]}</strong> &nbsp;·&nbsp; '
-        f'{len(client_filter)} client{"s" if len(client_filter) != 1 else ""} &nbsp;·&nbsp; '
-        f'{"Dry run" if dry_run else "Live run"}</p>',
+        f'<div class="run-summary">'
+        f'<strong>{model_meta["label"]}</strong>'
+        f'<span style="color:#2a2a40;">·</span>'
+        f'{n_clients} client{"s" if n_clients != 1 else ""}'
+        f'<span style="color:#2a2a40;">·</span>'
+        f'{run_type}'
+        f'</div>',
         unsafe_allow_html=True,
     )
+    st.markdown('<hr class="divider">', unsafe_allow_html=True)
     if _DATABRICKS_MODE:
         _trigger_databricks_job(agency_id, client_filter, dry_run)
     else:
