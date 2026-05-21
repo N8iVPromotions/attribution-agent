@@ -17,7 +17,9 @@ import json
 import logging
 import os
 import sys
+import uuid
 from pathlib import Path
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -32,11 +34,12 @@ except NameError:
 sys.path.insert(0, _root)
 
 from config.agency_config import AgencyConfig, get_agency, list_agencies
-from config.client_config import get_client
+from config.client_config import get_client, list_clients
 from flows.ingest_flow import ingest_flow
 from agents.insight.insight_agent import generate_insight_report
 from agents.comms.comms_agent import send_agency_report
-from utils.databricks_writer import _run_sql
+from attribution_models import normalize_model
+from utils.databricks_writer import _run_sql, write_pipeline_run
 
 
 def _get_client_recipient(client_id: str) -> str:
@@ -53,7 +56,7 @@ def _get_client_recipient(client_id: str) -> str:
 def _build_union_all(agency: AgencyConfig) -> str:
     """Generate the UNION ALL clause across all client schemas for SQL templates."""
     clauses = []
-    for client_id in agency.client_ids:
+    for client_id in _agency_client_ids(agency):
         config = get_client(client_id)
         client_name = config.client_display_name or config.client_name
         schema = config.databricks_schema
@@ -62,6 +65,15 @@ def _build_union_all(agency: AgencyConfig) -> str:
             f"FROM {schema}.channel_performance"
         )
     return "\nUNION ALL\n".join(clauses)
+
+
+def _agency_client_ids(agency: AgencyConfig) -> list[str]:
+    client_ids = list(agency.client_ids)
+    for client_id in list_clients():
+        config = get_client(client_id)
+        if config.agency_id == agency.agency_id and client_id not in client_ids:
+            client_ids.append(client_id)
+    return client_ids
 
 
 def run_agency_benchmark_sql(agency: AgencyConfig) -> None:
@@ -89,10 +101,30 @@ def run_agency_benchmark_sql(agency: AgencyConfig) -> None:
         logger.warning(f"[Agency] Benchmark SQL failed (non-fatal): {exc}")
 
 
+def run_client_attribution_sql(client_id: str, attribution_model: str) -> None:
+    """Refresh model-specific closed-revenue attribution tables for a client."""
+    config = get_client(client_id)
+    sql_path = Path(__file__).parent.parent / "transforms" / "closed_revenue_attribution.sql"
+    sql = sql_path.read_text()
+    for stmt in sql.format(
+        schema=config.databricks_schema,
+        attribution_model=normalize_model(attribution_model),
+    ).split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            _run_sql(stmt)
+    logger.info(
+        f"[Attribution] Refreshed closed-revenue tables | "
+        f"client={client_id} | model={attribution_model}"
+    )
+
+
 def run_agency_pipeline(
     agency_id: str,
     dry_run: bool = False,
     client_filter: list[str] | None = None,
+    attribution_model: str | None = None,
+    run_mode: str = "agency",
 ) -> dict:
     """
     Run the full pipeline for every client in the agency:
@@ -103,26 +135,32 @@ def run_agency_pipeline(
     Runs clients sequentially to avoid API rate limits.
     """
     agency = get_agency(agency_id)
-    client_ids = client_filter or agency.client_ids
+    client_ids = client_filter or _agency_client_ids(agency)
+    selected_model = normalize_model(attribution_model or "last_touch")
+    run_id = str(uuid.uuid4())
 
     logger.info(
         f"[Agency] Starting pipeline | agency={agency_id} | "
-        f"clients={client_ids} | dry_run={dry_run}"
+        f"clients={client_ids} | dry_run={dry_run} | model={selected_model}"
     )
 
     results = []
     errors = []
 
     for client_id in client_ids:
+        started_at = datetime.now(timezone.utc)
         logger.info(f"[Agency] Processing client: {client_id}")
         try:
             # 1. Ingest
             ingest_result = ingest_flow(client_id)
 
-            # 2. Generate report
-            report = generate_insight_report(client_id)
+            # 2. Refresh attribution outputs for the selected model
+            run_client_attribution_sql(client_id, selected_model)
 
-            # 3. Send white-labeled email
+            # 3. Generate report from refreshed attributed revenue
+            report = generate_insight_report(client_id, attribution_model=selected_model)
+
+            # 4. Send white-labeled email
             email_sent = False
             if not dry_run:
                 recipient = _get_client_recipient(client_id)
@@ -139,17 +177,58 @@ def run_agency_pipeline(
             results.append({
                 "client_id":     client_id,
                 "meta_rows":     ingest_result.get("meta_rows", 0),
+                "google_rows":   ingest_result.get("google_rows", 0),
+                "linkedin_rows": ingest_result.get("linkedin_rows", 0),
                 "hubspot_rows":  ingest_result.get("hubspot_rows", 0),
                 "stripe_rows":   ingest_result.get("stripe_rows", 0),
+                "normalized_ad_rows": ingest_result.get("normalized_ad_rows", 0),
+                "attribution_model": selected_model,
                 "top_channel":   report.top_channel,
                 "total_pipeline": report.total_pipeline,
                 "email_sent":    email_sent,
                 "status":        "ok",
             })
+            write_pipeline_run({
+                "run_id": run_id,
+                "agency_id": agency_id,
+                "client_id": client_id,
+                "run_mode": run_mode,
+                "attribution_model": selected_model,
+                "status": "success",
+                "dry_run": dry_run,
+                "meta_rows": ingest_result.get("meta_rows", 0),
+                "google_rows": ingest_result.get("google_rows", 0),
+                "linkedin_rows": ingest_result.get("linkedin_rows", 0),
+                "hubspot_rows": ingest_result.get("hubspot_rows", 0),
+                "stripe_rows": ingest_result.get("stripe_rows", 0),
+                "normalized_ad_rows": ingest_result.get("normalized_ad_rows", 0),
+                "total_pipeline": report.total_pipeline,
+                "top_channel": report.top_channel,
+                "email_sent": email_sent,
+                "started_at": started_at,
+                "finished_at": datetime.now(timezone.utc),
+                "output_schema": get_client(client_id).databricks_schema,
+            })
 
         except Exception as exc:
             logger.error(f"[Agency] Failed for client '{client_id}': {exc}")
             errors.append({"client_id": client_id, "error": str(exc)})
+            try:
+                write_pipeline_run({
+                    "run_id": run_id,
+                    "agency_id": agency_id,
+                    "client_id": client_id,
+                    "run_mode": run_mode,
+                    "attribution_model": selected_model,
+                    "status": "failed",
+                    "dry_run": dry_run,
+                    "error": str(exc),
+                    "started_at": started_at,
+                    "finished_at": datetime.now(timezone.utc),
+                    "output_schema": get_client(client_id).databricks_schema,
+                })
+            except Exception as write_exc:
+                logger.warning(f"[Ops] Failed to write run history: {write_exc}")
 
     # Run cross-client benchmark SQL (best-effort)
     if not dry_run and results:
@@ -157,6 +236,8 @@ def run_agency_pipeline(
 
     summary = {
         "agency_id":         agency_id,
+        "run_id":            run_id,
+        "attribution_model": selected_model,
         "clients_processed": len(results),
         "clients_failed":    len(errors),
         "dry_run":           dry_run,
@@ -167,10 +248,18 @@ def run_agency_pipeline(
     return summary
 
 
-def run_all_agencies(dry_run: bool = False) -> list[dict]:
+def run_all_agencies(
+    dry_run: bool = False,
+    attribution_model: str | None = None,
+) -> list[dict]:
     """Run run_agency_pipeline for every agency in AGENCY_REGISTRY."""
     return [
-        run_agency_pipeline(agency_id, dry_run=dry_run)
+        run_agency_pipeline(
+            agency_id,
+            dry_run=dry_run,
+            attribution_model=attribution_model,
+            run_mode="agency",
+        )
         for agency_id in list_agencies()
     ]
 
@@ -188,6 +277,10 @@ if __name__ == "__main__":
                         help="Generate reports but do not send emails")
     parser.add_argument("--client-filter", type=str, nargs="+", default=None,
                         help="Run only specific client IDs within the agency")
+    parser.add_argument("--attribution-model", type=str, default="last_touch",
+                        help="Attribution model to apply")
+    parser.add_argument("--run-mode", type=str, default="agency",
+                        help="agency or business")
     args = parser.parse_args()
 
     if args.agency:
@@ -195,8 +288,18 @@ if __name__ == "__main__":
             agency_id=args.agency,
             dry_run=args.dry_run,
             client_filter=args.client_filter,
+            attribution_model=args.attribution_model,
+            run_mode=args.run_mode,
         )
         print(json.dumps(result, indent=2, default=str))
     else:
-        results = run_all_agencies(dry_run=args.dry_run)
+        results = [
+            run_agency_pipeline(
+                agency_id=agency_id,
+                dry_run=args.dry_run,
+                attribution_model=args.attribution_model,
+                run_mode=args.run_mode,
+            )
+            for agency_id in list_agencies()
+        ]
         print(json.dumps(results, indent=2, default=str))

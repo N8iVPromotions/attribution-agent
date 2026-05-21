@@ -25,7 +25,18 @@ load_dotenv()
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config.agency_config import get_agency, list_agencies, AGENCY_REGISTRY
-from config.client_config import get_client, list_clients, CLIENT_REGISTRY
+from config.client_config import (
+    CLIENT_REGISTRY,
+    CLIENT_REGISTRY_PATH,
+    ClientConfig,
+    default_client_schema,
+    delete_client_config,
+    get_client,
+    is_custom_client,
+    list_clients,
+    save_client_config,
+    slugify_client_id,
+)
 
 _DATABRICKS_MODE = bool(os.environ.get("ATTRIBUTION_JOB_NAME"))
 _JOB_NAME = os.environ.get("ATTRIBUTION_JOB_NAME", "")
@@ -505,7 +516,13 @@ def _render_comparison_chart(selected_model: str) -> None:
 
 # ── Pipeline helpers ──────────────────────────────────────────
 
-def _trigger_databricks_job(agency_id: str, client_filter: list, dry_run: bool) -> None:
+def _trigger_databricks_job(
+    agency_id: str,
+    client_filter: list,
+    dry_run: bool,
+    attribution_model: str,
+    run_mode: str,
+) -> None:
     try:
         from databricks.sdk import WorkspaceClient
         from databricks.sdk.service.jobs import RunLifeCycleState
@@ -520,7 +537,17 @@ def _trigger_databricks_job(agency_id: str, client_filter: list, dry_run: bool) 
         return
 
     with st.spinner("Submitting run…"):
-        run = w.jobs.run_now(job_id=job.job_id)
+        python_params = []
+        if agency_id:
+            python_params.extend(["--agency", agency_id])
+        if dry_run:
+            python_params.append("--dry-run")
+        if client_filter:
+            python_params.append("--client-filter")
+            python_params.extend(client_filter)
+        python_params.extend(["--attribution-model", attribution_model])
+        python_params.extend(["--run-mode", run_mode.lower()])
+        run = w.jobs.run_now(job_id=job.job_id, python_params=python_params)
         run_id = run.run_id
 
     host = os.environ.get("DATABRICKS_HOST", "").lstrip("https://")
@@ -553,36 +580,44 @@ def _trigger_databricks_job(agency_id: str, client_filter: list, dry_run: bool) 
 
 def _show_recent_runs() -> None:
     try:
-        from databricks.sdk import WorkspaceClient
-    except ImportError:
-        return
+        from utils.databricks_writer import fetch_recent_pipeline_runs
+        runs = fetch_recent_pipeline_runs(limit=8)
+    except Exception:
+        runs = []
 
-    w = WorkspaceClient()
-    job = next((j for j in w.jobs.list() if j.settings and j.settings.name == _JOB_NAME), None)
-    if not job:
-        return
-
-    runs = list(w.jobs.list_runs(job_id=job.job_id, limit=5))
     if not runs:
         st.caption("No runs yet.")
         return
 
     import datetime
     for r in runs:
-        state = r.state.result_state.value if r.state and r.state.result_state else "RUNNING"
+        state = str(r.get("status", "unknown")).upper()
         color = "#34d399" if state == "SUCCESS" else ("#f87171" if state == "FAILED" else "#7a63ff")
-        start = r.start_time // 1000 if r.start_time else 0
-        ts = datetime.datetime.fromtimestamp(start).strftime("%b %d, %H:%M") if start else "—"
+        start = r.get("started_at")
+        if hasattr(start, "strftime"):
+            ts = start.strftime("%b %d, %H:%M")
+        else:
+            ts = str(start or "—")[:16]
+        label = (
+            f"{r.get('client_id', '')} · {r.get('attribution_model', '')} · "
+            f"${float(r.get('total_pipeline') or 0):,.0f}"
+        )
         st.markdown(
             f'<div class="run-row">'
-            f'<span class="run-ts">{ts}</span>'
+            f'<span class="run-ts">{ts} · {label}</span>'
             f'<span class="run-state" style="color:{color};">● {state}</span>'
             f'</div>',
             unsafe_allow_html=True,
         )
 
 
-def _run_local(agency_id: str, client_filter: list, dry_run: bool) -> None:
+def _run_local(
+    agency_id: str,
+    client_filter: list,
+    dry_run: bool,
+    attribution_model: str,
+    run_mode: str,
+) -> None:
     from flows.agency_flow import run_agency_pipeline
 
     log_lines: list[str] = []
@@ -608,6 +643,8 @@ def _run_local(agency_id: str, client_filter: list, dry_run: bool) -> None:
                 agency_id=agency_id,
                 dry_run=dry_run,
                 client_filter=client_filter or None,
+                attribution_model=attribution_model,
+                run_mode=run_mode.lower(),
             )
         except Exception as exc:
             st.error(f"Pipeline crashed: {exc}")
@@ -647,6 +684,197 @@ def _render_results(result: dict, dry_run: bool) -> None:
         st.error(f"**{e['client_id']}** — {e['error']}")
 
 
+def _client_ids_for_agency(agency_id: str) -> list[str]:
+    agency = get_agency(agency_id)
+    client_ids = list(agency.client_ids)
+    for client_id in list_clients():
+        cfg = get_client(client_id)
+        if cfg.agency_id == agency_id and client_id not in client_ids:
+            client_ids.append(client_id)
+    return client_ids
+
+
+def _client_label(client_id: str) -> str:
+    try:
+        return get_client(client_id).client_name
+    except Exception:
+        return client_id
+
+
+def _render_client_manager() -> None:
+    st.markdown("## Client Setup")
+
+    existing_clients = list_clients()
+    action = st.radio(
+        "Mode",
+        ["Add client", "Edit client"],
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+
+    selected_client_id = ""
+    base = ClientConfig(
+        client_id="",
+        client_name="",
+        attribution_model="last_touch",
+        databricks_schema="",
+        lookback_days=30,
+    )
+    if action == "Edit client" and existing_clients:
+        selected_client_id = st.selectbox(
+            "Client",
+            existing_clients,
+            format_func=_client_label,
+        )
+        base = get_client(selected_client_id)
+
+    with st.form("client_config_form"):
+        c1, c2 = st.columns(2)
+        with c1:
+            client_name = st.text_input("Business name", value=base.client_name)
+            default_id = base.client_id or slugify_client_id(client_name or "new_client")
+            client_id = st.text_input(
+                "Client ID",
+                value=default_id,
+                disabled=bool(base.client_id),
+            )
+            display_name = st.text_input(
+                "Dashboard name",
+                value=base.client_display_name or base.client_name,
+            )
+            report_email = st.text_input(
+                "Report email",
+                value=base.client_report_email,
+            )
+
+        with c2:
+            agency_options = [""] + list_agencies()
+            agency_index = (
+                agency_options.index(base.agency_id)
+                if base.agency_id in agency_options else 0
+            )
+            agency_id = st.selectbox(
+                "Agency",
+                agency_options,
+                index=agency_index,
+                format_func=lambda a: "Direct account" if not a else AGENCY_REGISTRY[a].agency_name,
+            )
+            model_index = _MODEL_KEYS.index(base.attribution_model) if base.attribution_model in _MODEL_KEYS else 0
+            attribution_model = st.selectbox(
+                "Default model",
+                _MODEL_KEYS,
+                index=model_index,
+                format_func=lambda m: ATTRIBUTION_MODELS[m]["label"],
+            )
+            lookback_days = st.number_input(
+                "Lookback days",
+                min_value=1,
+                max_value=365,
+                value=int(base.lookback_days or 30),
+                step=1,
+            )
+            schema_default = base.databricks_schema or default_client_schema(client_id or default_id)
+            databricks_schema = st.text_input("Databricks schema", value=schema_default)
+
+        st.markdown('<hr class="divider">', unsafe_allow_html=True)
+        s1, s2, s3, s4 = st.columns(4)
+        with s1:
+            meta_enabled = st.checkbox("Meta Ads", value=base.meta_enabled)
+            meta_ad_account_id = st.text_input(
+                "Meta account ID",
+                value=base.meta_ad_account_id,
+                disabled=not meta_enabled,
+            )
+        with s2:
+            google_ads_enabled = st.checkbox("Google Ads", value=base.google_ads_enabled)
+            google_ads_customer_id = st.text_input(
+                "Google customer ID",
+                value=base.google_ads_customer_id,
+                disabled=not google_ads_enabled,
+            )
+        with s3:
+            linkedin_ads_enabled = st.checkbox("LinkedIn Ads", value=base.linkedin_ads_enabled)
+            linkedin_ads_account_id = st.text_input(
+                "LinkedIn account ID",
+                value=base.linkedin_ads_account_id,
+                disabled=not linkedin_ads_enabled,
+            )
+        with s4:
+            hubspot_enabled = st.checkbox("HubSpot", value=base.hubspot_enabled)
+            hubspot_pipeline_id = st.text_input(
+                "HubSpot pipeline ID",
+                value=base.hubspot_pipeline_id,
+                disabled=not hubspot_enabled,
+            )
+            stripe_enabled = st.checkbox("Stripe", value=base.stripe_enabled)
+            stripe_account_id = st.text_input(
+                "Stripe account ID",
+                value=base.stripe_account_id,
+                disabled=not stripe_enabled,
+            )
+
+        a1, a2 = st.columns(2)
+        with a1:
+            spend_drop_pct_alert = st.slider(
+                "Spend drop alert",
+                min_value=0.05,
+                max_value=0.90,
+                value=float(base.spend_drop_pct_alert or 0.30),
+                step=0.05,
+            )
+        with a2:
+            zero_spend_days_allowed = st.number_input(
+                "Zero-spend days",
+                min_value=0,
+                max_value=30,
+                value=int(base.zero_spend_days_allowed or 1),
+                step=1,
+            )
+
+        save_btn = st.form_submit_button("Save client", type="primary", use_container_width=True)
+
+    if save_btn:
+        clean_id = base.client_id or slugify_client_id(client_id or client_name)
+        if not client_name.strip():
+            st.error("Business name is required.")
+            return
+        if not clean_id:
+            st.error("Client ID is required.")
+            return
+        config = ClientConfig(
+            client_id=clean_id,
+            client_name=client_name.strip(),
+            attribution_model=attribution_model,
+            meta_enabled=meta_enabled,
+            meta_ad_account_id=meta_ad_account_id.strip(),
+            google_ads_enabled=google_ads_enabled,
+            google_ads_customer_id=google_ads_customer_id.strip(),
+            linkedin_ads_enabled=linkedin_ads_enabled,
+            linkedin_ads_account_id=linkedin_ads_account_id.strip(),
+            hubspot_enabled=hubspot_enabled,
+            hubspot_pipeline_id=hubspot_pipeline_id.strip(),
+            databricks_schema=(databricks_schema or default_client_schema(clean_id)).strip(),
+            lookback_days=int(lookback_days),
+            spend_drop_pct_alert=float(spend_drop_pct_alert),
+            zero_spend_days_allowed=int(zero_spend_days_allowed),
+            stripe_enabled=stripe_enabled,
+            stripe_account_id=stripe_account_id.strip(),
+            agency_id=agency_id,
+            client_report_email=report_email.strip(),
+            client_display_name=display_name.strip(),
+        )
+        save_client_config(config)
+        st.success(f"Saved {config.client_name}.")
+        st.caption(f"Registry: {CLIENT_REGISTRY_PATH}")
+        st.rerun()
+
+    if action == "Edit client" and selected_client_id and is_custom_client(selected_client_id):
+        if st.button("Delete client", type="secondary"):
+            delete_client_config(selected_client_id)
+            st.success("Client deleted.")
+            st.rerun()
+
+
 # ═══════════════════════════════════════════════
 # UI
 # ═══════════════════════════════════════════════
@@ -678,6 +906,18 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+workspace_view = st.radio(
+    "Workspace",
+    ["Run pipeline", "Clients"],
+    horizontal=True,
+    label_visibility="collapsed",
+)
+
+if workspace_view == "Clients":
+    st.markdown('<hr class="divider">', unsafe_allow_html=True)
+    _render_client_manager()
+    st.stop()
+
 # ── Two-column layout: Target | Model ─────────
 left_col, spacer, right_col = st.columns([5, 1, 6])
 
@@ -705,16 +945,17 @@ with left_col:
             format_func=lambda a: AGENCY_REGISTRY[a].agency_name,
         )
         agency = get_agency(agency_id)
+        agency_client_ids = _client_ids_for_agency(agency_id)
 
         select_all = st.toggle("All clients", value=True)
         if select_all:
-            client_filter = list(agency.client_ids)
+            client_filter = agency_client_ids
         else:
             client_filter = st.multiselect(
                 "Select clients",
-                agency.client_ids,
-                default=agency.client_ids,
-                format_func=lambda c: CLIENT_REGISTRY[c].client_name if c in CLIENT_REGISTRY else c,
+                agency_client_ids,
+                default=agency_client_ids,
+                format_func=_client_label,
             )
 
     else:
@@ -722,7 +963,7 @@ with left_col:
         selected_client = st.selectbox(
             "Business account",
             all_clients,
-            format_func=lambda c: CLIENT_REGISTRY[c].client_name if c in CLIENT_REGISTRY else c,
+            format_func=_client_label,
         )
         cfg = get_client(selected_client)
         agency_id = cfg.agency_id or (list_agencies()[0] if list_agencies() else "")
@@ -738,6 +979,10 @@ with left_col:
             src_badges = ""
             if cfg.meta_enabled:
                 src_badges += '<span class="src-badge src-meta">Meta</span>'
+            if getattr(cfg, "google_ads_enabled", False):
+                src_badges += '<span class="src-badge src-hubspot">Google</span>'
+            if getattr(cfg, "linkedin_ads_enabled", False):
+                src_badges += '<span class="src-badge src-meta">LinkedIn</span>'
             if cfg.hubspot_enabled:
                 src_badges += '<span class="src-badge src-hubspot">HubSpot</span>'
             if cfg.stripe_enabled:
@@ -799,7 +1044,7 @@ with ctrl_l:
 n_clients = len(client_filter)
 btn_label = f"Run All ({n_clients})" if (
     run_mode == "Agency" and agency_id and
-    n_clients == len(AGENCY_REGISTRY.get(agency_id, type('', (), {'client_ids': []})()).client_ids)
+    n_clients == len(_client_ids_for_agency(agency_id))
 ) else f"Run Selected ({n_clients})"
 
 with ctrl_m:
@@ -835,6 +1080,18 @@ if run_btn and client_filter and agency_id:
     )
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
     if _DATABRICKS_MODE:
-        _trigger_databricks_job(agency_id, client_filter, dry_run)
+        _trigger_databricks_job(
+            agency_id,
+            client_filter,
+            dry_run,
+            selected_model,
+            run_mode,
+        )
     else:
-        _run_local(agency_id, client_filter, dry_run)
+        _run_local(
+            agency_id,
+            client_filter,
+            dry_run,
+            selected_model,
+            run_mode,
+        )

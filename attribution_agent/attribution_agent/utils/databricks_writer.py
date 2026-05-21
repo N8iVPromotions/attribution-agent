@@ -6,6 +6,7 @@ Runs via SQL Connector when local, Spark when inside Databricks.
 from __future__ import annotations
 import logging
 import os
+from datetime import datetime, timezone
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -130,11 +131,65 @@ CREATE TABLE IF NOT EXISTS {schema}.stripe_payments_raw (
 USING DELTA
 """
 
+NORMALIZED_AD_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS {schema}.ad_spend_normalized (
+    client_id           STRING,
+    source_platform     STRING,
+    account_id          STRING,
+    campaign_id         STRING,
+    campaign_name       STRING,
+    ad_group_id         STRING,
+    ad_group_name       STRING,
+    ad_id               STRING,
+    ad_name             STRING,
+    date                DATE,
+    spend               DOUBLE,
+    impressions         BIGINT,
+    clicks              BIGINT,
+    conversions         DOUBLE,
+    utm_source          STRING,
+    utm_medium          STRING,
+    utm_campaign        STRING,
+    landing_url         STRING,
+    ingested_at         TIMESTAMP
+)
+USING DELTA
+PARTITIONED BY (date)
+"""
+
+RUN_HISTORY_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS workspace.attribution_ops.pipeline_runs (
+    run_id              STRING,
+    agency_id           STRING,
+    client_id           STRING,
+    run_mode            STRING,
+    attribution_model   STRING,
+    status              STRING,
+    dry_run             BOOLEAN,
+    meta_rows           BIGINT,
+    google_rows         BIGINT,
+    linkedin_rows       BIGINT,
+    hubspot_rows        BIGINT,
+    stripe_rows         BIGINT,
+    normalized_ad_rows  BIGINT,
+    total_pipeline      DOUBLE,
+    top_channel         STRING,
+    email_sent          BOOLEAN,
+    warnings            STRING,
+    error               STRING,
+    started_at          TIMESTAMP,
+    finished_at         TIMESTAMP,
+    output_schema       STRING
+)
+USING DELTA
+"""
+
 
 def ensure_tables(schema: str) -> None:
     _run_sql(META_TABLE_DDL.format(schema=schema))
     _run_sql(HUBSPOT_TABLE_DDL.format(schema=schema))
     _run_sql(STRIPE_TABLE_DDL.format(schema=schema))
+    _run_sql(NORMALIZED_AD_TABLE_DDL.format(schema=schema))
     # contact_email was added in v2 — backfill the column on existing tables
     try:
         _run_sql(
@@ -144,6 +199,12 @@ def ensure_tables(schema: str) -> None:
     except Exception:
         pass  # column already present
     logger.info(f"[Databricks] Tables ready: {schema}")
+
+
+def ensure_ops_tables() -> None:
+    _run_sql("CREATE SCHEMA IF NOT EXISTS workspace.attribution_ops")
+    _run_sql(RUN_HISTORY_TABLE_DDL)
+    logger.info("[Databricks] Ops tables ready")
 
 
 def _upsert_dataframe(
@@ -270,3 +331,75 @@ def write_stripe_data(df: pd.DataFrame, schema: str) -> int:
     rows = _upsert_dataframe(df, schema, "stripe_payments_raw", ["payment_id"])
     logger.info(f"[Databricks] Wrote {rows} Stripe rows")
     return rows
+
+
+def write_normalized_ad_data(df: pd.DataFrame, schema: str) -> int:
+    if df.empty:
+        logger.warning("[Databricks] Normalized ad DataFrame empty — skipping")
+        return 0
+    df = df.copy()
+    df["ingested_at"] = pd.Timestamp.utcnow()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+    rows = _upsert_dataframe(
+        df,
+        schema,
+        "ad_spend_normalized",
+        ["client_id", "source_platform", "campaign_id", "ad_group_id", "ad_id", "date"],
+    )
+    logger.info(f"[Databricks] Wrote {rows} normalized ad rows")
+    return rows
+
+
+def write_pipeline_run(record: dict) -> None:
+    ensure_ops_tables()
+    now = datetime.now(timezone.utc)
+    row = {
+        "run_id": record.get("run_id", ""),
+        "agency_id": record.get("agency_id", ""),
+        "client_id": record.get("client_id", ""),
+        "run_mode": record.get("run_mode", ""),
+        "attribution_model": record.get("attribution_model", ""),
+        "status": record.get("status", ""),
+        "dry_run": bool(record.get("dry_run", False)),
+        "meta_rows": int(record.get("meta_rows", 0) or 0),
+        "google_rows": int(record.get("google_rows", 0) or 0),
+        "linkedin_rows": int(record.get("linkedin_rows", 0) or 0),
+        "hubspot_rows": int(record.get("hubspot_rows", 0) or 0),
+        "stripe_rows": int(record.get("stripe_rows", 0) or 0),
+        "normalized_ad_rows": int(record.get("normalized_ad_rows", 0) or 0),
+        "total_pipeline": float(record.get("total_pipeline", 0.0) or 0.0),
+        "top_channel": record.get("top_channel", ""),
+        "email_sent": bool(record.get("email_sent", False)),
+        "warnings": record.get("warnings", ""),
+        "error": record.get("error", ""),
+        "started_at": record.get("started_at") or now,
+        "finished_at": record.get("finished_at") or now,
+        "output_schema": record.get("output_schema", ""),
+    }
+    df = pd.DataFrame([row])
+    for col in ("started_at", "finished_at"):
+        df[col] = df[col].astype(object).where(df[col].notna(), None)
+    _upsert_dataframe(df, "workspace.attribution_ops", "pipeline_runs", ["run_id", "client_id"])
+
+
+def fetch_recent_pipeline_runs(limit: int = 20) -> list[dict]:
+    try:
+        ensure_ops_tables()
+        conn = _get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT run_id, agency_id, client_id, run_mode, attribution_model, status, "
+            "dry_run, meta_rows, google_rows, linkedin_rows, hubspot_rows, stripe_rows, "
+            "normalized_ad_rows, total_pipeline, top_channel, email_sent, warnings, error, "
+            "started_at, finished_at, output_schema "
+            "FROM workspace.attribution_ops.pipeline_runs "
+            f"ORDER BY started_at DESC LIMIT {int(limit)}"
+        )
+        columns = [desc[0] for desc in cursor.description]
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        cursor.close()
+        conn.close()
+        return rows
+    except Exception as exc:
+        logger.warning(f"[Databricks] Could not fetch recent pipeline runs: {exc}")
+        return []
