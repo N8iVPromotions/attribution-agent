@@ -35,6 +35,7 @@ sys.path.insert(0, _root)
 from config.client_config import get_client
 from config.agency_config import AgencyConfig
 from agents.insight.insight_agent import InsightReport, generate_insight_report
+from attribution_models import ATTRIBUTION_MODEL_LABELS
 
 
 # ─── HTML EMAIL TEMPLATE ──────────────────────────────────────
@@ -63,6 +64,7 @@ def _build_html(
 
     roi_display = f"{report.overall_roi:.1f}x" if report.overall_roi else "N/A"
     spend_display = f"${report.total_spend:,.0f}" if report.total_spend else "$0"
+    model_label = ATTRIBUTION_MODEL_LABELS.get(report.attribution_model, report.attribution_model)
 
     header_bg     = f"#{agency_config.brand_color}" if agency_config else "#1a1a1a"
     header_label  = agency_config.sender_name if agency_config and agency_config.sender_name else "Attribution Report"
@@ -249,6 +251,9 @@ def _build_html(
         <div class="section-title">Top Channel</div>
         <span class="top-channel">↑ {report.top_channel}</span>
 
+        <div class="section-title">Attribution Model</div>
+        <p>{model_label}</p>
+
         <div class="section-title">Executive Summary</div>
         <p>{narrative_html}</p>
 
@@ -320,6 +325,7 @@ Key Findings:
 {chr(10).join(f'• {f}' for f in report.key_findings)}
 
 Top Channel:    {report.top_channel}
+Model:          {ATTRIBUTION_MODEL_LABELS.get(report.attribution_model, report.attribution_model)}
 Pipeline Value: ${report.total_pipeline:,.0f}
 Ad Spend:       ${report.total_spend:,.0f}
 ROI:            {report.overall_roi:.1f}x
@@ -349,6 +355,7 @@ def run_full_pipeline(
     client_id: str,
     recipient_email: str,
     powerbi_url: str = "",
+    attribution_model: str | None = None,
 ) -> dict:
     """
     End-to-end: generate insight report + send email.
@@ -357,7 +364,10 @@ def run_full_pipeline(
     logger.info(f"[Comms] Running full pipeline for {client_id}")
 
     # 1. Generate insight report
-    report = generate_insight_report(client_id=client_id)
+    report = generate_insight_report(
+        client_id=client_id,
+        attribution_model=attribution_model,
+    )
 
     # 2. Send email
     sent = send_report(
@@ -373,6 +383,7 @@ def run_full_pipeline(
         "email_sent":      sent,
         "top_channel":     report.top_channel,
         "total_pipeline":  report.total_pipeline,
+        "attribution_model": report.attribution_model,
     }
 
 
@@ -405,12 +416,14 @@ if __name__ == "__main__":
                         help="Recipient email address")
     parser.add_argument("--powerbi",   type=str, default="",
                         help="Power BI dashboard URL (optional)")
+    parser.add_argument("--attribution-model", type=str, default=None)
     args = parser.parse_args()
 
     result = run_full_pipeline(
         client_id=args.client,
         recipient_email=args.to,
         powerbi_url=args.powerbi,
+        attribution_model=args.attribution_model,
     )
 
     print(f"\nReport sent to {result['recipient']}")

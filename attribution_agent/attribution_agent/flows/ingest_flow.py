@@ -35,12 +35,20 @@ def _get_secret(key: str) -> str:
 
 from config.client_config import ClientConfig, get_client, list_clients
 from agents.ingest.meta_connector import pull_meta_data
+from agents.ingest.google_ads_connector import pull_google_ads_data
 from agents.ingest.hubspot_connector import pull_hubspot_data
+from agents.ingest.linkedin_connector import pull_linkedin_ads_data
 from agents.ingest.stripe_connector import pull_stripe_data
+from agents.ingest.ad_sources import (
+    combine_normalized_ads,
+    normalize_google_ads,
+    normalize_linkedin_ads,
+    normalize_meta_ads,
+)
 from agents.ingest.validator import validate_meta, validate_hubspot, validate_stripe, ValidationReport
 from utils.databricks_writer import (
     ensure_schema, ensure_tables,
-    write_meta_data, write_hubspot_data, write_stripe_data,
+    write_meta_data, write_hubspot_data, write_stripe_data, write_normalized_ad_data,
 )
 
 
@@ -88,6 +96,34 @@ def step_pull_hubspot(config: ClientConfig, hubspot_token: str):
             access_token=hubspot_token,
         ),
         retries=3, delay=30, label="pull-hubspot",
+    )
+
+
+def step_pull_google_ads(config: ClientConfig, google_token: str):
+    if not getattr(config, "google_ads_enabled", False):
+        logger.info("[Google Ads] Not enabled — skipping")
+        return None
+    return _with_retry(
+        lambda: pull_google_ads_data(
+            customer_id=config.google_ads_customer_id,
+            lookback_days=config.lookback_days,
+            access_token=google_token,
+        ),
+        retries=3, delay=30, label="pull-google-ads",
+    )
+
+
+def step_pull_linkedin_ads(config: ClientConfig, linkedin_token: str):
+    if not getattr(config, "linkedin_ads_enabled", False):
+        logger.info("[LinkedIn Ads] Not enabled — skipping")
+        return None
+    return _with_retry(
+        lambda: pull_linkedin_ads_data(
+            account_id=config.linkedin_ads_account_id,
+            lookback_days=config.lookback_days,
+            access_token=linkedin_token,
+        ),
+        retries=3, delay=30, label="pull-linkedin-ads",
     )
 
 
@@ -166,6 +202,21 @@ def step_write_stripe(validated_result, config: ClientConfig) -> int:
     )
 
 
+def step_write_normalized_ads(meta_df, google_df, linkedin_df, config: ClientConfig) -> int:
+    normalized = combine_normalized_ads([
+        normalize_meta_ads(meta_df, config.client_id),
+        normalize_google_ads(google_df, config.client_id),
+        normalize_linkedin_ads(linkedin_df, config.client_id),
+    ])
+    if normalized.empty:
+        logger.warning("[Ads] No normalized ad rows to write")
+        return 0
+    return _with_retry(
+        lambda: write_normalized_ad_data(normalized, schema=config.databricks_schema),
+        retries=2, delay=15, label="write-normalized-ads",
+    )
+
+
 def step_alert(meta_result, hubspot_result, stripe_result, config: ClientConfig) -> None:
     all_reports = []
     if meta_result and meta_result[1]:
@@ -192,14 +243,20 @@ def ingest_flow(client_id: str) -> dict:
     meta_token    = _get_secret("META_ACCESS_TOKEN")
     hubspot_token = _get_secret("HUBSPOT_ACCESS_TOKEN")
     stripe_token  = _get_secret("STRIPE_SECRET_KEY")
+    google_token  = _get_secret("GOOGLE_ADS_REFRESH_TOKEN")
+    linkedin_token = _get_secret("LINKEDIN_ACCESS_TOKEN")
 
     step_setup(config.databricks_schema)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
         meta_future    = pool.submit(step_pull_meta,    config, meta_token)
+        google_future  = pool.submit(step_pull_google_ads, config, google_token)
+        linkedin_future = pool.submit(step_pull_linkedin_ads, config, linkedin_token)
         hubspot_future = pool.submit(step_pull_hubspot, config, hubspot_token)
         stripe_future  = pool.submit(step_pull_stripe,  config, stripe_token)
         meta_df    = meta_future.result()
+        google_df  = google_future.result()
+        linkedin_df = linkedin_future.result()
         hubspot_df = hubspot_future.result()
         stripe_df  = stripe_future.result()
 
@@ -210,14 +267,18 @@ def ingest_flow(client_id: str) -> dict:
     meta_rows    = step_write_meta(meta_validated,    config)
     hubspot_rows = step_write_hubspot(hubspot_validated, config)
     stripe_rows  = step_write_stripe(stripe_validated,  config)
+    normalized_ad_rows = step_write_normalized_ads(meta_df, google_df, linkedin_df, config)
 
     step_alert(meta_validated, hubspot_validated, stripe_validated, config)
 
     summary = {
         "client_id":    client_id,
         "meta_rows":    meta_rows,
+        "google_rows":  0 if google_df is None else len(google_df),
+        "linkedin_rows": 0 if linkedin_df is None else len(linkedin_df),
         "hubspot_rows": hubspot_rows,
         "stripe_rows":  stripe_rows,
+        "normalized_ad_rows": normalized_ad_rows,
         "status":       "complete",
     }
     logger.info(f"Ingest Flow COMPLETE | {summary}")

@@ -1,5 +1,6 @@
 # Credentials — never commit
 .env
+attribution_agent/attribution_agent/config/client_registry.local.json
 
 # Python
 __pycache__/
@@ -33,3 +34,6 @@ Thumbs.db
 
 # Databricks
 .databricks/
+
+# Claude Code
+.claude/

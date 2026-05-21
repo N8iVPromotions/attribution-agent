@@ -35,6 +35,11 @@ except NameError:
 sys.path.insert(0, _root)
 
 from config.client_config import get_client, ClientConfig
+from attribution_models import (
+    ATTRIBUTION_MODEL_DESCRIPTIONS,
+    ATTRIBUTION_MODEL_LABELS,
+    normalize_model,
+)
 
 
 # ─── REPORT DATACLASS ─────────────────────────────────────────
@@ -53,6 +58,7 @@ class InsightReport:
     collected_revenue: float = 0.0         # Actual cash collected via Stripe
     refund_rate: float = 0.0               # Refunds / collected revenue
     true_roi: float = 0.0                  # collected_revenue / total_spend
+    attribution_model: str = "last_touch"
     generated_at: str = ""
 
     def to_dict(self) -> dict:
@@ -69,6 +75,7 @@ class InsightReport:
             "collected_revenue":  self.collected_revenue,
             "refund_rate":        self.refund_rate,
             "true_roi":           self.true_roi,
+            "attribution_model":   self.attribution_model,
             "generated_at":       self.generated_at,
         }
 
@@ -80,7 +87,10 @@ def _fetch_channel_performance(config: ClientConfig) -> list[dict]:
     from databricks import sql
 
     conn = sql.connect(
-        server_hostname=os.environ["DATABRICKS_SERVER_HOSTNAME"],
+        server_hostname=(
+            os.environ.get("DATABRICKS_SERVER_HOSTNAME")
+            or os.environ.get("DATABRICKS_HOST", "").lstrip("https://").rstrip("/")
+        ),
         http_path=os.environ["DATABRICKS_HTTP_PATH"],
         access_token=os.environ["DATABRICKS_TOKEN"],
     )
@@ -128,10 +138,13 @@ def _fetch_channel_performance(config: ClientConfig) -> list[dict]:
 
 # ─── CLAUDE NARRATIVE GENERATOR ───────────────────────────────
 
-def _build_prompt(config: ClientConfig, data: list[dict]) -> str:
+def _build_prompt(config: ClientConfig, data: list[dict], attribution_model: str) -> str:
     """Build the prompt for Claude."""
 
     data_str = json.dumps(data, indent=2, default=str)
+    selected_model = normalize_model(attribution_model)
+    model_label = ATTRIBUTION_MODEL_LABELS[selected_model]
+    model_description = ATTRIBUTION_MODEL_DESCRIPTIONS[selected_model]
 
     total_pipeline      = sum(r.get("pipeline_value") or 0 for r in data)
     total_spend         = sum(r.get("total_spend") or 0 for r in data)
@@ -158,6 +171,9 @@ def _build_prompt(config: ClientConfig, data: list[dict]) -> str:
 
     return f"""You are a marketing analytics consultant writing a monthly attribution report for {config.client_name}.
 
+Attribution model used: {model_label}
+Model rationale: {model_description}
+
 Here is their channel performance data for {report_month}:
 
 {data_str}
@@ -181,6 +197,7 @@ Guidelines:
 - Use specific numbers from the data
 - Be direct about what's working and what isn't
 - If data shows "Unattributed" deals, note the importance of UTM tagging
+- Briefly explain how the selected attribution model affects interpretation
 - Keep the total report under 400 words
 - If collected_revenue data is present, distinguish between pipeline value (deals created)
   and collected revenue (cash actually received) — these are different and both matter
@@ -196,7 +213,8 @@ Return your response as a JSON object with these exact keys:
   "overall_roi": 0.0,
   "collected_revenue": 0.0,
   "refund_rate": 0.0,
-  "true_roi": 0.0
+  "true_roi": 0.0,
+  "attribution_model": "{selected_model}"
 }}
 
 Return ONLY the JSON — no markdown, no backticks, no preamble."""
@@ -241,7 +259,10 @@ def _call_claude(prompt: str) -> dict:
 
 # ─── MAIN FUNCTION ────────────────────────────────────────────
 
-def generate_insight_report(client_id: str) -> InsightReport:
+def generate_insight_report(
+    client_id: str,
+    attribution_model: str | None = None,
+) -> InsightReport:
     """
     Full pipeline:
     1. Fetch channel_performance from Databricks
@@ -250,6 +271,7 @@ def generate_insight_report(client_id: str) -> InsightReport:
     4. Return structured InsightReport
     """
     config = get_client(client_id)
+    selected_model = normalize_model(attribution_model or config.attribution_model)
     logger.info(f"[Insight] Generating report for {config.client_name}")
 
     # 1. Fetch data
@@ -261,11 +283,12 @@ def generate_insight_report(client_id: str) -> InsightReport:
             client_name=config.client_name,
             report_month="N/A",
             narrative="No attribution data available for this period.",
+            attribution_model=selected_model,
             generated_at=datetime.utcnow().isoformat(),
         )
 
     # 2. Build prompt
-    prompt = _build_prompt(config, data)
+    prompt = _build_prompt(config, data, selected_model)
 
     # 3. Call Claude
     logger.info("[Insight] Calling Claude API...")
@@ -285,6 +308,7 @@ def generate_insight_report(client_id: str) -> InsightReport:
         collected_revenue=claude_response.get("collected_revenue", 0.0),
         refund_rate=claude_response.get("refund_rate", 0.0),
         true_roi=claude_response.get("true_roi", 0.0),
+        attribution_model=selected_model,
         generated_at=datetime.utcnow().isoformat(),
     )
 
@@ -300,9 +324,13 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--client", type=str, default="demo_client")
+    parser.add_argument("--attribution-model", type=str, default=None)
     args = parser.parse_args()
 
-    report = generate_insight_report(client_id=args.client)
+    report = generate_insight_report(
+        client_id=args.client,
+        attribution_model=args.attribution_model,
+    )
 
     print("\n" + "="*60)
     print(f"ATTRIBUTION REPORT | {report.client_name} | {report.report_month}")
