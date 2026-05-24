@@ -166,7 +166,21 @@ BASE_CLIENT_REGISTRY: dict[str, ClientConfig] = {
         lookback_days=30,
         client_report_email="Zajen@n8ivpromotions.com",
     ),
-    # "second_client": ClientConfig(...)
+    "n8iv_promotions": ClientConfig(
+        client_id="n8iv_promotions",
+        client_name="N8iV Promotions",
+        attribution_model="last_touch",
+        meta_enabled=True,
+        meta_ad_account_id="",              # ← add Meta ad account ID
+        hubspot_enabled=True,
+        hubspot_pipeline_id="",             # ← add HubSpot pipeline ID if not default
+        stripe_enabled=True,
+        databricks_schema="workspace.attribution_n8iv_promotions",
+        lookback_days=30,
+        agency_id="n8iv_promotions",
+        client_report_email="zajen@n8ivpromotions.com",
+        client_display_name="N8iV Promotions (Internal)",
+    ),
 }
 
 CLIENT_REGISTRY: dict[str, ClientConfig] = {}
