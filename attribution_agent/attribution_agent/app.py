@@ -24,6 +24,11 @@ from dotenv import load_dotenv
 load_dotenv()
 sys.path.insert(0, str(Path(__file__).parent))
 
+from agents.outreach.outreach_agent import (
+    PROSPECTS,
+    generate_email_sequence,
+    send_draft_to_self,
+)
 from config.agency_config import get_agency, list_agencies, AGENCY_REGISTRY
 from config.client_config import (
     CLIENT_REGISTRY,
@@ -998,7 +1003,7 @@ st.markdown(
 )
 
 # ── Navigation tabs ───────────────────────────
-tab_pipeline, tab_clients = st.tabs(["Pipeline", "Clients"])
+tab_pipeline, tab_clients, tab_outreach = st.tabs(["Pipeline", "Clients", "Outreach"])
 
 
 # ══════════════════════════════════════════════
@@ -1206,3 +1211,278 @@ with tab_clients:
 
     st.markdown('<hr class="ruled">', unsafe_allow_html=True)
     _render_client_manager()
+
+
+# ══════════════════════════════════════════════
+# TAB: OUTREACH AGENT
+# ══════════════════════════════════════════════
+with tab_outreach:
+
+    # ── Session state init ─────────────────────
+    if "outreach_sequences" not in st.session_state:
+        st.session_state.outreach_sequences = {}
+    if "outreach_draft_status" not in st.session_state:
+        st.session_state.outreach_draft_status = {}
+    if "outreach_selected" not in st.session_state:
+        st.session_state.outreach_selected = PROSPECTS[0]["id"]
+
+    # ── Outreach-specific styles ───────────────
+    st.markdown("""
+<style>
+.or-stat-card {
+    background: #111111;
+    border: 1px solid #1E1E1E;
+    border-radius: 8px;
+    padding: 18px 12px;
+    text-align: center;
+}
+.or-stat-val {
+    font-size: 1.75rem;
+    font-weight: 700;
+    font-family: 'DM Mono', 'Courier New', monospace;
+    line-height: 1;
+}
+.or-stat-label {
+    font-size: 0.7rem;
+    color: #888888;
+    margin-top: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+}
+.or-prospect-card {
+    background: #111111;
+    border: 1px solid #1E1E1E;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 16px;
+}
+.or-industry-badge {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-family: monospace;
+    padding: 3px 9px;
+    border-radius: 4px;
+    border: 1px solid #2563EB44;
+    color: #2563EB;
+    background: rgba(37,99,235,0.08);
+    letter-spacing: 0.4px;
+    margin-left: 10px;
+    vertical-align: middle;
+}
+.or-field-label {
+    font-size: 0.65rem;
+    color: #888888;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    margin-bottom: 3px;
+}
+.or-field-val {
+    font-size: 0.82rem;
+    color: #e6edf3;
+    font-family: 'DM Mono', 'Courier New', monospace;
+}
+.or-notes {
+    font-size: 0.8rem;
+    color: #888888;
+    line-height: 1.6;
+    padding: 10px 12px;
+    background: rgba(255,255,255,0.03);
+    border-left: 2px solid #1E1E1E;
+    border-radius: 0 4px 4px 0;
+    margin-top: 12px;
+}
+.or-sent-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-family: monospace;
+    padding: 4px 10px;
+    border-radius: 4px;
+    background: rgba(16,185,129,0.12);
+    color: #10B981;
+    border: 1px solid rgba(16,185,129,0.25);
+}
+.or-email-meta {
+    font-size: 0.72rem;
+    color: #888888;
+    font-family: 'DM Mono', 'Courier New', monospace;
+    margin-bottom: 8px;
+}
+.or-email-meta strong { color: #e6edf3; }
+</style>
+""", unsafe_allow_html=True)
+
+    # ── Stats row ──────────────────────────────
+    total = len(PROSPECTS)
+    generated = len(st.session_state.outreach_sequences)
+    drafted = sum(
+        1 for pid, status in st.session_state.outreach_draft_status.items()
+        if any(status.values())
+    )
+    pending = total - generated
+
+    sc1, sc2, sc3, sc4 = st.columns(4)
+    for col, val, label, color in [
+        (sc1, total,     "Total Prospects",     "#e6edf3"),
+        (sc2, generated, "Sequences Generated", "#F59E0B"),
+        (sc3, drafted,   "Drafted to Inbox",    "#10B981"),
+        (sc4, pending,   "Pending",             "#888888"),
+    ]:
+        with col:
+            st.markdown(
+                f'<div class="or-stat-card">'
+                f'  <div class="or-stat-val" style="color:{color}">{val}</div>'
+                f'  <div class="or-stat-label">{label}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("<div style='height:1.25rem'></div>", unsafe_allow_html=True)
+
+    # ── Two-column layout ──────────────────────
+    prospect_col, detail_col = st.columns([1, 2.5])
+
+    with prospect_col:
+        st.markdown(
+            '<div class="panel-header" style="border-radius:8px 8px 0 0;">'
+            '  <span class="panel-title">Prospects</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        def _status_dot_color(pid: int) -> str:
+            if st.session_state.outreach_draft_status.get(pid) and any(
+                st.session_state.outreach_draft_status[pid].values()
+            ):
+                return "#10B981"
+            if pid in st.session_state.outreach_sequences:
+                return "#F59E0B"
+            return "#444444"
+
+        prospect_names = [p["name"] for p in PROSPECTS]
+        selected_name = st.radio(
+            "Prospect",
+            prospect_names,
+            label_visibility="collapsed",
+            key="outreach_prospect_radio",
+        )
+        selected_prospect = next(p for p in PROSPECTS if p["name"] == selected_name)
+        st.session_state.outreach_selected = selected_prospect["id"]
+
+    with detail_col:
+        p = selected_prospect
+        pid = p["id"]
+
+        # Prospect card
+        st.markdown(
+            f'<div class="or-prospect-card">'
+            f'  <div style="display:flex;align-items:center;margin-bottom:14px;">'
+            f'    <span style="font-size:1.05rem;font-weight:600;color:#e6edf3">{p["name"]}</span>'
+            f'    <span class="or-industry-badge">{p["industry"]}</span>'
+            f'  </div>'
+            f'  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:4px;">'
+            f'    <div><div class="or-field-label">Contact</div>'
+            f'         <div class="or-field-val">{p["contact"]}</div></div>'
+            f'    <div><div class="or-field-label">Email</div>'
+            f'         <div class="or-field-val" style="font-size:0.72rem">{p["email"]}</div></div>'
+            f'    <div><div class="or-field-label">Phone</div>'
+            f'         <div class="or-field-val">{p["phone"]}</div></div>'
+            f'  </div>'
+            f'  <div class="or-notes">{p["notes"]}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        seq = st.session_state.outreach_sequences.get(pid)
+
+        # Generate button
+        if seq is None:
+            if st.button(f"⚡ Generate 3-Email Sequence for {p['name']}", use_container_width=True, type="primary", key=f"gen_{pid}"):
+                with st.spinner("Generating personalized email sequence via Claude..."):
+                    try:
+                        result = generate_email_sequence(p)
+                        st.session_state.outreach_sequences[pid] = result
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Generation failed — {exc}")
+        else:
+            # Regenerate + Draft All row
+            regen_col, draft_all_col = st.columns([1, 1])
+            with regen_col:
+                if st.button("↺ Regenerate", key=f"regen_{pid}", use_container_width=True):
+                    with st.spinner("Regenerating..."):
+                        try:
+                            result = generate_email_sequence(p)
+                            st.session_state.outreach_sequences[pid] = result
+                            st.session_state.outreach_draft_status.pop(pid, None)
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f"Regeneration failed — {exc}")
+            with draft_all_col:
+                if st.button("✉ Draft All 3 to Inbox", key=f"draft_all_{pid}", use_container_width=True, type="primary"):
+                    _gmail_sender = os.environ.get("GMAIL_SENDER", "")
+                    _gmail_pw = os.environ.get("GMAIL_APP_PASSWORD", "")
+                    if not _gmail_sender or not _gmail_pw:
+                        st.error("GMAIL_SENDER and GMAIL_APP_PASSWORD must be set in .env")
+                    else:
+                        errors = []
+                        for ekey in ["email1", "email2", "email3"]:
+                            try:
+                                send_draft_to_self(seq[ekey], p, _gmail_sender, _gmail_pw)
+                                if pid not in st.session_state.outreach_draft_status:
+                                    st.session_state.outreach_draft_status[pid] = {}
+                                st.session_state.outreach_draft_status[pid][ekey] = True
+                            except Exception as exc:
+                                errors.append(str(exc))
+                        if errors:
+                            st.error(f"Some drafts failed: {'; '.join(errors)}")
+                        else:
+                            st.success(f"✓ All 3 drafts sent to {_gmail_sender}")
+                        st.rerun()
+
+            # Email sequence expanders
+            email_meta = [
+                ("email1", "FIRST TOUCH",  "Day 1"),
+                ("email2", "FOLLOW-UP 1",  "Day 5"),
+                ("email3", "FOLLOW-UP 2",  "Day 12"),
+            ]
+            draft_status = st.session_state.outreach_draft_status.get(pid, {})
+
+            for ekey, label, day in email_meta:
+                email = seq[ekey]
+                is_drafted = draft_status.get(ekey, False)
+                drafted_suffix = " ✓ In Inbox" if is_drafted else ""
+
+                with st.expander(f"{label} — {email['subject']}{drafted_suffix}", expanded=(ekey == "email1")):
+                    st.markdown(
+                        f'<div class="or-email-meta">'
+                        f'  <strong>To:</strong> {p["email"]} &nbsp;·&nbsp; '
+                        f'  <strong>From:</strong> zajen@n8ivpromotions.com &nbsp;·&nbsp; '
+                        f'  <strong>Send:</strong> {day}'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.code(email["body"], language=None)
+
+                    action_col, status_col = st.columns([1, 2])
+                    with action_col:
+                        if not is_drafted:
+                            if st.button(f"✉ Send to Inbox", key=f"draft_{pid}_{ekey}", type="primary"):
+                                _gmail_sender = os.environ.get("GMAIL_SENDER", "")
+                                _gmail_pw = os.environ.get("GMAIL_APP_PASSWORD", "")
+                                if not _gmail_sender or not _gmail_pw:
+                                    st.error("GMAIL credentials not configured")
+                                else:
+                                    try:
+                                        send_draft_to_self(email, p, _gmail_sender, _gmail_pw)
+                                        if pid not in st.session_state.outreach_draft_status:
+                                            st.session_state.outreach_draft_status[pid] = {}
+                                        st.session_state.outreach_draft_status[pid][ekey] = True
+                                        st.rerun()
+                                    except Exception as exc:
+                                        st.error(f"Failed to send — {exc}")
+                    with status_col:
+                        if is_drafted:
+                            st.markdown(
+                                '<span class="or-sent-badge">✓ Draft sent to inbox</span>',
+                                unsafe_allow_html=True,
+                            )
