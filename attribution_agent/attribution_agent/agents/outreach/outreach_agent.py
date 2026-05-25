@@ -9,7 +9,7 @@ import os
 import smtplib
 from email.mime.text import MIMEText
 
-import anthropic
+import requests
 
 PROSPECTS = [
     {"id": 1,  "name": "Alani Skin MD",                       "contact": "Practice Manager", "email": "info@alaniskinmd.com",                      "industry": "Med Spa",     "phone": "480-993-2218", "notes": "783 reviews, 4.8★. High-volume laser and injectables practice. Likely running Meta ads for patient acquisition."},
@@ -106,16 +106,32 @@ Email 3 (Day 12 Follow-up — still no reply):
 - Sign off: "Zajen"
 """
 
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1500,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY not set in .env")
 
-    text = message.content[0].text.strip()
-    clean = text.replace("```json", "").replace("```", "").strip()
-    return json.loads(clean)
+    response = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        json={
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1500,
+            "messages": [{"role": "user", "content": prompt}],
+        },
+        timeout=60,
+    )
+    response.raise_for_status()
+
+    text = response.json()["content"][0]["text"].strip()
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+    return json.loads(text.strip())
 
 
 def send_draft_to_self(email: dict, prospect: dict, sender: str, app_password: str) -> None:
