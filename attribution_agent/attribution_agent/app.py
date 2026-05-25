@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 load_dotenv()
 sys.path.insert(0, str(Path(__file__).parent))
 
+from agents.control import arie_bot
 from agents.outreach.outreach_agent import (
     PROSPECTS,
     generate_email_sequence,
@@ -975,6 +976,18 @@ def _render_client_manager() -> None:
 # UI
 # ═══════════════════════════════════════════════
 
+# ── Start ARIE (once per process) ─────────────
+@st.cache_resource
+def _start_arie():
+    token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if token and chat_id:
+        arie_bot.start(token, chat_id)
+        return True
+    return False
+
+_arie_enabled = _start_arie()
+
 # ── Top bar ───────────────────────────────────
 import datetime as _dt
 env_label = "Databricks" if _DATABRICKS_MODE else "Local"
@@ -997,6 +1010,10 @@ st.markdown(
     f'      {env_label}'
     f'    </span>'
     f'    <span class="status-pill">{now_str}</span>'
+    f'    <span class="status-pill">'
+    f'      <span class="status-dot" style="background:{"#3fb950" if _arie_enabled and arie_bot.is_running() else "#484f58"};"></span>'
+    f'      ARIE'
+    f'    </span>'
     f'  </div>'
     f'</div>',
     unsafe_allow_html=True,

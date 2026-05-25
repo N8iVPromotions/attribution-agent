@@ -76,3 +76,18 @@ resources:
         env:
           - name: ATTRIBUTION_JOB_NAME
             value: "[Attribution] Monthly Pipeline"
+          - name: TELEGRAM_BOT_TOKEN
+            valueFrom:
+              secretRef:
+                scope: attribution
+                key: TELEGRAM_BOT_TOKEN
+          - name: TELEGRAM_CHAT_ID
+            valueFrom:
+              secretRef:
+                scope: attribution
+                key: TELEGRAM_CHAT_ID
+          - name: OPENAI_API_KEY
+            valueFrom:
+              secretRef:
+                scope: attribution
+                key: OPENAI_API_KEY
