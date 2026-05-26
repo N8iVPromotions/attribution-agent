@@ -46,6 +46,7 @@ from config.client_config import (
 
 _DATABRICKS_MODE = bool(os.environ.get("ATTRIBUTION_JOB_NAME"))
 _JOB_NAME = os.environ.get("ATTRIBUTION_JOB_NAME", "")
+_JOB_ID = int(os.environ.get("ATTRIBUTION_JOB_ID", "0") or "0")
 
 # ── Page config ───────────────────────────────────────────────
 st.set_page_config(
@@ -646,10 +647,15 @@ def _trigger_databricks_job(
         return
 
     w = WorkspaceClient()
-    job = next((j for j in w.jobs.list() if j.settings and j.settings.name == _JOB_NAME), None)
-    if not job:
-        st.error(f"Job '{_JOB_NAME}' not found in this workspace.")
-        return
+
+    # Resolve job ID — prefer the env var to avoid a list-all-jobs permission check
+    job_id = _JOB_ID
+    if not job_id:
+        job = next((j for j in w.jobs.list() if j.settings and j.settings.name == _JOB_NAME), None)
+        if not job:
+            st.error(f"Job '{_JOB_NAME}' not found in this workspace.")
+            return
+        job_id = job.job_id
 
     with st.spinner("Submitting run…"):
         python_params = []
@@ -662,7 +668,7 @@ def _trigger_databricks_job(
             python_params.extend(client_filter)
         python_params.extend(["--attribution-model", attribution_model])
         python_params.extend(["--run-mode", run_mode.lower()])
-        run = w.jobs.run_now(job_id=job.job_id, python_params=python_params)
+        run = w.jobs.run_now(job_id=job_id, python_params=python_params)
         run_id = run.run_id
 
     n_clients = len(client_filter) if client_filter else "all"
@@ -675,7 +681,7 @@ def _trigger_databricks_job(
 
     host = os.environ.get("DATABRICKS_HOST", "").lstrip("https://")
     st.markdown(
-        f'<a href="https://{host}/#job/{job.job_id}/run/{run_id}" target="_blank" '
+        f'<a href="https://{host}/#job/{job_id}/run/{run_id}" target="_blank" '
         f'style="font-size:0.75rem;color:#7c68fc;text-decoration:none;font-family:Inter,sans-serif;">'
         f'↗ View run {run_id} in Databricks</a>',
         unsafe_allow_html=True,

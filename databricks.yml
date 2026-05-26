@@ -76,6 +76,8 @@ resources:
         env:
           - name: ATTRIBUTION_JOB_NAME
             value: "[Attribution] Monthly Pipeline"
+          - name: ATTRIBUTION_JOB_ID
+            value: "500226442246561"
           # Secrets (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, OPENAI_API_KEY, etc.)
           # are read at runtime via WorkspaceClient().secrets.get_secret()
           # in app.py:_get_secret(). Managed in the "attribution" secret scope.
