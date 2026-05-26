@@ -978,12 +978,32 @@ def _render_client_manager() -> None:
 
 # ── Start ARIE (once per process) ─────────────
 def _get_secret(key: str) -> str:
-    """Read from Databricks Secrets when in Databricks, else fall back to env."""
+    """
+    Read a secret — tries three methods in order:
+    1. Databricks SDK WorkspaceClient (works in Databricks Apps)
+    2. dbutils.secrets (works in notebooks/jobs)
+    3. os.environ (works locally via .env)
+    """
+    # 1. WorkspaceClient — primary path for Databricks Apps
+    try:
+        import base64
+        from databricks.sdk import WorkspaceClient
+        resp = WorkspaceClient().secrets.get_secret(scope="attribution", key=key)
+        val = resp.value or ""
+        try:
+            return base64.b64decode(val).decode("utf-8")
+        except Exception:
+            return val
+    except Exception:
+        pass
+    # 2. dbutils — notebooks / jobs
     try:
         from databricks.sdk.runtime import dbutils
         return dbutils.secrets.get(scope="attribution", key=key)
     except Exception:
-        return os.environ.get(key, "")
+        pass
+    # 3. Local .env
+    return os.environ.get(key, "")
 
 @st.cache_resource
 def _start_arie():
