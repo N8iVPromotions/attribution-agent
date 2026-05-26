@@ -665,6 +665,14 @@ def _trigger_databricks_job(
         run = w.jobs.run_now(job_id=job.job_id, python_params=python_params)
         run_id = run.run_id
 
+    n_clients = len(client_filter) if client_filter else "all"
+    arie_bot.notify(
+        f"⚡ *Pipeline started*\n"
+        f"Agency: `{agency_id}` · {n_clients} client{'s' if n_clients != 1 else ''}\n"
+        f"Model: `{attribution_model}` · {'Dry run' if dry_run else 'Live'}\n"
+        f"Run: `{run_id}`"
+    )
+
     host = os.environ.get("DATABRICKS_HOST", "").lstrip("https://")
     st.markdown(
         f'<a href="https://{host}/#job/{job.job_id}/run/{run_id}" target="_blank" '
@@ -686,10 +694,21 @@ def _trigger_databricks_job(
         time.sleep(10)
 
     result_state = info.state.result_state
-    if result_state and result_state.value == "SUCCESS":
+    success = result_state and result_state.value == "SUCCESS"
+    if success:
         st.success("Run complete.")
+        arie_bot.notify(
+            f"✅ *Pipeline complete*\n"
+            f"Agency: `{agency_id}` · {'Dry run' if dry_run else 'Live'}\n"
+            f"Run: `{run_id}`"
+        )
     else:
-        st.error(f"Run ended: {result_state.value if result_state else 'unknown'}")
+        state_label = result_state.value if result_state else "unknown"
+        st.error(f"Run ended: {state_label}")
+        arie_bot.notify(
+            f"❌ *Pipeline failed* — `{state_label}`\n"
+            f"Agency: `{agency_id}` · Run: `{run_id}`"
+        )
 
 
 def _show_recent_runs() -> None:
