@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 load_dotenv()
 sys.path.insert(0, str(Path(__file__).parent))
 
+from agents.control import arie_bot
 from agents.outreach.outreach_agent import (
     PROSPECTS,
     generate_email_sequence,
@@ -975,11 +976,58 @@ def _render_client_manager() -> None:
 # UI
 # ═══════════════════════════════════════════════
 
+# ── Start ARIE (once per process) ─────────────
+def _get_secret(key: str) -> str:
+    """
+    Read a secret — tries three methods in order:
+    1. Databricks SDK WorkspaceClient (works in Databricks Apps)
+    2. dbutils.secrets (works in notebooks/jobs)
+    3. os.environ (works locally via .env)
+    """
+    # 1. WorkspaceClient — primary path for Databricks Apps
+    try:
+        import base64
+        from databricks.sdk import WorkspaceClient
+        resp = WorkspaceClient().secrets.get_secret(scope="attribution", key=key)
+        val = resp.value or ""
+        try:
+            return base64.b64decode(val).decode("utf-8")
+        except Exception:
+            return val
+    except Exception:
+        pass
+    # 2. dbutils — notebooks / jobs
+    try:
+        from databricks.sdk.runtime import dbutils
+        return dbutils.secrets.get(scope="attribution", key=key)
+    except Exception:
+        pass
+    # 3. Local .env
+    return os.environ.get(key, "")
+
+@st.cache_resource
+def _start_arie():
+    token   = _get_secret("TELEGRAM_BOT_TOKEN")
+    chat_id = _get_secret("TELEGRAM_CHAT_ID")
+    if not token:
+        return {"ok": False, "reason": "TELEGRAM_BOT_TOKEN not set in Databricks Secrets or .env"}
+    if not chat_id:
+        return {"ok": False, "reason": "TELEGRAM_CHAT_ID not set in Databricks Secrets or .env"}
+    try:
+        arie_bot.start(token, chat_id)
+        return {"ok": True, "reason": ""}
+    except Exception as exc:
+        return {"ok": False, "reason": str(exc)}
+
+_arie_status  = _start_arie()
+_arie_enabled = _arie_status["ok"]
+
 # ── Top bar ───────────────────────────────────
 import datetime as _dt
 env_label = "Databricks" if _DATABRICKS_MODE else "Local"
 env_dot_color = "#7c68fc" if _DATABRICKS_MODE else "#3fb950"
 now_str = _dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+arie_dot_color = "#3fb950" if (_arie_enabled and arie_bot.is_running()) else "#484f58"
 
 st.markdown(
     f'<div class="topbar">'
@@ -997,6 +1045,10 @@ st.markdown(
     f'      {env_label}'
     f'    </span>'
     f'    <span class="status-pill">{now_str}</span>'
+    f'    <span class="status-pill">'
+    f'      <span class="status-dot" style="background:{arie_dot_color};"></span>'
+    f'      ARIE'
+    f'    </span>'
     f'  </div>'
     f'</div>',
     unsafe_allow_html=True,
@@ -1217,6 +1269,22 @@ with tab_clients:
 # TAB: OUTREACH AGENT
 # ══════════════════════════════════════════════
 with tab_outreach:
+
+    # ── ARIE status banner ─────────────────────
+    _tok_set  = bool(os.environ.get("TELEGRAM_BOT_TOKEN"))
+    _cid_set  = bool(os.environ.get("TELEGRAM_CHAT_ID"))
+    _running  = arie_bot.is_running()
+    if _running:
+        st.success("🟢 **ARIE online** — Telegram bot is active and listening.")
+    elif _arie_enabled:
+        st.warning("🟡 **ARIE starting** — bot thread launched, waiting for first poll.")
+    else:
+        reason = _arie_status.get("reason", "unknown")
+        st.error(
+            f"🔴 **ARIE offline** — {reason}\n\n"
+            f"- `TELEGRAM_BOT_TOKEN`: {'✓ set' if _tok_set else '✗ missing'}\n"
+            f"- `TELEGRAM_CHAT_ID`: {'✓ set' if _cid_set else '✗ missing'}"
+        )
 
     # ── Session state init ─────────────────────
     if "outreach_sequences" not in st.session_state:
