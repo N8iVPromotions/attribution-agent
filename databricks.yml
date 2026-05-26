@@ -76,20 +76,6 @@ resources:
         env:
           - name: ATTRIBUTION_JOB_NAME
             value: "[Attribution] Monthly Pipeline"
-          - name: TELEGRAM_BOT_TOKEN
-            value_from:
-              secret:
-                scope: attribution
-                key: TELEGRAM_BOT_TOKEN
-          - name: TELEGRAM_CHAT_ID
-            value_from:
-              secret:
-                scope: attribution
-                key: TELEGRAM_CHAT_ID
-          - name: OPENAI_API_KEY
-            value_from:
-              secret:
-                scope: attribution
-                key: OPENAI_API_KEY
-          # OPENAI_API_KEY is optional — add manually if you want voice commands:
-          # databricks secrets put --scope attribution --key OPENAI_API_KEY
+          # Secrets (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, OPENAI_API_KEY, etc.)
+          # are read at runtime via WorkspaceClient().secrets.get_secret()
+          # in app.py:_get_secret(). Managed in the "attribution" secret scope.
