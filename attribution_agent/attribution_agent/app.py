@@ -993,6 +993,7 @@ import datetime as _dt
 env_label = "Databricks" if _DATABRICKS_MODE else "Local"
 env_dot_color = "#7c68fc" if _DATABRICKS_MODE else "#3fb950"
 now_str = _dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+arie_dot_color = "#3fb950" if (_arie_enabled and arie_bot.is_running()) else "#484f58"
 
 st.markdown(
     f'<div class="topbar">'
@@ -1011,7 +1012,7 @@ st.markdown(
     f'    </span>'
     f'    <span class="status-pill">{now_str}</span>'
     f'    <span class="status-pill">'
-    f'      <span class="status-dot" style="background:{"#3fb950" if _arie_enabled and arie_bot.is_running() else "#484f58"};"></span>'
+    f'      <span class="status-dot" style="background:{arie_dot_color};"></span>'
     f'      ARIE'
     f'    </span>'
     f'  </div>'
