@@ -50,9 +50,41 @@ def send_message(text: str, reply_markup: dict | None = None) -> dict:
 
 
 def notify(text: str) -> None:
-    """Push a notification from external code (pipeline events, etc.)."""
+    """Send a Telegram message from anywhere — app thread or standalone Job."""
     if is_running():
         send_message(text)
+        return
+    # Fallback: read credentials and fire directly (works in Databricks Jobs
+    # where the bot thread is not running).
+    token, chat_id = _load_credentials()
+    if token and chat_id:
+        try:
+            requests.post(
+                _TELEGRAM_BASE.format(token=token, method="sendMessage"),
+                json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
+                timeout=15,
+            )
+        except Exception as exc:
+            logger.error(f"ARIE notify failed: {exc}")
+
+
+def _load_credentials() -> tuple[str, str]:
+    """Read TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID from secrets or env."""
+    def _get(key: str) -> str:
+        try:
+            import base64
+            from databricks.sdk import WorkspaceClient
+            resp = WorkspaceClient().secrets.get_secret(scope="attribution", key=key)
+            val = resp.value or ""
+            try:
+                return base64.b64decode(val).decode("utf-8")
+            except Exception:
+                return val
+        except Exception:
+            pass
+        return os.environ.get(key, "")
+
+    return _get("TELEGRAM_BOT_TOKEN"), _get("TELEGRAM_CHAT_ID")
 
 
 def request_approval(description: str, callback) -> str:
