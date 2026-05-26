@@ -1031,6 +1031,33 @@ def _get_secret(key: str) -> str:
     return os.environ.get(key, "")
 
 @st.cache_resource
+def _inject_secrets() -> None:
+    """Pull Databricks secrets into os.environ so downstream modules find them."""
+    for key in (
+        "ANTHROPIC_API_KEY",
+        "GMAIL_SENDER",
+        "GMAIL_APP_PASSWORD",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
+        "OPENAI_API_KEY",
+        "META_ACCESS_TOKEN",
+        "HUBSPOT_ACCESS_TOKEN",
+        "STRIPE_SECRET_KEY",
+        "GOOGLE_ADS_DEVELOPER_TOKEN",
+        "GOOGLE_ADS_CLIENT_ID",
+        "GOOGLE_ADS_CLIENT_SECRET",
+        "GOOGLE_ADS_REFRESH_TOKEN",
+        "LINKEDIN_ACCESS_TOKEN",
+        "DATABRICKS_TOKEN",
+    ):
+        if not os.environ.get(key):
+            val = _get_secret(key)
+            if val:
+                os.environ[key] = val
+
+_inject_secrets()
+
+@st.cache_resource
 def _start_arie():
     token   = _get_secret("TELEGRAM_BOT_TOKEN")
     chat_id = _get_secret("TELEGRAM_CHAT_ID")
