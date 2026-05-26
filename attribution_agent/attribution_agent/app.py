@@ -977,14 +977,22 @@ def _render_client_manager() -> None:
 # ═══════════════════════════════════════════════
 
 # ── Start ARIE (once per process) ─────────────
+def _get_secret(key: str) -> str:
+    """Read from Databricks Secrets when in Databricks, else fall back to env."""
+    try:
+        from databricks.sdk.runtime import dbutils
+        return dbutils.secrets.get(scope="attribution", key=key)
+    except Exception:
+        return os.environ.get(key, "")
+
 @st.cache_resource
 def _start_arie():
-    token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    token   = _get_secret("TELEGRAM_BOT_TOKEN")
+    chat_id = _get_secret("TELEGRAM_CHAT_ID")
     if not token:
-        return {"ok": False, "reason": "TELEGRAM_BOT_TOKEN not set"}
+        return {"ok": False, "reason": "TELEGRAM_BOT_TOKEN not set in Databricks Secrets or .env"}
     if not chat_id:
-        return {"ok": False, "reason": "TELEGRAM_CHAT_ID not set"}
+        return {"ok": False, "reason": "TELEGRAM_CHAT_ID not set in Databricks Secrets or .env"}
     try:
         arie_bot.start(token, chat_id)
         return {"ok": True, "reason": ""}
