@@ -86,5 +86,10 @@ resources:
               secretRef:
                 scope: attribution
                 key: TELEGRAM_CHAT_ID
+          - name: OPENAI_API_KEY
+            valueFrom:
+              secretRef:
+                scope: attribution
+                key: OPENAI_API_KEY
           # OPENAI_API_KEY is optional — add manually if you want voice commands:
           # databricks secrets put --scope attribution --key OPENAI_API_KEY
