@@ -41,6 +41,18 @@ from agents.comms.comms_agent import send_agency_report
 from attribution_models import normalize_model
 from utils.databricks_writer import _run_sql, write_pipeline_run
 
+try:
+    from agents.control import arie_bot as _arie
+except Exception:
+    _arie = None
+
+def _notify(text: str) -> None:
+    if _arie:
+        try:
+            _arie.notify(text)
+        except Exception:
+            pass
+
 
 def _get_client_recipient(client_id: str) -> str:
     """Look up the report recipient email from the client's config."""
@@ -143,6 +155,11 @@ def run_agency_pipeline(
         f"[Agency] Starting pipeline | agency={agency_id} | "
         f"clients={client_ids} | dry_run={dry_run} | model={selected_model}"
     )
+    _notify(
+        f"⚡ *Pipeline started*\n"
+        f"Agency: `{agency_id}` · {len(client_ids)} client{'s' if len(client_ids) != 1 else ''}\n"
+        f"Model: `{selected_model}` · {'Dry run' if dry_run else 'Live'}"
+    )
 
     results = []
     errors = []
@@ -174,6 +191,11 @@ def run_agency_pipeline(
             else:
                 logger.info(f"[Agency] dry_run — skipping email for {client_id}")
 
+            _notify(
+                f"✅ *{get_client(client_id).client_name}* complete\n"
+                f"Pipeline: `${report.total_pipeline:,.0f}` · Top: `{report.top_channel}`\n"
+                f"{'📧 Report sent' if email_sent else '🔕 Dry run — email skipped'}"
+            )
             results.append({
                 "client_id":     client_id,
                 "meta_rows":     ingest_result.get("meta_rows", 0),
@@ -212,6 +234,7 @@ def run_agency_pipeline(
 
         except Exception as exc:
             logger.error(f"[Agency] Failed for client '{client_id}': {exc}")
+            _notify(f"❌ *{client_id}* failed\n`{str(exc)[:200]}`")
             errors.append({"client_id": client_id, "error": str(exc)})
             try:
                 write_pipeline_run({
@@ -245,6 +268,11 @@ def run_agency_pipeline(
         "errors":            errors,
     }
     logger.info(f"[Agency] Pipeline complete | {summary}")
+    _notify(
+        f"{'✅' if not errors else '⚠️'} *Pipeline complete*\n"
+        f"{len(results)} succeeded · {len(errors)} failed\n"
+        f"Run ID: `{run_id[:8]}`"
+    )
     return summary
 
 
