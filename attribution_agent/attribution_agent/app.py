@@ -981,12 +981,18 @@ def _render_client_manager() -> None:
 def _start_arie():
     token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-    if token and chat_id:
+    if not token:
+        return {"ok": False, "reason": "TELEGRAM_BOT_TOKEN not set"}
+    if not chat_id:
+        return {"ok": False, "reason": "TELEGRAM_CHAT_ID not set"}
+    try:
         arie_bot.start(token, chat_id)
-        return True
-    return False
+        return {"ok": True, "reason": ""}
+    except Exception as exc:
+        return {"ok": False, "reason": str(exc)}
 
-_arie_enabled = _start_arie()
+_arie_status  = _start_arie()
+_arie_enabled = _arie_status["ok"]
 
 # ── Top bar ───────────────────────────────────
 import datetime as _dt
@@ -1235,6 +1241,22 @@ with tab_clients:
 # TAB: OUTREACH AGENT
 # ══════════════════════════════════════════════
 with tab_outreach:
+
+    # ── ARIE status banner ─────────────────────
+    _tok_set  = bool(os.environ.get("TELEGRAM_BOT_TOKEN"))
+    _cid_set  = bool(os.environ.get("TELEGRAM_CHAT_ID"))
+    _running  = arie_bot.is_running()
+    if _running:
+        st.success("🟢 **ARIE online** — Telegram bot is active and listening.")
+    elif _arie_enabled:
+        st.warning("🟡 **ARIE starting** — bot thread launched, waiting for first poll.")
+    else:
+        reason = _arie_status.get("reason", "unknown")
+        st.error(
+            f"🔴 **ARIE offline** — {reason}\n\n"
+            f"- `TELEGRAM_BOT_TOKEN`: {'✓ set' if _tok_set else '✗ missing'}\n"
+            f"- `TELEGRAM_CHAT_ID`: {'✓ set' if _cid_set else '✗ missing'}"
+        )
 
     # ── Session state init ─────────────────────
     if "outreach_sequences" not in st.session_state:
