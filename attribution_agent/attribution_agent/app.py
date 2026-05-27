@@ -1058,9 +1058,15 @@ def _inject_secrets() -> None:
 _inject_secrets()
 
 @st.cache_resource
-def _start_arie():
-    token   = _get_secret("TELEGRAM_BOT_TOKEN")
-    chat_id = _get_secret("TELEGRAM_CHAT_ID")
+def _arie_credentials() -> tuple[str, str]:
+    """Fetch ARIE credentials once per process (SDK call is slow)."""
+    return _get_secret("TELEGRAM_BOT_TOKEN"), _get_secret("TELEGRAM_CHAT_ID")
+
+def _ensure_arie_running() -> dict:
+    """Start or restart ARIE. Called on every render so the thread self-heals."""
+    if arie_bot.is_running():
+        return {"ok": True, "reason": ""}
+    token, chat_id = _arie_credentials()
     if not token:
         return {"ok": False, "reason": "TELEGRAM_BOT_TOKEN not set in Databricks Secrets or .env"}
     if not chat_id:
@@ -1071,7 +1077,7 @@ def _start_arie():
     except Exception as exc:
         return {"ok": False, "reason": str(exc)}
 
-_arie_status  = _start_arie()
+_arie_status  = _ensure_arie_running()
 _arie_enabled = _arie_status["ok"]
 
 # ── Top bar ───────────────────────────────────
