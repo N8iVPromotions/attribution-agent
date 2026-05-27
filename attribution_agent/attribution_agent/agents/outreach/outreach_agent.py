@@ -118,7 +118,7 @@ Email 3 (Day 12 Follow-up — still no reply):
             "content-type": "application/json",
         },
         json={
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-6",
             "max_tokens": 1500,
             "messages": [{"role": "user", "content": prompt}],
         },
