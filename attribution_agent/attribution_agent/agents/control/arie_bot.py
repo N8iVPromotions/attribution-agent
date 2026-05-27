@@ -421,12 +421,11 @@ if __name__ == "__main__":
     except Exception:
         pass
 
-    # Try Databricks Secrets first (works in Apps), then fall back to env
-    _token, _chat_id_env = _load_credentials()
-    if not _token:
-        _token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    if not _chat_id_env:
-        _chat_id_env = os.environ.get("TELEGRAM_CHAT_ID", "")
+    # Credentials injected as env vars by startup.py; fall back to _load_credentials
+    _token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    _chat_id_env = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not _token or not _chat_id_env:
+        _token, _chat_id_env = _load_credentials()
 
     if not _token or not _chat_id_env:
         print("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set in .env or Databricks Secrets")
