@@ -1057,25 +1057,10 @@ def _inject_secrets() -> None:
 
 _inject_secrets()
 
-@st.cache_resource
-def _arie_reachable() -> tuple[bool, str]:
-    """Check once per process that Telegram credentials exist and the API is reachable."""
-    token = _get_secret("TELEGRAM_BOT_TOKEN")
-    if not token:
-        return False, "TELEGRAM_BOT_TOKEN not found in secrets or env"
-    try:
-        import requests as _req
-        r = _req.get(f"https://api.telegram.org/bot{token}/getMe", timeout=15)
-        data = r.json()
-        if data.get("ok"):
-            return True, ""
-        return False, f"Telegram API returned ok=false: {data.get('description','')}"
-    except Exception as exc:
-        return False, f"Telegram unreachable: {exc}"
-
-_arie_ok, _arie_err = _arie_reachable()
-_arie_enabled = _arie_ok
-_arie_status  = {"ok": _arie_ok, "reason": _arie_err}
+# Databricks App has no outbound internet (api.telegram.org is unreachable
+# inside the workspace VPC). ARIE must run locally on the operator's machine.
+_arie_enabled = False
+_arie_status  = {"ok": False, "reason": "ARIE runs locally — see README"}
 
 # ── Top bar ───────────────────────────────────
 import datetime as _dt
@@ -1326,20 +1311,14 @@ with tab_clients:
 with tab_outreach:
 
     # ── ARIE status banner ─────────────────────
-    _tok_set  = bool(os.environ.get("TELEGRAM_BOT_TOKEN"))
-    _cid_set  = bool(os.environ.get("TELEGRAM_CHAT_ID"))
-    _running  = arie_bot.is_running()
-    if _running:
-        st.success("🟢 **ARIE online** — Telegram bot is active and listening.")
-    elif _arie_enabled:
-        st.warning("🟡 **ARIE starting** — bot thread launched, waiting for first poll.")
-    else:
-        reason = _arie_status.get("reason", "unknown")
-        st.error(
-            f"🔴 **ARIE offline** — {reason}\n\n"
-            f"- `TELEGRAM_BOT_TOKEN`: {'✓ set' if _tok_set else '✗ missing'}\n"
-            f"- `TELEGRAM_CHAT_ID`: {'✓ set' if _cid_set else '✗ missing'}"
-        )
+    st.info(
+        "**ARIE runs on your local machine** — the Databricks workspace has no outbound internet access.\n\n"
+        "Start ARIE locally:\n"
+        "```\n"
+        "cd attribution_agent/attribution_agent\n"
+        "python agents/control/arie_bot.py\n"
+        "```"
+    )
 
     # ── Session state init ─────────────────────
     if "outreach_sequences" not in st.session_state:
