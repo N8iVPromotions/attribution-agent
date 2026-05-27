@@ -1058,20 +1058,24 @@ def _inject_secrets() -> None:
 _inject_secrets()
 
 @st.cache_resource
-def _arie_reachable() -> bool:
+def _arie_reachable() -> tuple[bool, str]:
     """Check once per process that Telegram credentials exist and the API is reachable."""
     token = _get_secret("TELEGRAM_BOT_TOKEN")
     if not token:
-        return False
+        return False, "TELEGRAM_BOT_TOKEN not found in secrets or env"
     try:
         import requests as _req
-        r = _req.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5)
-        return r.json().get("ok", False)
-    except Exception:
-        return False
+        r = _req.get(f"https://api.telegram.org/bot{token}/getMe", timeout=15)
+        data = r.json()
+        if data.get("ok"):
+            return True, ""
+        return False, f"Telegram API returned ok=false: {data.get('description','')}"
+    except Exception as exc:
+        return False, f"Telegram unreachable: {exc}"
 
-_arie_enabled = _arie_reachable()
-_arie_status  = {"ok": _arie_enabled, "reason": "" if _arie_enabled else "TELEGRAM_BOT_TOKEN not set or Telegram unreachable"}
+_arie_ok, _arie_err = _arie_reachable()
+_arie_enabled = _arie_ok
+_arie_status  = {"ok": _arie_ok, "reason": _arie_err}
 
 # ── Top bar ───────────────────────────────────
 import datetime as _dt
