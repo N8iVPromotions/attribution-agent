@@ -415,13 +415,23 @@ def is_running() -> bool:
 # ── Standalone entry point ─────────────────────────────────────
 if __name__ == "__main__":
     import sys
-    from dotenv import load_dotenv
-    load_dotenv()
-    _token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    _chat_id_env = os.environ.get("TELEGRAM_CHAT_ID", "")
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except Exception:
+        pass
+
+    # Try Databricks Secrets first (works in Apps), then fall back to env
+    _token, _chat_id_env = _load_credentials()
+    if not _token:
+        _token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if not _chat_id_env:
+        _chat_id_env = os.environ.get("TELEGRAM_CHAT_ID", "")
+
     if not _token or not _chat_id_env:
-        print("Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env")
+        print("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set in .env or Databricks Secrets")
         sys.exit(1)
+
     start(_token, _chat_id_env)
     print("ARIE running — press Ctrl+C to stop")
     try:
