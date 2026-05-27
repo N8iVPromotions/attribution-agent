@@ -272,18 +272,52 @@ def _handle_message(message: dict) -> None:
         warning   = "_Dry run — no emails will be sent._" if dry_run else "⚠️ _Live run — reports will be emailed to clients._"
 
         def do_run():
-            from flows.agency_flow import run_agency_pipeline
-            result = run_agency_pipeline(
-                agency_id="n8iv_promotions",
-                dry_run=dry_run,
-                client_filter=[client_id],
-            )
-            processed = result.get("clients_processed", 0)
-            failed    = result.get("clients_failed", 0)
+            import threading
+            from databricks.sdk import WorkspaceClient
+            from databricks.sdk.service.jobs import RunLifeCycleState
+
+            job_id = int(os.environ.get("ATTRIBUTION_JOB_ID", "500226442246561"))
+            run_params = ["--agency", "n8iv_promotions", "--client-filter", client_id]
+            if dry_run:
+                run_params.append("--dry-run")
+
+            w = WorkspaceClient()
+            run = w.jobs.run_now(job_id=job_id, python_params=run_params)
+            run_id = run.run_id
+
+            def _poll():
+                import time
+                terminal = {
+                    RunLifeCycleState.TERMINATED,
+                    RunLifeCycleState.SKIPPED,
+                    RunLifeCycleState.INTERNAL_ERROR,
+                }
+                while True:
+                    time.sleep(30)
+                    try:
+                        info = w.jobs.get_run(run_id=run_id)
+                        if info.state.life_cycle_state in terminal:
+                            result_state = info.state.result_state
+                            if result_state and result_state.value == "SUCCESS":
+                                send_message(
+                                    f"✅ *Pipeline {label} complete*\n"
+                                    f"Client: `{client_id}` · Run: `{run_id}`"
+                                )
+                            else:
+                                state_val = result_state.value if result_state else "unknown"
+                                send_message(
+                                    f"❌ *Pipeline {label} failed* — `{state_val}`\n"
+                                    f"Run: `{run_id}`"
+                                )
+                            break
+                    except Exception as exc:
+                        send_message(f"⚠️ Could not poll run status: `{exc}`")
+                        break
+
+            threading.Thread(target=_poll, daemon=True, name=f"arie-poll-{run_id}").start()
             return (
-                f"Pipeline *{label}* complete\n\n"
-                f"✓ Processed: {processed}\n"
-                f"✗ Failed: {failed}"
+                f"Submitted · Run ID: `{run_id}`\n"
+                f"I'll message you when it's done."
             )
 
         request_approval(
