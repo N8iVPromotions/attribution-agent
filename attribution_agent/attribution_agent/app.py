@@ -1058,27 +1058,20 @@ def _inject_secrets() -> None:
 _inject_secrets()
 
 @st.cache_resource
-def _arie_credentials() -> tuple[str, str]:
-    """Fetch ARIE credentials once per process (SDK call is slow)."""
-    return _get_secret("TELEGRAM_BOT_TOKEN"), _get_secret("TELEGRAM_CHAT_ID")
-
-def _ensure_arie_running() -> dict:
-    """Start or restart ARIE. Called on every render so the thread self-heals."""
-    if arie_bot.is_running():
-        return {"ok": True, "reason": ""}
-    token, chat_id = _arie_credentials()
+def _arie_reachable() -> bool:
+    """Check once per process that Telegram credentials exist and the API is reachable."""
+    token = _get_secret("TELEGRAM_BOT_TOKEN")
     if not token:
-        return {"ok": False, "reason": "TELEGRAM_BOT_TOKEN not set in Databricks Secrets or .env"}
-    if not chat_id:
-        return {"ok": False, "reason": "TELEGRAM_CHAT_ID not set in Databricks Secrets or .env"}
+        return False
     try:
-        arie_bot.start(token, chat_id)
-        return {"ok": True, "reason": ""}
-    except Exception as exc:
-        return {"ok": False, "reason": str(exc)}
+        import requests as _req
+        r = _req.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5)
+        return r.json().get("ok", False)
+    except Exception:
+        return False
 
-_arie_status  = _ensure_arie_running()
-_arie_enabled = _arie_status["ok"]
+_arie_enabled = _arie_reachable()
+_arie_status  = {"ok": _arie_enabled, "reason": "" if _arie_enabled else "TELEGRAM_BOT_TOKEN not set or Telegram unreachable"}
 
 # ── Top bar ───────────────────────────────────
 import datetime as _dt
