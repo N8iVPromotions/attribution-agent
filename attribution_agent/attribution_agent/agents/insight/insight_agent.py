@@ -357,19 +357,40 @@ def generate_insight_report(
             generated_at=datetime.utcnow().isoformat(),
         )
 
-    # 2. Build prompt
-    prompt = _build_prompt(config, data, selected_model)
-
-    # 3. Call Claude — fall back to template report on any failure
-    logger.info("[Insight] Calling Claude API...")
+    # 2. Build prompt and call Claude (two-stage via N8iV agents, fallback to single-stage)
+    logger.info("[Insight] Generating report via N8iV revenue-analyst + executive-reporting agents...")
     try:
-        claude_response = _call_claude(prompt)
+        from agents.intelligence.n8iv_agents import (
+            run_revenue_analyst_agent,
+            run_executive_reporting_agent,
+        )
+        analyst_output = run_revenue_analyst_agent(
+            client_id=client_id,
+            client_name=config.client_name,
+            channel_data=data,
+            attribution_model=selected_model,
+        )
+        claude_response = run_executive_reporting_agent(
+            client_id=client_id,
+            client_name=config.client_name,
+            analyst_output=analyst_output,
+            channel_data=data,
+            attribution_model=selected_model,
+        )
     except Exception as exc:
         logger.warning(
-            f"[Insight] Claude API unavailable ({exc!r}) — "
-            "falling back to template report"
+            f"[Insight] N8iV two-stage agents failed ({exc!r}) — "
+            "falling back to single-stage prompt"
         )
-        claude_response = _build_fallback_report(config, data, selected_model)
+        prompt = _build_prompt(config, data, selected_model)
+        try:
+            claude_response = _call_claude(prompt)
+        except Exception as exc2:
+            logger.warning(
+                f"[Insight] Claude API unavailable ({exc2!r}) — "
+                "falling back to template report"
+            )
+            claude_response = _build_fallback_report(config, data, selected_model)
 
     # 4. Build report
     report_month = data[0].get("report_month", "")

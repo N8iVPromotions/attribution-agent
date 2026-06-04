@@ -35,5 +35,7 @@ Thumbs.db
 # Databricks
 .databricks/
 
-# Claude Code
+# Claude Code — ignore session data but track agent definitions
 .claude/
+!.claude/agents/
+!.claude/agents/**
