@@ -269,6 +269,64 @@ def _call_claude(prompt: str) -> dict:
     return json.loads(content)
 
 
+# ─── TEMPLATE FALLBACK ────────────────────────────────────────
+
+def _build_fallback_report(
+    config: ClientConfig,
+    data: list[dict],
+    selected_model: str,
+) -> dict:
+    """
+    Generates a structured but non-narrative report from raw channel_performance
+    data when the Claude API is unavailable. No prose — metrics only.
+    """
+    total_pipeline    = sum(r.get("pipeline_value") or 0 for r in data)
+    total_spend       = sum(r.get("total_spend") or 0 for r in data)
+    total_deals       = sum(r.get("deals_count") or 0 for r in data)
+    collected_revenue = sum(r.get("collected_revenue") or 0 for r in data)
+    overall_roi       = round(total_pipeline / total_spend, 2) if total_spend else 0.0
+    true_roi          = round(collected_revenue / total_spend, 2) if total_spend else 0.0
+    top_channel       = data[0]["channel"] if data else "Unknown"
+    report_month      = data[0].get("report_month", "Unknown") if data else "Unknown"
+
+    channel_lines = [
+        f"• {r['channel']}: {int(r.get('deals_count') or 0)} deals, "
+        f"${(r.get('pipeline_value') or 0):,.0f} pipeline, "
+        f"${(r.get('total_spend') or 0):,.0f} spend"
+        for r in data
+    ]
+
+    narrative = (
+        f"[AUTO-GENERATED — AI narrative unavailable]\n\n"
+        f"Period: {report_month} | Model: {selected_model}\n\n"
+        f"Total pipeline: ${total_pipeline:,.0f} across {total_deals} deals. "
+        f"Total ad spend: ${total_spend:,.0f}. Overall ROI: {overall_roi}x. "
+        f"Top channel: {top_channel}.\n\n"
+        "Channel breakdown:\n" + "\n".join(channel_lines)
+    )
+
+    key_findings = [
+        f"Top channel: {top_channel}",
+        f"Total pipeline value: ${total_pipeline:,.0f}",
+        f"Total ad spend: ${total_spend:,.0f} — ROI: {overall_roi}x",
+    ]
+    if collected_revenue:
+        key_findings.append(f"Collected revenue: ${collected_revenue:,.0f} — True ROI: {true_roi}x")
+
+    return {
+        "narrative":        narrative,
+        "key_findings":     key_findings,
+        "top_channel":      top_channel,
+        "total_pipeline":   total_pipeline,
+        "total_spend":      total_spend,
+        "overall_roi":      overall_roi,
+        "collected_revenue": collected_revenue,
+        "refund_rate":      0.0,
+        "true_roi":         true_roi,
+        "attribution_model": selected_model,
+    }
+
+
 # ─── MAIN FUNCTION ────────────────────────────────────────────
 
 def generate_insight_report(
@@ -279,7 +337,7 @@ def generate_insight_report(
     Full pipeline:
     1. Fetch channel_performance from Databricks
     2. Build prompt with data
-    3. Call Claude API
+    3. Call Claude API (falls back to template report on failure)
     4. Return structured InsightReport
     """
     config = get_client(client_id)
@@ -302,15 +360,23 @@ def generate_insight_report(
     # 2. Build prompt
     prompt = _build_prompt(config, data, selected_model)
 
-    # 3. Call Claude
+    # 3. Call Claude — fall back to template report on any failure
     logger.info("[Insight] Calling Claude API...")
-    claude_response = _call_claude(prompt)
+    try:
+        claude_response = _call_claude(prompt)
+    except Exception as exc:
+        logger.warning(
+            f"[Insight] Claude API unavailable ({exc!r}) — "
+            "falling back to template report"
+        )
+        claude_response = _build_fallback_report(config, data, selected_model)
 
     # 4. Build report
+    report_month = data[0].get("report_month", "")
     report = InsightReport(
         client_id=client_id,
         client_name=config.client_name,
-        report_month=data[0].get("report_month", ""),
+        report_month=report_month,
         narrative=claude_response.get("narrative", ""),
         key_findings=claude_response.get("key_findings", []),
         top_channel=claude_response.get("top_channel", ""),

@@ -1,8 +1,11 @@
 """
 agents/comms/comms_agent.py
 ----------------------------
-Takes an InsightReport and emails it to the client via Gmail.
-Uses a professional HTML template with the narrative + key findings.
+Takes an InsightReport and emails it to the client.
+
+Provider selection (COMMS_PROVIDER env var):
+  sendgrid  — transactional ESP; requires SENDGRID_API_KEY (default)
+  gmail     — Gmail SMTP fallback; requires GMAIL_SENDER + GMAIL_APP_PASSWORD
 
 Run standalone:
     python agents/comms/comms_agent.py --client demo_client --to client@example.com
@@ -278,6 +281,73 @@ def _build_html(
 
 # ─── EMAIL SENDER ─────────────────────────────────────────────
 
+def _send_via_sendgrid(
+    subject: str,
+    sender_email: str,
+    sender_display: str,
+    recipient_email: str,
+    plain_text: str,
+    html_content: str,
+    reply_to: str = "",
+) -> None:
+    """Send via SendGrid transactional API. Raises on failure."""
+    from sendgrid import SendGridAPIClient
+    from sendgrid.helpers.mail import Mail, Email, To, Content, ReplyTo
+
+    api_key = os.environ.get("SENDGRID_API_KEY", "")
+    if not api_key:
+        raise ValueError("SENDGRID_API_KEY not set — cannot use SendGrid provider")
+
+    message = Mail(
+        from_email=Email(sender_email, sender_display),
+        to_emails=To(recipient_email),
+        subject=subject,
+    )
+    message.add_content(Content("text/plain", plain_text))
+    message.add_content(Content("text/html", html_content))
+    if reply_to:
+        message.reply_to = ReplyTo(reply_to)
+
+    sg = SendGridAPIClient(api_key)
+    response = sg.send(message)
+
+    if response.status_code not in (200, 202):
+        raise RuntimeError(
+            f"SendGrid returned HTTP {response.status_code}: {response.body}"
+        )
+    logger.info(f"[Comms] SendGrid accepted delivery to {recipient_email}")
+
+
+def _send_via_gmail(
+    subject: str,
+    sender_email: str,
+    sender_display: str,
+    recipient_email: str,
+    plain_text: str,
+    html_content: str,
+    reply_to: str = "",
+) -> None:
+    """Send via Gmail SMTP. Raises on failure."""
+    app_password = os.environ.get("GMAIL_APP_PASSWORD", "")
+    if not app_password:
+        raise ValueError("GMAIL_APP_PASSWORD not set — cannot use Gmail provider")
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = f"{sender_display} <{sender_email}>"
+    msg["To"]      = recipient_email
+    if reply_to:
+        msg["Reply-To"] = reply_to
+
+    msg.attach(MIMEText(plain_text, "plain"))
+    msg.attach(MIMEText(html_content, "html"))
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+        smtp.login(sender_email, app_password)
+        smtp.sendmail(sender_email, recipient_email, msg.as_string())
+    logger.info(f"[Comms] Gmail delivered to {recipient_email}")
+
+
 def send_report(
     report: InsightReport,
     recipient_email: str,
@@ -285,67 +355,51 @@ def send_report(
     agency_config: AgencyConfig | None = None,
 ) -> bool:
     """
-    Send the InsightReport as an HTML email via Gmail SMTP.
+    Send the InsightReport as an HTML email.
+    Provider is controlled by COMMS_PROVIDER env var (sendgrid|gmail).
     When agency_config is provided, uses agency branding and sender details.
     Returns True if sent successfully.
     """
+    provider = os.environ.get("COMMS_PROVIDER", "sendgrid").lower()
+
     sender_email = (
         agency_config.sender_email if agency_config and agency_config.sender_email
         else os.environ.get("GMAIL_SENDER", "")
     )
-    app_password = os.environ.get("GMAIL_APP_PASSWORD", "")
-
-    if not sender_email or not app_password:
-        raise ValueError(
-            "GMAIL_SENDER and GMAIL_APP_PASSWORD must be set in .env"
-        )
+    if not sender_email:
+        raise ValueError("Sender email not configured (GMAIL_SENDER or agency_config.sender_email)")
 
     sender_display = (
         agency_config.sender_name if agency_config and agency_config.sender_name
         else "Attribution Agent"
     )
-    subject = (
-        f"Attribution Report — {report.client_name} — {report.report_month}"
+    reply_to = agency_config.reply_to if agency_config and agency_config.reply_to else ""
+    subject  = f"Attribution Report — {report.client_name} — {report.report_month}"
+
+    plain_text = (
+        f"Attribution Report | {report.client_name} | {report.report_month}\n\n"
+        f"{report.narrative}\n\n"
+        f"Key Findings:\n"
+        + "\n".join(f"• {f}" for f in report.key_findings)
+        + f"\n\nTop Channel:    {report.top_channel}\n"
+        f"Model:          {ATTRIBUTION_MODEL_LABELS.get(report.attribution_model, report.attribution_model)}\n"
+        f"Pipeline Value: ${report.total_pipeline:,.0f}\n"
+        f"Ad Spend:       ${report.total_spend:,.0f}\n"
+        f"ROI:            {report.overall_roi:.1f}x\n\n"
+        "---\nPowered by N8iV Promotions."
     )
-
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"]    = f"{sender_display} <{sender_email}>"
-    msg["To"]      = recipient_email
-    if agency_config and agency_config.reply_to:
-        msg["Reply-To"] = agency_config.reply_to
-
-    # Plain text fallback
-    plain_text = f"""
-Attribution Report | {report.client_name} | {report.report_month}
-
-{report.narrative}
-
-Key Findings:
-{chr(10).join(f'• {f}' for f in report.key_findings)}
-
-Top Channel:    {report.top_channel}
-Model:          {ATTRIBUTION_MODEL_LABELS.get(report.attribution_model, report.attribution_model)}
-Pipeline Value: ${report.total_pipeline:,.0f}
-Ad Spend:       ${report.total_spend:,.0f}
-ROI:            {report.overall_roi:.1f}x
-
----
-Powered by N8iV Promotions.
-    """.strip()
-
     html_content = _build_html(report, powerbi_url, agency_config)
 
-    msg.attach(MIMEText(plain_text, "plain"))
-    msg.attach(MIMEText(html_content, "html"))
+    logger.info(f"[Comms] Sending report to {recipient_email} via {provider}...")
 
-    logger.info(f"[Comms] Sending report to {recipient_email}...")
+    if provider == "sendgrid":
+        _send_via_sendgrid(subject, sender_email, sender_display,
+                           recipient_email, plain_text, html_content, reply_to)
+    else:
+        _send_via_gmail(subject, sender_email, sender_display,
+                        recipient_email, plain_text, html_content, reply_to)
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-        smtp.login(sender_email, app_password)
-        smtp.sendmail(sender_email, recipient_email, msg.as_string())
-
-    logger.info(f"[Comms] Report sent to {recipient_email}")
+    logger.info(f"[Comms] Report delivered to {recipient_email}")
     return True
 
 
