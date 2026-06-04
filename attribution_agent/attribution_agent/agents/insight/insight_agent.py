@@ -220,39 +220,51 @@ Return your response as a JSON object with these exact keys:
 Return ONLY the JSON — no markdown, no backticks, no preamble."""
 
 
+_SYSTEM_PROMPT = (
+    "You are a marketing analytics consultant who writes monthly attribution reports "
+    "for digital agencies. Your reports are concise, data-driven, and written in plain "
+    "business language. You always return valid JSON — no markdown, no backticks, no preamble."
+)
+
 def _call_claude(prompt: str) -> dict:
-    """Call Claude API and return parsed JSON response."""
-    import requests
+    """Call Claude API via the Anthropic SDK with prompt caching on the system prompt."""
+    import anthropic
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         raise ValueError("ANTHROPIC_API_KEY not set in .env")
 
-    response = requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        json={
-            "model": "claude-sonnet-4-6",
-            "max_tokens": 1500,
-            "messages": [{"role": "user", "content": prompt}],
-        },
-        timeout=60,
-    )
-    response.raise_for_status()
+    client = anthropic.Anthropic(api_key=api_key)
 
-    content = response.json()["content"][0]["text"]
+    message = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1500,
+        system=[
+            {
+                "type": "text",
+                "text": _SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    content = message.content[0].text.strip()
 
     # Strip any accidental markdown fences
-    content = content.strip()
     if content.startswith("```"):
         content = content.split("```")[1]
         if content.startswith("json"):
             content = content[4:]
     content = content.strip()
+
+    usage = message.usage
+    logger.info(
+        f"[Insight] Claude usage — input: {usage.input_tokens}, "
+        f"output: {usage.output_tokens}, "
+        f"cache_read: {getattr(usage, 'cache_read_input_tokens', 0)}, "
+        f"cache_write: {getattr(usage, 'cache_creation_input_tokens', 0)}"
+    )
 
     return json.loads(content)
 
