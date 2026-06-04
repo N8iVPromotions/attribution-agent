@@ -35,6 +35,13 @@ def empty_normalized_ads() -> pd.DataFrame:
     return pd.DataFrame(columns=NORMALIZED_AD_COLUMNS)
 
 
+def _col(df: pd.DataFrame, name: str, default: float = 0.0) -> pd.Series:
+    """Return df[name] as a numeric Series, or a zero Series if the column is absent."""
+    if name in df.columns:
+        return pd.to_numeric(df[name], errors="coerce").fillna(default)
+    return pd.Series(default, index=df.index, dtype="float64")
+
+
 def normalize_meta_ads(df: pd.DataFrame, client_id: str) -> pd.DataFrame:
     if df is None or df.empty:
         return empty_normalized_ads()
@@ -49,9 +56,9 @@ def normalize_meta_ads(df: pd.DataFrame, client_id: str) -> pd.DataFrame:
         "ad_id": "",
         "ad_name": "",
         "date": pd.to_datetime(df["date"], errors="coerce"),
-        "spend": pd.to_numeric(df.get("spend", 0), errors="coerce").fillna(0),
-        "impressions": pd.to_numeric(df.get("impressions", 0), errors="coerce").fillna(0).astype("int64"),
-        "clicks": pd.to_numeric(df.get("clicks", 0), errors="coerce").fillna(0).astype("int64"),
+        "spend": _col(df, "spend"),
+        "impressions": _col(df, "impressions").astype("int64"),
+        "clicks": _col(df, "clicks").astype("int64"),
         "conversions": _sum_conversion_columns(df),
         "utm_source": "facebook",
         "utm_medium": "paid_social",
@@ -75,10 +82,10 @@ def normalize_google_ads(df: pd.DataFrame, client_id: str) -> pd.DataFrame:
         "ad_id": df.get("ad_id", ""),
         "ad_name": df.get("ad_name", ""),
         "date": pd.to_datetime(df["date"], errors="coerce"),
-        "spend": pd.to_numeric(df.get("spend", 0), errors="coerce").fillna(0),
-        "impressions": pd.to_numeric(df.get("impressions", 0), errors="coerce").fillna(0).astype("int64"),
-        "clicks": pd.to_numeric(df.get("clicks", 0), errors="coerce").fillna(0).astype("int64"),
-        "conversions": pd.to_numeric(df.get("conversions", 0), errors="coerce").fillna(0),
+        "spend": _col(df, "spend"),
+        "impressions": _col(df, "impressions").astype("int64"),
+        "clicks": _col(df, "clicks").astype("int64"),
+        "conversions": _col(df, "conversions"),
         "utm_source": "google",
         "utm_medium": "paid_search",
         "utm_campaign": df.get("campaign_name", ""),
@@ -101,10 +108,10 @@ def normalize_linkedin_ads(df: pd.DataFrame, client_id: str) -> pd.DataFrame:
         "ad_id": df.get("creative_id", ""),
         "ad_name": df.get("creative_name", ""),
         "date": pd.to_datetime(df["date"], errors="coerce"),
-        "spend": pd.to_numeric(df.get("spend", 0), errors="coerce").fillna(0),
-        "impressions": pd.to_numeric(df.get("impressions", 0), errors="coerce").fillna(0).astype("int64"),
-        "clicks": pd.to_numeric(df.get("clicks", 0), errors="coerce").fillna(0).astype("int64"),
-        "conversions": pd.to_numeric(df.get("conversions", 0), errors="coerce").fillna(0),
+        "spend": _col(df, "spend"),
+        "impressions": _col(df, "impressions").astype("int64"),
+        "clicks": _col(df, "clicks").astype("int64"),
+        "conversions": _col(df, "conversions"),
         "utm_source": "linkedin",
         "utm_medium": "paid_social",
         "utm_campaign": df.get("campaign_name", ""),
