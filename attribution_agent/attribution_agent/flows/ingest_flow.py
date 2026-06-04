@@ -233,6 +233,39 @@ def step_alert(meta_result, hubspot_result, stripe_result, config: ClientConfig)
         logger.warning(r.summary())
 
 
+def step_data_quality_agent(
+    meta_result,
+    hubspot_result,
+    stripe_result,
+    ingest_summary: dict,
+    config: ClientConfig,
+) -> None:
+    """Non-blocking: run the N8iV data-quality agent and log findings."""
+    try:
+        from agents.intelligence.n8iv_agents import run_data_quality_agent
+        reports = [
+            r[1] for r in (meta_result, hubspot_result, stripe_result)
+            if r is not None and r[1] is not None
+        ]
+        findings = run_data_quality_agent(
+            client_id=config.client_id,
+            validation_reports=reports,
+            ingest_summary=ingest_summary,
+        )
+        if findings.get("escalations"):
+            logger.error(
+                f"[DataQuality] Escalations for {config.client_id}: "
+                + "; ".join(findings["escalations"])
+            )
+        elif findings.get("issues"):
+            logger.warning(
+                f"[DataQuality] Issues for {config.client_id}: "
+                + "; ".join(findings["issues"][:3])
+            )
+    except Exception as exc:
+        logger.warning(f"[DataQuality] agent step failed (non-fatal): {exc!r}")
+
+
 def ingest_flow(client_id: str) -> dict:
     logger.info(f"{'='*50}")
     logger.info(f"Ingest Flow START | client={client_id}")
@@ -281,6 +314,12 @@ def ingest_flow(client_id: str) -> dict:
         "normalized_ad_rows": normalized_ad_rows,
         "status":       "complete",
     }
+
+    step_data_quality_agent(
+        meta_validated, hubspot_validated, stripe_validated,
+        ingest_summary=summary, config=config,
+    )
+
     logger.info(f"Ingest Flow COMPLETE | {summary}")
     return summary
 

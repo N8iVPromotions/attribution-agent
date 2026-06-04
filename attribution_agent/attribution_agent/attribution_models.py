@@ -142,8 +142,12 @@ def allocate_credit(
     else:  # pragma: no cover - normalize_model prevents this
         raise ValueError(f"Unsupported attribution model: {selected_model}")
 
+    total = sum(weights)
+    if total > 0:
+        weights = [w / total for w in weights]
+
     return [
-        AttributedTouchpoint(touchpoint=touchpoint, credit=round(weight, 10))
+        AttributedTouchpoint(touchpoint=touchpoint, credit=weight)
         for touchpoint, weight in zip(ordered, weights)
     ]
 

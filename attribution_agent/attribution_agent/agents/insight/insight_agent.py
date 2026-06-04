@@ -220,41 +220,111 @@ Return your response as a JSON object with these exact keys:
 Return ONLY the JSON — no markdown, no backticks, no preamble."""
 
 
+_SYSTEM_PROMPT = (
+    "You are a marketing analytics consultant who writes monthly attribution reports "
+    "for digital agencies. Your reports are concise, data-driven, and written in plain "
+    "business language. You always return valid JSON — no markdown, no backticks, no preamble."
+)
+
 def _call_claude(prompt: str) -> dict:
-    """Call Claude API and return parsed JSON response."""
-    import requests
+    """Call Claude API via the Anthropic SDK with prompt caching on the system prompt."""
+    import anthropic
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         raise ValueError("ANTHROPIC_API_KEY not set in .env")
 
-    response = requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        json={
-            "model": "claude-sonnet-4-6",
-            "max_tokens": 1500,
-            "messages": [{"role": "user", "content": prompt}],
-        },
-        timeout=60,
-    )
-    response.raise_for_status()
+    client = anthropic.Anthropic(api_key=api_key)
 
-    content = response.json()["content"][0]["text"]
+    message = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1500,
+        system=[
+            {
+                "type": "text",
+                "text": _SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    content = message.content[0].text.strip()
 
     # Strip any accidental markdown fences
-    content = content.strip()
     if content.startswith("```"):
         content = content.split("```")[1]
         if content.startswith("json"):
             content = content[4:]
     content = content.strip()
 
+    usage = message.usage
+    logger.info(
+        f"[Insight] Claude usage — input: {usage.input_tokens}, "
+        f"output: {usage.output_tokens}, "
+        f"cache_read: {getattr(usage, 'cache_read_input_tokens', 0)}, "
+        f"cache_write: {getattr(usage, 'cache_creation_input_tokens', 0)}"
+    )
+
     return json.loads(content)
+
+
+# ─── TEMPLATE FALLBACK ────────────────────────────────────────
+
+def _build_fallback_report(
+    config: ClientConfig,
+    data: list[dict],
+    selected_model: str,
+) -> dict:
+    """
+    Generates a structured but non-narrative report from raw channel_performance
+    data when the Claude API is unavailable. No prose — metrics only.
+    """
+    total_pipeline    = sum(r.get("pipeline_value") or 0 for r in data)
+    total_spend       = sum(r.get("total_spend") or 0 for r in data)
+    total_deals       = sum(r.get("deals_count") or 0 for r in data)
+    collected_revenue = sum(r.get("collected_revenue") or 0 for r in data)
+    overall_roi       = round(total_pipeline / total_spend, 2) if total_spend else 0.0
+    true_roi          = round(collected_revenue / total_spend, 2) if total_spend else 0.0
+    top_channel       = data[0]["channel"] if data else "Unknown"
+    report_month      = data[0].get("report_month", "Unknown") if data else "Unknown"
+
+    channel_lines = [
+        f"• {r['channel']}: {int(r.get('deals_count') or 0)} deals, "
+        f"${(r.get('pipeline_value') or 0):,.0f} pipeline, "
+        f"${(r.get('total_spend') or 0):,.0f} spend"
+        for r in data
+    ]
+
+    narrative = (
+        f"[AUTO-GENERATED — AI narrative unavailable]\n\n"
+        f"Period: {report_month} | Model: {selected_model}\n\n"
+        f"Total pipeline: ${total_pipeline:,.0f} across {total_deals} deals. "
+        f"Total ad spend: ${total_spend:,.0f}. Overall ROI: {overall_roi}x. "
+        f"Top channel: {top_channel}.\n\n"
+        "Channel breakdown:\n" + "\n".join(channel_lines)
+    )
+
+    key_findings = [
+        f"Top channel: {top_channel}",
+        f"Total pipeline value: ${total_pipeline:,.0f}",
+        f"Total ad spend: ${total_spend:,.0f} — ROI: {overall_roi}x",
+    ]
+    if collected_revenue:
+        key_findings.append(f"Collected revenue: ${collected_revenue:,.0f} — True ROI: {true_roi}x")
+
+    return {
+        "narrative":        narrative,
+        "key_findings":     key_findings,
+        "top_channel":      top_channel,
+        "total_pipeline":   total_pipeline,
+        "total_spend":      total_spend,
+        "overall_roi":      overall_roi,
+        "collected_revenue": collected_revenue,
+        "refund_rate":      0.0,
+        "true_roi":         true_roi,
+        "attribution_model": selected_model,
+    }
 
 
 # ─── MAIN FUNCTION ────────────────────────────────────────────
@@ -267,7 +337,7 @@ def generate_insight_report(
     Full pipeline:
     1. Fetch channel_performance from Databricks
     2. Build prompt with data
-    3. Call Claude API
+    3. Call Claude API (falls back to template report on failure)
     4. Return structured InsightReport
     """
     config = get_client(client_id)
@@ -287,18 +357,47 @@ def generate_insight_report(
             generated_at=datetime.utcnow().isoformat(),
         )
 
-    # 2. Build prompt
-    prompt = _build_prompt(config, data, selected_model)
-
-    # 3. Call Claude
-    logger.info("[Insight] Calling Claude API...")
-    claude_response = _call_claude(prompt)
+    # 2. Build prompt and call Claude (two-stage via N8iV agents, fallback to single-stage)
+    logger.info("[Insight] Generating report via N8iV revenue-analyst + executive-reporting agents...")
+    try:
+        from agents.intelligence.n8iv_agents import (
+            run_revenue_analyst_agent,
+            run_executive_reporting_agent,
+        )
+        analyst_output = run_revenue_analyst_agent(
+            client_id=client_id,
+            client_name=config.client_name,
+            channel_data=data,
+            attribution_model=selected_model,
+        )
+        claude_response = run_executive_reporting_agent(
+            client_id=client_id,
+            client_name=config.client_name,
+            analyst_output=analyst_output,
+            channel_data=data,
+            attribution_model=selected_model,
+        )
+    except Exception as exc:
+        logger.warning(
+            f"[Insight] N8iV two-stage agents failed ({exc!r}) — "
+            "falling back to single-stage prompt"
+        )
+        prompt = _build_prompt(config, data, selected_model)
+        try:
+            claude_response = _call_claude(prompt)
+        except Exception as exc2:
+            logger.warning(
+                f"[Insight] Claude API unavailable ({exc2!r}) — "
+                "falling back to template report"
+            )
+            claude_response = _build_fallback_report(config, data, selected_model)
 
     # 4. Build report
+    report_month = data[0].get("report_month", "")
     report = InsightReport(
         client_id=client_id,
         client_name=config.client_name,
-        report_month=data[0].get("report_month", ""),
+        report_month=report_month,
         narrative=claude_response.get("narrative", ""),
         key_findings=claude_response.get("key_findings", []),
         top_channel=claude_response.get("top_channel", ""),

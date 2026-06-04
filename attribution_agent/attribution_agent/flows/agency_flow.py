@@ -177,6 +177,23 @@ def run_agency_pipeline(
             # 3. Generate report from refreshed attributed revenue
             report = generate_insight_report(client_id, attribution_model=selected_model)
 
+            # 3b. Governance review (advisory — never blocks)
+            try:
+                from agents.intelligence.n8iv_agents import run_governance_review
+                gov_warnings = run_governance_review(
+                    client_id=client_id,
+                    client_name=get_client(client_id).client_name,
+                    report_narrative=report.narrative,
+                    report_json=report.to_dict(),
+                )
+                if gov_warnings:
+                    logger.warning(
+                        f"[Governance] {len(gov_warnings)} advisory item(s) for "
+                        f"{client_id}: " + "; ".join(gov_warnings[:3])
+                    )
+            except Exception as gov_exc:
+                logger.warning(f"[Governance] review failed (non-fatal): {gov_exc!r}")
+
             # 4. Send white-labeled email
             email_sent = False
             if not dry_run:
