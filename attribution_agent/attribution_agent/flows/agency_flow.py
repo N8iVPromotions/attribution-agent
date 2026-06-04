@@ -309,41 +309,57 @@ def run_all_agencies(
     ]
 
 
-# ─── CLI ENTRYPOINT ───────────────────────────────────────────
+# ─── CLI / DATABRICKS JOB ENTRYPOINT ────────────────────────────────────────
 
 if __name__ == "__main__":
     import argparse
     logging.basicConfig(level=logging.INFO)
 
-    parser = argparse.ArgumentParser(description="Run attribution pipeline for an agency")
-    parser.add_argument("--agency", type=str, default=None,
-                        help="Agency ID (runs all agencies if omitted)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Generate reports but do not send emails")
-    parser.add_argument("--client-filter", type=str, nargs="+", default=None,
-                        help="Run only specific client IDs within the agency")
-    parser.add_argument("--attribution-model", type=str, default="last_touch",
-                        help="Attribution model to apply")
-    parser.add_argument("--run-mode", type=str, default="agency",
-                        help="agency or business")
-    args = parser.parse_args()
+    # --- Databricks Job widget parameters (set via job parameters in databricks.yml)
+    _agency = None
+    _dry_run = False
+    _attribution_model = "last_touch"
+    _run_mode = "agency"
+    try:
+        from databricks.sdk.runtime import dbutils as _dbutils
+        _agency = _dbutils.widgets.get("agency") or None
+        _dry_run = _dbutils.widgets.get("dry_run", "false").lower() == "true"
+        _attribution_model = _dbutils.widgets.get("attribution_model", "last_touch") or "last_touch"
+        logger.info(f"[Job] Running with Databricks widget params: agency={_agency}, dry_run={_dry_run}, model={_attribution_model}")
+    except Exception:
+        # Not inside a Databricks Job — fall through to argparse
+        parser = argparse.ArgumentParser(description="Run attribution pipeline for an agency")
+        parser.add_argument("--agency", type=str, default=None,
+                            help="Agency ID (runs all agencies if omitted)")
+        parser.add_argument("--dry-run", action="store_true",
+                            help="Generate reports but do not send emails")
+        parser.add_argument("--client-filter", type=str, nargs="+", default=None,
+                            help="Run only specific client IDs within the agency")
+        parser.add_argument("--attribution-model", type=str, default="last_touch",
+                            help="Attribution model to apply")
+        parser.add_argument("--run-mode", type=str, default="agency",
+                            help="agency or business")
+        args = parser.parse_args()
+        _agency = args.agency
+        _dry_run = args.dry_run
+        _attribution_model = args.attribution_model
+        _run_mode = args.run_mode
 
-    if args.agency:
+    if _agency:
         result = run_agency_pipeline(
-            agency_id=args.agency,
-            dry_run=args.dry_run,
-            client_filter=args.client_filter,
-            attribution_model=args.attribution_model,
-            run_mode=args.run_mode,
+            agency_id=_agency,
+            dry_run=_dry_run,
+            attribution_model=_attribution_model,
+            run_mode=_run_mode,
         )
         print(json.dumps(result, indent=2, default=str))
     else:
         results = [
             run_agency_pipeline(
                 agency_id=agency_id,
-                dry_run=args.dry_run,
-                attribution_model=args.attribution_model,
-                run_mode=args.run_mode,
+                dry_run=_dry_run,
+                attribution_model=_attribution_model,
+                run_mode=_run_mode,
             )
             for agency_id in list_agencies()
         ]

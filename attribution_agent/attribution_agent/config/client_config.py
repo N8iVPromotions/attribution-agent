@@ -107,7 +107,10 @@ def slugify_client_id(name: str) -> str:
 
 
 def default_client_schema(client_id: str) -> str:
-    return f"workspace.attribution_{slugify_client_id(client_id)}"
+    # main catalog is writable in all Databricks workspaces.
+    # Override ATTRIBUTION_CATALOG to use a different catalog (e.g. hive_metastore).
+    catalog = os.environ.get("ATTRIBUTION_CATALOG", "main")
+    return f"{catalog}.attribution_{slugify_client_id(client_id)}"
 
 
 def _config_from_dict(data: dict) -> ClientConfig:
@@ -149,20 +152,24 @@ def _write_custom_clients(clients: dict[str, ClientConfig]) -> None:
     )
 
 
+def _catalog() -> str:
+    return os.environ.get("ATTRIBUTION_CATALOG", "main")
+
+
 BASE_CLIENT_REGISTRY: dict[str, ClientConfig] = {
     "demo_client": ClientConfig(
         client_id="demo_client",
         client_name="Demo Client LLC",
         attribution_model="last_touch",
         meta_enabled=True,
-        meta_ad_account_id="155554968273585",  # ← replace with real ID
+        meta_ad_account_id="155554968273585",  # ← replace with real Meta ad account ID
         google_ads_enabled=False,
         google_ads_customer_id="",
         linkedin_ads_enabled=False,
         linkedin_ads_account_id="",
         hubspot_enabled=True,
         hubspot_pipeline_id="",
-        databricks_schema="workspace.attribution_demo_client",
+        databricks_schema=f"{_catalog()}.attribution_demo_client",
         lookback_days=30,
         client_report_email="Zajen@n8ivpromotions.com",
     ),
@@ -175,7 +182,7 @@ BASE_CLIENT_REGISTRY: dict[str, ClientConfig] = {
         hubspot_enabled=True,
         hubspot_pipeline_id="",             # ← add HubSpot pipeline ID if not default
         stripe_enabled=True,
-        databricks_schema="workspace.attribution_n8iv_promotions",
+        databricks_schema=f"{_catalog()}.attribution_n8iv_promotions",
         lookback_days=30,
         agency_id="n8iv_promotions",
         client_report_email="zajen@n8ivpromotions.com",
