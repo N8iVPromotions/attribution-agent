@@ -646,20 +646,12 @@ def _trigger_databricks_job(
         st.error("databricks-sdk not installed.")
         return
 
-    host = os.environ.get("DATABRICKS_HOST", "").rstrip("/")
-    token = os.environ.get("DATABRICKS_TOKEN", "")
-    if host and token:
-        # Databricks Apps auto-inject OAuth creds alongside DATABRICKS_TOKEN.
-        # Temporarily remove them so the SDK uses PAT-only auth.
-        _pop = {k: os.environ.pop(k, None) for k in ("DATABRICKS_CLIENT_ID", "DATABRICKS_CLIENT_SECRET")}
-        try:
-            w = WorkspaceClient(host=host, token=token)
-        finally:
-            for k, v in _pop.items():
-                if v is not None:
-                    os.environ[k] = v
-    else:
-        w = WorkspaceClient()
+    # Databricks Apps auto-inject OAuth credentials (DATABRICKS_CLIENT_ID/SECRET).
+    # Using WorkspaceClient() with no args picks up OAuth automatically.
+    # If DATABRICKS_TOKEN is also present it causes a conflict — remove it first.
+    os.environ.pop("DATABRICKS_TOKEN", None)
+    w = WorkspaceClient()
+
 
     # Resolve job ID — prefer the env var to avoid a list-all-jobs permission check
     job_id = _JOB_ID
