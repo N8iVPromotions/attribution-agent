@@ -84,8 +84,6 @@ resources:
           - "--server.headless"
           - "true"
         env:
-          - name: ATTRIBUTION_JOB_NAME
-            value: "[Attribution] Monthly Pipeline"
           - name: ATTRIBUTION_JOB_ID
             value: "500226442246561"
           - name: ATTRIBUTION_CATALOG
