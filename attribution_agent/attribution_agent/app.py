@@ -45,8 +45,8 @@ from config.client_config import (
 )
 
 _DATABRICKS_MODE = bool(os.environ.get("ATTRIBUTION_JOB_NAME"))
-_JOB_NAME = os.environ.get("ATTRIBUTION_JOB_NAME", "")
-_JOB_ID = int(os.environ.get("ATTRIBUTION_JOB_ID", "0") or "0")
+_JOB_NAME = os.environ.get("ATTRIBUTION_JOB_NAME", "[Attribution] Monthly Pipeline")
+_JOB_ID = int(os.environ.get("ATTRIBUTION_JOB_ID", "0") or "0") or 500226442246561
 
 # ── Page config ───────────────────────────────────────────────
 st.set_page_config(
@@ -646,7 +646,12 @@ def _trigger_databricks_job(
         st.error("databricks-sdk not installed.")
         return
 
+    # Databricks Apps auto-inject OAuth credentials (DATABRICKS_CLIENT_ID/SECRET).
+    # Using WorkspaceClient() with no args picks up OAuth automatically.
+    # If DATABRICKS_TOKEN is also present it causes a conflict — remove it first.
+    os.environ.pop("DATABRICKS_TOKEN", None)
     w = WorkspaceClient()
+
 
     # Resolve job ID — prefer the env var to avoid a list-all-jobs permission check
     job_id = _JOB_ID
@@ -658,17 +663,10 @@ def _trigger_databricks_job(
         job_id = job.job_id
 
     with st.spinner("Submitting run…"):
-        python_params = []
+        job_parameters = {"dry_run": str(dry_run).lower(), "attribution_model": attribution_model}
         if agency_id:
-            python_params.extend(["--agency", agency_id])
-        if dry_run:
-            python_params.append("--dry-run")
-        if client_filter:
-            python_params.append("--client-filter")
-            python_params.extend(client_filter)
-        python_params.extend(["--attribution-model", attribution_model])
-        python_params.extend(["--run-mode", run_mode.lower()])
-        run = w.jobs.run_now(job_id=job_id, python_params=python_params)
+            job_parameters["agency"] = agency_id
+        run = w.jobs.run_now(job_id=job_id, job_parameters=job_parameters)
         run_id = run.run_id
 
     n_clients = len(client_filter) if client_filter else "all"

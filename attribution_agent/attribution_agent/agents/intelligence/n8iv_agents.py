@@ -27,6 +27,23 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Path to .claude/agents/ — set N8IV_AGENTS_DIR env var to override (required in Databricks Jobs).
+# Databricks Jobs: set N8IV_AGENTS_DIR to the absolute path where the bundle deploys agent files.
+# Default walks up from this file to the repo root (works locally and in Databricks Apps).
+def _find_agents_dir() -> Path:
+    if env_path := os.environ.get("N8IV_AGENTS_DIR"):
+        return Path(env_path)
+    # Walk upward from this file looking for .claude/agents/
+    candidate = Path(__file__).resolve()
+    for _ in range(8):
+        candidate = candidate.parent
+        agents_dir = candidate / ".claude" / "agents"
+        if agents_dir.is_dir():
+            return agents_dir
+    # Last resort: relative to the bundle deploy path
+    return Path("/Workspace/Users/zajen@n8ivpromotions.com/.bundle/attribution-agent/production") / ".claude" / "agents"
+
+_AGENTS_DIR = _find_agents_dir()
 # Path to .claude/agents/ relative to repo root
 _AGENTS_DIR = Path(__file__).parent.parent.parent.parent.parent.parent / ".claude" / "agents"
 

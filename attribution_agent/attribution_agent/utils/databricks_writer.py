@@ -11,6 +11,11 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# Ops schema for pipeline run history — overridable via env var.
+# Default: main.attribution_ops (main catalog is writable in all workspaces).
+# Override: ATTRIBUTION_OPS_SCHEMA=hive_metastore.attribution_ops
+_OPS_SCHEMA = os.environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_ops")
+
 
 def _is_databricks() -> bool:
     try:
@@ -158,7 +163,7 @@ PARTITIONED BY (date)
 """
 
 RUN_HISTORY_TABLE_DDL = """
-CREATE TABLE IF NOT EXISTS workspace.attribution_ops.pipeline_runs (
+CREATE TABLE IF NOT EXISTS {ops_schema}.pipeline_runs (
     run_id              STRING,
     agency_id           STRING,
     client_id           STRING,
@@ -202,9 +207,9 @@ def ensure_tables(schema: str) -> None:
 
 
 def ensure_ops_tables() -> None:
-    _run_sql("CREATE SCHEMA IF NOT EXISTS workspace.attribution_ops")
-    _run_sql(RUN_HISTORY_TABLE_DDL)
-    logger.info("[Databricks] Ops tables ready")
+    _run_sql(f"CREATE SCHEMA IF NOT EXISTS {_OPS_SCHEMA}")
+    _run_sql(RUN_HISTORY_TABLE_DDL.format(ops_schema=_OPS_SCHEMA))
+    logger.info(f"[Databricks] Ops tables ready: {_OPS_SCHEMA}")
 
 
 def _upsert_dataframe(
@@ -379,22 +384,26 @@ def write_pipeline_run(record: dict) -> None:
     df = pd.DataFrame([row])
     for col in ("started_at", "finished_at"):
         df[col] = df[col].astype(object).where(df[col].notna(), None)
-    _upsert_dataframe(df, "workspace.attribution_ops", "pipeline_runs", ["run_id", "client_id"])
+    _upsert_dataframe(df, _OPS_SCHEMA, "pipeline_runs", ["run_id", "client_id"])
 
 
 def fetch_recent_pipeline_runs(limit: int = 20) -> list[dict]:
     try:
         ensure_ops_tables()
-        conn = _get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
+        query = (
             "SELECT run_id, agency_id, client_id, run_mode, attribution_model, status, "
             "dry_run, meta_rows, google_rows, linkedin_rows, hubspot_rows, stripe_rows, "
             "normalized_ad_rows, total_pipeline, top_channel, email_sent, warnings, error, "
-            "started_at, finished_at, output_schema "
-            "FROM workspace.attribution_ops.pipeline_runs "
+            f"started_at, finished_at, output_schema "
+            f"FROM {_OPS_SCHEMA}.pipeline_runs "
             f"ORDER BY started_at DESC LIMIT {int(limit)}"
         )
+        if _is_databricks():
+            spark_df = _get_spark().sql(query)
+            return [row.asDict() for row in spark_df.collect()]
+        conn = _get_connection()
+        cursor = conn.cursor()
+        cursor.execute(query)
         columns = [desc[0] for desc in cursor.description]
         rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
         cursor.close()

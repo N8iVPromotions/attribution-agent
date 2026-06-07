@@ -26,12 +26,21 @@ resources:
         timezone_id: "America/New_York"
         pause_status: UNPAUSED
 
+      job_clusters: []
+
       tasks:
         - task_key: run_all_agencies
           spark_python_task:
             python_file: attribution_agent/attribution_agent/flows/agency_flow.py
-            # No --agency arg → runs all agencies via run_all_agencies()
           environment_key: default
+
+      parameters:
+        - name: agency
+          default: ""
+        - name: dry_run
+          default: "false"
+        - name: attribution_model
+          default: "last_touch"
 
       environments:
         - environment_key: default
@@ -45,6 +54,7 @@ resources:
               - "tenacity>=8.2.0"
               - "loguru>=0.7.0"
               - "stripe>=7.0.0"
+              - "sendgrid>=6.11.0"
               - "google-ads>=24.0.0"
               - "anthropic>=0.97.0"
               - "databricks-sdk>=0.28.0"
@@ -74,10 +84,20 @@ resources:
           - "--server.headless"
           - "true"
         env:
-          - name: ATTRIBUTION_JOB_NAME
-            value: "[Attribution] Monthly Pipeline"
           - name: ATTRIBUTION_JOB_ID
             value: "500226442246561"
-          # Secrets (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, OPENAI_API_KEY, etc.)
-          # are read at runtime via WorkspaceClient().secrets.get_secret()
-          # in app.py:_get_secret(). Managed in the "attribution" secret scope.
+          - name: ATTRIBUTION_CATALOG
+            value: "workspace"
+          - name: ATTRIBUTION_OPS_SCHEMA
+            value: "workspace.attribution_ops"
+          - name: COMMS_PROVIDER
+            value: "gmail"
+          # Client registry stored on a Volume so it persists across App restarts.
+          # Create the Volume first: workspace > attribution_ops > client_registry (Volume).
+          - name: ATTRIBUTION_CLIENT_REGISTRY_PATH
+            value: "/Volumes/workspace/attribution_ops/client_registry/clients.json"
+          # Agent prompt files — resolved at runtime inside the App container.
+          - name: N8IV_AGENTS_DIR
+            value: "/home/user/.bundle/attribution-agent/production/.claude/agents"
+          # All other secrets (API keys, Telegram, email) live in the "attribution"
+          # Databricks secret scope and are read via WorkspaceClient().secrets.get_secret().
