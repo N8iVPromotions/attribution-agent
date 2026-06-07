@@ -663,17 +663,10 @@ def _trigger_databricks_job(
         job_id = job.job_id
 
     with st.spinner("Submitting run…"):
-        python_params = []
+        job_parameters = {"dry_run": str(dry_run).lower(), "attribution_model": attribution_model}
         if agency_id:
-            python_params.extend(["--agency", agency_id])
-        if dry_run:
-            python_params.append("--dry-run")
-        if client_filter:
-            python_params.append("--client-filter")
-            python_params.extend(client_filter)
-        python_params.extend(["--attribution-model", attribution_model])
-        python_params.extend(["--run-mode", run_mode.lower()])
-        run = w.jobs.run_now(job_id=job_id, python_params=python_params)
+            job_parameters["agency"] = agency_id
+        run = w.jobs.run_now(job_id=job_id, job_parameters=job_parameters)
         run_id = run.run_id
 
     n_clients = len(client_filter) if client_filter else "all"
