@@ -649,9 +649,15 @@ def _trigger_databricks_job(
     host = os.environ.get("DATABRICKS_HOST", "").rstrip("/")
     token = os.environ.get("DATABRICKS_TOKEN", "")
     if host and token:
-        from databricks.sdk.config import Config
-        cfg = Config(host=host, token=token, client_id=None, client_secret=None)
-        w = WorkspaceClient(config=cfg)
+        # Databricks Apps auto-inject OAuth creds alongside DATABRICKS_TOKEN.
+        # Temporarily remove them so the SDK uses PAT-only auth.
+        _pop = {k: os.environ.pop(k, None) for k in ("DATABRICKS_CLIENT_ID", "DATABRICKS_CLIENT_SECRET")}
+        try:
+            w = WorkspaceClient(host=host, token=token)
+        finally:
+            for k, v in _pop.items():
+                if v is not None:
+                    os.environ[k] = v
     else:
         w = WorkspaceClient()
 
