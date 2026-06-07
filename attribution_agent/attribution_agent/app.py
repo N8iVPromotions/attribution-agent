@@ -45,8 +45,8 @@ from config.client_config import (
 )
 
 _DATABRICKS_MODE = bool(os.environ.get("ATTRIBUTION_JOB_NAME"))
-_JOB_NAME = os.environ.get("ATTRIBUTION_JOB_NAME", "")
-_JOB_ID = int(os.environ.get("ATTRIBUTION_JOB_ID", "0") or "0")
+_JOB_NAME = os.environ.get("ATTRIBUTION_JOB_NAME", "[Attribution] Monthly Pipeline")
+_JOB_ID = int(os.environ.get("ATTRIBUTION_JOB_ID", "0") or "0") or 500226442246561
 
 # ── Page config ───────────────────────────────────────────────
 st.set_page_config(
