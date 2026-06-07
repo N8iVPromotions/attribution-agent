@@ -44,6 +44,8 @@ def _find_agents_dir() -> Path:
     return Path("/Workspace/Users/zajen@n8ivpromotions.com/.bundle/attribution-agent/production") / ".claude" / "agents"
 
 _AGENTS_DIR = _find_agents_dir()
+# Path to .claude/agents/ relative to repo root
+_AGENTS_DIR = Path(__file__).parent.parent.parent.parent.parent.parent / ".claude" / "agents"
 
 _CLAUDE_MODEL = "claude-sonnet-4-6"
 _MAX_TOKENS   = 2000
