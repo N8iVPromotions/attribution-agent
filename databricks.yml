@@ -13,7 +13,7 @@ targets:
 
 resources:
 
-  # ── Scheduled Job (serverless compute) ───────────────────────────────────────
+  # ── Scheduled Job (classic cluster — needs public internet for API calls) ────
   jobs:
     attribution_pipeline:
       name: "[Attribution] Monthly Pipeline"
@@ -26,42 +26,51 @@ resources:
         timezone_id: "America/New_York"
         pause_status: UNPAUSED
 
+      job_clusters:
+        - job_cluster_key: main
+          new_cluster:
+            spark_version: "15.4.x-scala2.12"
+            node_type_id: "n2-highmem-4"
+            num_workers: 0
+            spark_conf:
+              spark.master: "local[*, 4]"
+              spark.databricks.cluster.profile: singleNode
+            custom_tags:
+              ResourceClass: SingleNode
+            spark_env_vars:
+              ATTRIBUTION_CATALOG: "workspace"
+              ATTRIBUTION_OPS_SCHEMA: "workspace.attribution_ops"
+              COMMS_PROVIDER: "gmail"
+
       tasks:
         - task_key: run_all_agencies
+          job_cluster_key: main
           spark_python_task:
             python_file: attribution_agent/attribution_agent/flows/agency_flow.py
             # No --agency arg → runs all agencies via run_all_agencies()
-          environment_key: default
-
-      # Environment variables injected into the job cluster.
-      # Secrets are read at runtime via dbutils.secrets.get(scope="attribution", key=...).
-      # The "attribution" secret scope must exist in the workspace before first run.
-      job_clusters: []
-
-      parameters:
-        - name: agency
-          default: ""
-        - name: dry_run
-          default: "false"
-        - name: attribution_model
-          default: "last_touch"
-
-      environments:
-        - environment_key: default
-          spec:
-            client: "1"
-            dependencies:
-              - "requests>=2.31.0"
-              - "hubspot-api-client>=8.1.0"
-              - "pandas>=2.0.0"
-              - "python-dotenv>=1.0.0"
-              - "tenacity>=8.2.0"
-              - "loguru>=0.7.0"
-              - "stripe>=7.0.0"
-              - "sendgrid>=6.11.0"
-              - "google-ads>=24.0.0"
-              - "anthropic>=0.97.0"
-              - "databricks-sdk>=0.28.0"
+          libraries:
+            - pypi:
+                package: "requests>=2.31.0"
+            - pypi:
+                package: "hubspot-api-client>=8.1.0"
+            - pypi:
+                package: "pandas>=2.0.0"
+            - pypi:
+                package: "python-dotenv>=1.0.0"
+            - pypi:
+                package: "tenacity>=8.2.0"
+            - pypi:
+                package: "loguru>=0.7.0"
+            - pypi:
+                package: "stripe>=7.0.0"
+            - pypi:
+                package: "sendgrid>=6.11.0"
+            - pypi:
+                package: "google-ads>=24.0.0"
+            - pypi:
+                package: "anthropic>=0.97.0"
+            - pypi:
+                package: "databricks-sdk>=0.28.0"
 
       email_notifications:
         on_failure:
