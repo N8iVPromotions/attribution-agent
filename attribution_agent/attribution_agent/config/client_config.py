@@ -109,7 +109,7 @@ def slugify_client_id(name: str) -> str:
 def default_client_schema(client_id: str) -> str:
     # main catalog is writable in all Databricks workspaces.
     # Override ATTRIBUTION_CATALOG to use a different catalog (e.g. hive_metastore).
-    catalog = os.environ.get("ATTRIBUTION_CATALOG", "main")
+    catalog = os.environ.get("ATTRIBUTION_CATALOG", "workspace")
     return f"{catalog}.attribution_{slugify_client_id(client_id)}"
 
 
@@ -153,7 +153,7 @@ def _write_custom_clients(clients: dict[str, ClientConfig]) -> None:
 
 
 def _catalog() -> str:
-    return os.environ.get("ATTRIBUTION_CATALOG", "main")
+    return os.environ.get("ATTRIBUTION_CATALOG", "workspace")
 
 
 BASE_CLIENT_REGISTRY: dict[str, ClientConfig] = {

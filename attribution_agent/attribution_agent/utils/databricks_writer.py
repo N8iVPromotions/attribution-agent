@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # Ops schema for pipeline run history — overridable via env var.
 # Default: main.attribution_ops (main catalog is writable in all workspaces).
 # Override: ATTRIBUTION_OPS_SCHEMA=hive_metastore.attribution_ops
-_OPS_SCHEMA = os.environ.get("ATTRIBUTION_OPS_SCHEMA", "main.attribution_ops")
+_OPS_SCHEMA = os.environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_ops")
 
 
 def _is_databricks() -> bool:

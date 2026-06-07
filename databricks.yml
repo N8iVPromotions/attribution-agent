@@ -32,10 +32,6 @@ resources:
             python_file: attribution_agent/attribution_agent/flows/agency_flow.py
             # No --agency arg → runs all agencies via run_all_agencies()
           environment_key: default
-          environment_variables:
-            ATTRIBUTION_CATALOG: "workspace"
-            ATTRIBUTION_OPS_SCHEMA: "workspace.attribution_ops"
-            COMMS_PROVIDER: "gmail"
 
       # Environment variables injected into the job cluster.
       # Secrets are read at runtime via dbutils.secrets.get(scope="attribution", key=...).
