@@ -646,10 +646,12 @@ def _trigger_databricks_job(
         st.error("databricks-sdk not installed.")
         return
 
-    host = os.environ.get("DATABRICKS_HOST", "").lstrip("https://").rstrip("/")
+    host = os.environ.get("DATABRICKS_HOST", "").rstrip("/")
     token = os.environ.get("DATABRICKS_TOKEN", "")
     if host and token:
-        w = WorkspaceClient(host=host, token=token)
+        from databricks.sdk.config import Config
+        cfg = Config(host=host, token=token, client_id=None, client_secret=None)
+        w = WorkspaceClient(config=cfg)
     else:
         w = WorkspaceClient()
 
