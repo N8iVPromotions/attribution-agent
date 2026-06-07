@@ -17,18 +17,33 @@ logger = logging.getLogger(__name__)
 _OPS_SCHEMA = os.environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_ops")
 
 
+def _is_databricks_app() -> bool:
+    """True when running inside a Databricks App (OAuth M2M env, no Spark runtime)."""
+    return bool(
+        os.environ.get("DATABRICKS_CLIENT_ID")
+        and not os.environ.get("DATABRICKS_RUNTIME_VERSION")
+    )
+
+
 def _is_databricks() -> bool:
     try:
         from pyspark.sql import SparkSession
         spark = SparkSession.getActiveSession()
-        return spark is not None
+        if spark is not None:
+            return True
     except Exception:
-        return False
+        pass
+    return _is_databricks_app()
 
 
 def _get_spark():
     from pyspark.sql import SparkSession
-    return SparkSession.getActiveSession()
+    spark = SparkSession.getActiveSession()
+    if spark is not None:
+        return spark
+    # Databricks App — use serverless Databricks Connect
+    from databricks.connect import DatabricksSession
+    return DatabricksSession.builder.serverless().getOrCreate()
 
 
 def _get_connection():

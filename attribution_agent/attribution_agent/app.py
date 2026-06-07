@@ -1253,10 +1253,7 @@ with tab_pipeline:
             unsafe_allow_html=True,
         )
         st.markdown('<hr class="ruled">', unsafe_allow_html=True)
-        if _DATABRICKS_MODE:
-            _trigger_databricks_job(agency_id, client_filter, dry_run, selected_model, run_mode)
-        else:
-            _run_local(agency_id, client_filter, dry_run, selected_model, run_mode)
+        _run_local(agency_id, client_filter, dry_run, selected_model, run_mode)
 
 
 # ══════════════════════════════════════════════
