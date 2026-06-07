@@ -65,6 +65,10 @@ resources:
         on_success:
           - zajen@n8ivpromotions.com
 
+      permissions:
+        - level: CAN_MANAGE_RUN
+          service_principal_name: b94ef94a-c5cd-4964-9c85-808c070be27f
+
       timeout_seconds: 3600
 
   # ── Streamlit App ────────────────────────────────────────────────────────────
