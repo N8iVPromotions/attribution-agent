@@ -804,6 +804,8 @@ def _render_results(result: dict, dry_run: bool) -> None:
     else:
         st.warning(f"{processed} succeeded · {failed} failed.")
 
+    if not result["results"]:
+        return
     cols = st.columns(min(len(result["results"]), 3))
     for i, r in enumerate(result["results"]):
         cfg = get_client(r["client_id"])
