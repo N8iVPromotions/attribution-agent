@@ -72,9 +72,10 @@ html, body, [class*="css"] {
 /* Atmospheric background */
 [data-testid="stAppViewContainer"] {
     background:
-        radial-gradient(ellipse 75% 55% at -5% -8%, rgba(37,99,235,0.08) 0%, transparent 55%),
-        radial-gradient(ellipse 55% 45% at 108% 108%, rgba(124,104,252,0.07) 0%, transparent 55%),
-        #05050d !important;
+        radial-gradient(ellipse 80% 60% at -5% -10%, rgba(37,99,235,0.20) 0%, transparent 55%),
+        radial-gradient(ellipse 60% 50% at 108% 108%, rgba(124,104,252,0.14) 0%, transparent 55%),
+        radial-gradient(ellipse 50% 40% at 50% 100%, rgba(10,8,28,0.6) 0%, transparent 70%),
+        #04040c !important;
 }
 [data-testid="stHeader"] { background: transparent !important; }
 
@@ -109,9 +110,14 @@ h3 {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1rem 0;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    padding: 0.85rem 1.2rem;
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 14px;
     margin-bottom: 1.5rem;
+    background: rgba(255,255,255,0.018);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    box-shadow: 0 4px 32px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.06);
 }
 .topbar-left {
     display: flex;
@@ -124,12 +130,12 @@ h3 {
     gap: 0.6rem;
 }
 .brand-mark {
-    width: 26px; height: 26px;
-    background: linear-gradient(135deg, #7c68fc 0%, #5b4fdc 100%);
-    border-radius: 7px;
+    width: 28px; height: 28px;
+    background: linear-gradient(135deg, #8b78ff 0%, #5b4fdc 100%);
+    border-radius: 8px;
     display: flex; align-items: center; justify-content: center;
     font-size: 0.65rem; color: #fff; font-weight: 700;
-    box-shadow: 0 0 16px rgba(124,104,252,0.4);
+    box-shadow: 0 0 20px rgba(124,104,252,0.55), 0 0 40px rgba(124,104,252,0.2);
 }
 .brand-name {
     font-size: 0.82rem;
@@ -158,12 +164,13 @@ h3 {
     gap: 0.35rem;
     font-size: 0.7rem;
     font-weight: 500;
-    color: rgba(255,255,255,0.38);
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.07);
+    color: rgba(255,255,255,0.42);
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.09);
     border-radius: 999px;
-    padding: 0.26rem 0.72rem;
+    padding: 0.28rem 0.78rem;
     letter-spacing: 0;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
 }
 .status-dot {
     width: 5px; height: 5px;
@@ -172,13 +179,14 @@ h3 {
 
 /* ── Panels ── */
 .panel {
-    background: rgba(255,255,255,0.028);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 16px;
+    background: rgba(255,255,255,0.032);
+    border: 1px solid rgba(255,255,255,0.09);
+    border-radius: 18px;
     overflow: hidden;
     margin-bottom: 1rem;
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    box-shadow: 0 4px 28px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.07);
 }
 .panel-header {
     display: flex;
@@ -311,54 +319,57 @@ input[type="text"], input[type="number"], textarea {
 
 /* ── Buttons ── */
 [data-testid="baseButton-primary"] {
-    background: linear-gradient(135deg, #7c68fc 0%, #5f4fe8 100%) !important;
+    background: linear-gradient(135deg, #8b78ff 0%, #5f4fe8 100%) !important;
     border: none !important;
-    border-radius: 10px !important;
+    border-radius: 999px !important;
     font-family: 'Inter', sans-serif !important;
-    font-weight: 500 !important;
+    font-weight: 600 !important;
     font-size: 0.8rem !important;
-    letter-spacing: 0 !important;
-    box-shadow: 0 0 20px rgba(124,104,252,0.25) !important;
+    letter-spacing: 0.01em !important;
+    box-shadow: 0 0 24px rgba(124,104,252,0.35), 0 2px 8px rgba(0,0,0,0.3) !important;
     color: #fff !important;
 }
 [data-testid="baseButton-primary"]:hover {
-    box-shadow: 0 0 28px rgba(124,104,252,0.42) !important;
+    box-shadow: 0 0 36px rgba(124,104,252,0.55), 0 2px 12px rgba(0,0,0,0.3) !important;
+    transform: translateY(-1px) !important;
 }
 [data-testid="baseButton-secondary"] {
-    background: rgba(255,255,255,0.04) !important;
-    border: 1px solid rgba(255,255,255,0.08) !important;
-    border-radius: 10px !important;
+    background: rgba(255,255,255,0.05) !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 999px !important;
     font-family: 'Inter', sans-serif !important;
     font-weight: 500 !important;
     font-size: 0.8rem !important;
-    color: rgba(255,255,255,0.45) !important;
+    color: rgba(255,255,255,0.5) !important;
     box-shadow: none !important;
 }
 [data-testid="baseButton-secondary"]:hover {
-    background: rgba(255,255,255,0.07) !important;
-    border-color: rgba(255,255,255,0.13) !important;
+    background: rgba(255,255,255,0.09) !important;
+    border-color: rgba(255,255,255,0.16) !important;
+    color: rgba(255,255,255,0.7) !important;
 }
 
 /* ── Metrics ── */
 [data-testid="metric-container"] {
-    background: rgba(124,104,252,0.07) !important;
-    border: 1px solid rgba(124,104,252,0.14) !important;
-    border-radius: 14px !important;
-    padding: 0.9rem 1rem !important;
+    background: linear-gradient(135deg, rgba(124,104,252,0.13) 0%, rgba(37,99,235,0.07) 100%) !important;
+    border: 1px solid rgba(124,104,252,0.22) !important;
+    border-radius: 16px !important;
+    padding: 1rem 1rem !important;
+    box-shadow: 0 0 28px rgba(124,104,252,0.1), inset 0 1px 0 rgba(255,255,255,0.07) !important;
 }
 [data-testid="stMetricValue"] {
     font-family: 'Inter', sans-serif !important;
-    font-size: 1.5rem !important;
-    font-weight: 600 !important;
-    color: #e8e8f2 !important;
-    letter-spacing: -0.02em !important;
+    font-size: 1.65rem !important;
+    font-weight: 700 !important;
+    color: #f0eeff !important;
+    letter-spacing: -0.03em !important;
 }
 [data-testid="stMetricLabel"] {
     font-size: 0.63rem !important;
     font-weight: 600 !important;
     letter-spacing: 0.08em !important;
     text-transform: uppercase !important;
-    color: rgba(255,255,255,0.25) !important;
+    color: rgba(255,255,255,0.3) !important;
 }
 
 /* ── Alerts ── */
@@ -385,26 +396,28 @@ input[type="text"], input[type="number"], textarea {
 
 /* ── Tabs ── */
 [data-testid="stTabs"] [role="tablist"] {
-    border-bottom: 1px solid rgba(255,255,255,0.06) !important;
-    gap: 0.2rem !important;
+    border-bottom: 1px solid rgba(255,255,255,0.07) !important;
+    gap: 0.25rem !important;
     padding-bottom: 0 !important;
 }
 [data-testid="stTabs"] [role="tab"] {
     font-size: 0.79rem !important;
     font-weight: 500 !important;
-    color: rgba(255,255,255,0.32) !important;
-    padding: 0.55rem 1.1rem !important;
+    color: rgba(255,255,255,0.3) !important;
+    padding: 0.55rem 1.2rem !important;
     border-radius: 8px 8px 0 0 !important;
     border-bottom: 2px solid transparent !important;
+    transition: all 0.15s ease !important;
 }
 [data-testid="stTabs"] [role="tab"][aria-selected="true"] {
-    color: #c9b8ff !important;
-    border-bottom-color: #7c68fc !important;
-    background: rgba(124,104,252,0.07) !important;
+    color: #d5c6ff !important;
+    border-bottom-color: #8b78ff !important;
+    background: rgba(124,104,252,0.1) !important;
+    box-shadow: 0 0 20px rgba(124,104,252,0.18) !important;
 }
 [data-testid="stTabs"] [role="tab"]:hover {
-    color: rgba(255,255,255,0.55) !important;
-    background: rgba(255,255,255,0.03) !important;
+    color: rgba(255,255,255,0.58) !important;
+    background: rgba(255,255,255,0.04) !important;
 }
 
 /* Dataframe */
@@ -651,7 +664,7 @@ def _render_comparison_chart(selected_model: str) -> None:
         .configure_view(strokeWidth=0, fill="transparent")
     )
 
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(chart, width="stretch")
     st.caption("Sample 5-touch journey: Paid Social → Paid Search → Email → Paid Social → Direct")
 
 
@@ -1373,18 +1386,21 @@ with tab_outreach:
     st.markdown("""
 <style>
 .or-stat-card {
-    background: rgba(255,255,255,0.028);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 14px;
-    backdrop-filter: blur(16px);
-    padding: 18px 12px;
+    background: linear-gradient(135deg, rgba(124,104,252,0.12) 0%, rgba(37,99,235,0.06) 100%);
+    border: 1px solid rgba(124,104,252,0.2);
+    border-radius: 18px;
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    padding: 20px 14px;
     text-align: center;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.07);
 }
 .or-stat-val {
-    font-size: 1.75rem;
+    font-size: 2rem;
     font-weight: 700;
-    font-family: 'DM Mono', 'Courier New', monospace;
+    font-family: 'Inter', sans-serif;
     line-height: 1;
+    letter-spacing: -0.03em;
 }
 .or-stat-label {
     font-size: 0.67rem;
@@ -1394,12 +1410,14 @@ with tab_outreach:
     letter-spacing: 0.6px;
 }
 .or-prospect-card {
-    background: rgba(255,255,255,0.028);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 14px;
-    backdrop-filter: blur(16px);
+    background: linear-gradient(135deg, rgba(124,104,252,0.09) 0%, rgba(37,99,235,0.04) 100%);
+    border: 1px solid rgba(124,104,252,0.16);
+    border-radius: 18px;
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
     padding: 20px;
     margin-bottom: 16px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.06);
 }
 .or-industry-badge {
     display: inline-block;
@@ -1655,7 +1673,7 @@ with tab_observability:
             cost_rows = get_monthly_cost_by_agency()
             if cost_rows:
                 cost_df = pd.DataFrame(cost_rows)
-                st.dataframe(cost_df, use_container_width=True, hide_index=True)
+                st.dataframe(cost_df, width="stretch", hide_index=True)
             else:
                 st.caption("No cost data yet.")
 
@@ -1663,7 +1681,7 @@ with tab_observability:
             eval_rows = get_latest_eval_scores()
             if eval_rows:
                 eval_df = pd.DataFrame(eval_rows)
-                st.dataframe(eval_df, use_container_width=True, hide_index=True)
+                st.dataframe(eval_df, width="stretch", hide_index=True)
             else:
                 st.caption("No eval runs yet. Run eval_runner.py to generate scores.")
 
@@ -1672,7 +1690,7 @@ with tab_observability:
             health_rows = get_pipeline_health_last_30d()
             if health_rows:
                 health_df = pd.DataFrame(health_rows)
-                st.dataframe(health_df, use_container_width=True, hide_index=True)
+                st.dataframe(health_df, width="stretch", hide_index=True)
             else:
                 st.caption("No pipeline runs in the last 30 days.")
 
@@ -1680,7 +1698,7 @@ with tab_observability:
             audit_rows = get_recent_audit_events(limit=20)
             if audit_rows:
                 audit_df = pd.DataFrame(audit_rows)
-                st.dataframe(audit_df, use_container_width=True, hide_index=True)
+                st.dataframe(audit_df, width="stretch", hide_index=True)
             else:
                 st.caption("No audit events yet.")
 
