@@ -47,8 +47,14 @@ _AGENTS_DIR = _find_agents_dir()
 # Path to .claude/agents/ relative to repo root
 _AGENTS_DIR = Path(__file__).parent.parent.parent.parent.parent.parent / ".claude" / "agents"
 
-_CLAUDE_MODEL = "claude-sonnet-4-6"
-_MAX_TOKENS   = 2000
+_MAX_TOKENS = 2000
+
+_TASK_TYPE_MAP: dict[str, str] = {
+    "data-quality": "data_quality",
+    "revenue-analyst": "revenue_analyst",
+    "executive-reporting": "executive_reporting",
+    "governance-reviewer": "governance_review",
+}
 
 
 def _load_system_prompt(agent_name: str) -> str:
@@ -57,7 +63,6 @@ def _load_system_prompt(agent_name: str) -> str:
     if not path.exists():
         raise FileNotFoundError(f"Agent definition not found: {path}")
     content = path.read_text()
-    # Strip YAML frontmatter (--- ... ---)
     if content.startswith("---"):
         parts = content.split("---", 2)
         if len(parts) >= 3:
@@ -69,37 +74,31 @@ def _call_agent(
     agent_name: str,
     user_message: str,
     max_tokens: int = _MAX_TOKENS,
+    run_id: str = "",
+    client_id: str = "",
+    agency_id: str = "",
 ) -> str:
-    """Call Claude with the named agent's system prompt. Returns raw text response."""
-    import anthropic
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY not set")
+    """Route agent call through ModelGateway. Returns raw text response."""
+    from utils.model_gateway import call as gw_call
 
     system_prompt = _load_system_prompt(agent_name)
-    client = anthropic.Anthropic(api_key=api_key)
+    task_type = _TASK_TYPE_MAP.get(agent_name, agent_name.replace("-", "_"))
 
-    message = client.messages.create(
-        model=_CLAUDE_MODEL,
+    resp = gw_call(
+        agent_name=agent_name,
+        system_prompt=system_prompt,
+        user_message=user_message,
         max_tokens=max_tokens,
-        system=[
-            {
-                "type": "text",
-                "text": system_prompt,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        messages=[{"role": "user", "content": user_message}],
+        run_id=run_id,
+        client_id=client_id,
+        agency_id=agency_id,
+        task_type=task_type,
     )
-
-    usage = message.usage
     logger.info(
-        f"[N8iV/{agent_name}] tokens — in: {usage.input_tokens}, "
-        f"out: {usage.output_tokens}, "
-        f"cache_read: {getattr(usage, 'cache_read_input_tokens', 0)}"
+        f"[N8iV/{agent_name}] tokens — in: {resp.input_tokens}, "
+        f"out: {resp.output_tokens}, cache_read: {resp.cache_read_tokens}"
     )
-    return message.content[0].text.strip()
+    return resp.text
 
 
 def _parse_json_response(text: str) -> dict:
@@ -183,7 +182,18 @@ def run_revenue_analyst_agent(
     total_deals    = sum(r.get("deals_count") or 0 for r in channel_data)
     report_month   = channel_data[0].get("report_month", "Unknown") if channel_data else "Unknown"
 
+    # Prepend any cross-run client memories as context
+    memory_context = ""
+    try:
+        from utils.memory_store import MemoryStore
+        memory_context = MemoryStore().recall_as_context(client_id, limit=5)
+    except Exception:
+        pass
+
+    context_prefix = f"{memory_context}\n\n" if memory_context else ""
+
     message = (
+        f"{context_prefix}"
         f"Client: {client_name} ({client_id})\n"
         f"Period: {report_month}\n"
         f"Attribution model: {attribution_model}\n\n"
@@ -197,7 +207,7 @@ def run_revenue_analyst_agent(
         "to write the final client report."
     )
 
-    return _call_agent("revenue-analyst", message, max_tokens=1000)
+    return _call_agent("revenue-analyst", message, max_tokens=1000, client_id=client_id)
 
 
 # ─── EXECUTIVE REPORTING AGENT ────────────────────────────────

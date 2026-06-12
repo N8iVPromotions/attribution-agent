@@ -626,7 +626,7 @@ def _render_comparison_chart(selected_model: str) -> None:
         .configure_view(strokeWidth=0, fill="transparent")
     )
 
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(chart, width="stretch")
     st.caption("Sample 5-touch journey: Paid Social → Paid Search → Email → Paid Social → Direct")
 
 
@@ -1062,12 +1062,25 @@ _inject_secrets()
 _arie_enabled = False
 _arie_status  = {"ok": False, "reason": "ARIE runs locally — see README"}
 
+# ── API health probe ──────────────────────────
+def _probe_api() -> bool:
+    try:
+        import requests as _req
+        api_port = os.environ.get("ATTRIBUTION_API_PORT", "8081")
+        r = _req.get(f"http://localhost:{api_port}/health", timeout=1)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+_api_healthy = _probe_api()
+
 # ── Top bar ───────────────────────────────────
 import datetime as _dt
 env_label = "Databricks" if _DATABRICKS_MODE else "Local"
 env_dot_color = "#7c68fc" if _DATABRICKS_MODE else "#3fb950"
-now_str = _dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+now_str = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 arie_dot_color = "#3fb950" if (_arie_enabled and arie_bot.is_running()) else "#484f58"
+api_dot_color = "#3fb950" if _api_healthy else "#484f58"
 
 st.markdown(
     f'<div class="topbar">'
@@ -1086,6 +1099,10 @@ st.markdown(
     f'    </span>'
     f'    <span class="status-pill">{now_str}</span>'
     f'    <span class="status-pill">'
+    f'      <span class="status-dot" style="background:{api_dot_color};"></span>'
+    f'      API'
+    f'    </span>'
+    f'    <span class="status-pill">'
     f'      <span class="status-dot" style="background:{arie_dot_color};"></span>'
     f'      ARIE'
     f'    </span>'
@@ -1095,7 +1112,9 @@ st.markdown(
 )
 
 # ── Navigation tabs ───────────────────────────
-tab_pipeline, tab_clients, tab_outreach = st.tabs(["Pipeline", "Clients", "Outreach"])
+tab_pipeline, tab_clients, tab_outreach, tab_observability = st.tabs(
+    ["Pipeline", "Clients", "Outreach", "Observability"]
+)
 
 
 # ══════════════════════════════════════════════
@@ -1585,3 +1604,57 @@ with tab_outreach:
                                 '<span class="or-sent-badge">✓ Draft sent to inbox</span>',
                                 unsafe_allow_html=True,
                             )
+
+
+# ══════════════════════════════════════════════
+# TAB: OBSERVABILITY
+# ══════════════════════════════════════════════
+with tab_observability:
+    st.markdown("### Observability")
+
+    try:
+        from utils.observability_queries import (
+            get_monthly_cost_by_agency,
+            get_pipeline_health_last_30d,
+            get_latest_eval_scores,
+            get_recent_audit_events,
+        )
+
+        obs_col1, obs_col2 = st.columns(2)
+
+        with obs_col1:
+            st.markdown("**Token Cost — This Month**")
+            cost_rows = get_monthly_cost_by_agency()
+            if cost_rows:
+                cost_df = pd.DataFrame(cost_rows)
+                st.dataframe(cost_df, width="stretch", hide_index=True)
+            else:
+                st.caption("No cost data yet.")
+
+            st.markdown("**Eval Scores (Latest)**")
+            eval_rows = get_latest_eval_scores()
+            if eval_rows:
+                eval_df = pd.DataFrame(eval_rows)
+                st.dataframe(eval_df, width="stretch", hide_index=True)
+            else:
+                st.caption("No eval runs yet. Run eval_runner.py to generate scores.")
+
+        with obs_col2:
+            st.markdown("**Pipeline Health — Last 30 Days**")
+            health_rows = get_pipeline_health_last_30d()
+            if health_rows:
+                health_df = pd.DataFrame(health_rows)
+                st.dataframe(health_df, width="stretch", hide_index=True)
+            else:
+                st.caption("No pipeline runs in the last 30 days.")
+
+            st.markdown("**Recent Audit Events**")
+            audit_rows = get_recent_audit_events(limit=20)
+            if audit_rows:
+                audit_df = pd.DataFrame(audit_rows)
+                st.dataframe(audit_df, width="stretch", hide_index=True)
+            else:
+                st.caption("No audit events yet.")
+
+    except Exception as _obs_exc:
+        st.warning(f"Observability data unavailable: {_obs_exc}")
