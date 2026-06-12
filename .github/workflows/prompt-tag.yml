@@ -1,0 +1,39 @@
+name: Tag Prompt Version
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".claude/agents/**/*.md"
+
+jobs:
+  tag-prompts:
+    name: Create prompt version tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create prompt version tag
+        run: |
+          DATE=$(date -u +%Y%m%d)
+          SHA=$(git rev-parse --short=8 HEAD)
+          TAG="prompt-v${DATE}-${SHA}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "Tagged prompt version: $TAG"
+
+      - name: Notify via Telegram
+        run: |
+          DATE=$(date -u +%Y%m%d)
+          SHA=$(git rev-parse --short=8 HEAD)
+          TAG="prompt-v${DATE}-${SHA}"
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d text="🏷 *Prompt version tagged*: \`${TAG}\`%0AAgent definitions updated in this commit." \
+            -d parse_mode=Markdown

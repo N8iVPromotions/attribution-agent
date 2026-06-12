@@ -58,12 +58,17 @@ resources:
               - "google-ads>=24.0.0"
               - "anthropic>=0.97.0"
               - "databricks-sdk>=0.28.0"
+              - "databricks-connect>=15.0.0"
 
       email_notifications:
         on_failure:
           - zajen@n8ivpromotions.com
         on_success:
           - zajen@n8ivpromotions.com
+
+      permissions:
+        - level: CAN_MANAGE_RUN
+          service_principal_name: b94ef94a-c5cd-4964-9c85-808c070be27f
 
       timeout_seconds: 3600
 

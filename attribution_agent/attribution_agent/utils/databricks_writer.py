@@ -21,14 +21,21 @@ def _is_databricks() -> bool:
     try:
         from pyspark.sql import SparkSession
         spark = SparkSession.getActiveSession()
-        return spark is not None
+        if spark is not None:
+            return True
     except Exception:
-        return False
+        pass
+    return _is_databricks_app()
 
 
 def _get_spark():
     from pyspark.sql import SparkSession
-    return SparkSession.getActiveSession()
+    spark = SparkSession.getActiveSession()
+    if spark is not None:
+        return spark
+    # Databricks App — use serverless Databricks Connect
+    from databricks.connect import DatabricksSession
+    return DatabricksSession.builder.serverless().getOrCreate()
 
 
 def _get_connection():
@@ -189,6 +196,230 @@ CREATE TABLE IF NOT EXISTS {ops_schema}.pipeline_runs (
 USING DELTA
 """
 
+AUDIT_LOG_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.audit_log (
+    event_id        STRING,
+    event_time      TIMESTAMP,
+    event_type      STRING,
+    actor           STRING,
+    client_id       STRING,
+    agency_id       STRING,
+    resource        STRING,
+    action          STRING,
+    outcome         STRING,
+    detail_json     STRING,
+    run_id          STRING,
+    ip_address      STRING,
+    session_id      STRING
+)
+USING DELTA
+PARTITIONED BY (event_type)
+TBLPROPERTIES ('delta.logRetentionDuration' = 'interval 365 days')
+"""
+
+INSIGHT_REPORTS_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.insight_reports (
+    report_id           STRING,
+    client_id           STRING,
+    agency_id           STRING,
+    report_month        STRING,
+    narrative           STRING,
+    key_findings        STRING,
+    top_channel         STRING,
+    total_pipeline      DOUBLE,
+    total_spend         DOUBLE,
+    overall_roi         DOUBLE,
+    collected_revenue   DOUBLE,
+    refund_rate         DOUBLE,
+    true_roi            DOUBLE,
+    attribution_model   STRING,
+    generated_at        TIMESTAMP,
+    run_id              STRING,
+    prompt_version      STRING,
+    model_id            STRING,
+    input_tokens        BIGINT,
+    output_tokens       BIGINT,
+    cache_read_tokens   BIGINT,
+    status              STRING
+)
+USING DELTA
+PARTITIONED BY (client_id)
+"""
+
+APPROVAL_QUEUE_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.approval_queue (
+    action_id           STRING,
+    created_at          TIMESTAMP,
+    actor               STRING,
+    description         STRING,
+    action_type         STRING,
+    payload_json        STRING,
+    status              STRING,
+    resolved_at         TIMESTAMP,
+    resolved_by         STRING,
+    resolution_note     STRING,
+    channel             STRING
+)
+USING DELTA
+"""
+
+IDEMPOTENCY_STORE_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.idempotency_store (
+    key             STRING,
+    created_at      TIMESTAMP,
+    expires_at      TIMESTAMP,
+    result_json     STRING,
+    step_name       STRING,
+    run_id          STRING,
+    client_id       STRING
+)
+USING DELTA
+"""
+
+PIPELINE_CHECKPOINTS_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.pipeline_checkpoints (
+    checkpoint_id   STRING,
+    run_id          STRING,
+    agency_id       STRING,
+    client_id       STRING,
+    step_name       STRING,
+    status          STRING,
+    started_at      TIMESTAMP,
+    completed_at    TIMESTAMP,
+    result_json     STRING,
+    error_detail    STRING
+)
+USING DELTA
+PARTITIONED BY (run_id)
+"""
+
+COST_LEDGER_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.cost_ledger (
+    ledger_id           STRING,
+    event_time          TIMESTAMP,
+    run_id              STRING,
+    client_id           STRING,
+    agency_id           STRING,
+    agent_name          STRING,
+    model_id            STRING,
+    input_tokens        BIGINT,
+    output_tokens       BIGINT,
+    cache_read_tokens   BIGINT,
+    cache_write_tokens  BIGINT,
+    cost_usd_estimate   DOUBLE,
+    prompt_version      STRING,
+    task_type           STRING
+)
+USING DELTA
+PARTITIONED BY (agency_id)
+"""
+
+AGENT_MEMORY_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.agent_memory (
+    memory_id       STRING,
+    client_id       STRING,
+    memory_type     STRING,
+    content         STRING,
+    source_run_id   STRING,
+    created_at      TIMESTAMP,
+    valid_until     TIMESTAMP,
+    importance      STRING,
+    tags            STRING
+)
+USING DELTA
+PARTITIONED BY (client_id)
+"""
+
+SEMANTIC_CACHE_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.semantic_cache (
+    cache_key       STRING,
+    created_at      TIMESTAMP,
+    expires_at      TIMESTAMP,
+    input_hash      STRING,
+    agent_name      STRING,
+    model_id        STRING,
+    response_text   STRING,
+    input_tokens    BIGINT,
+    output_tokens   BIGINT,
+    hit_count       INT
+)
+USING DELTA
+"""
+
+EVAL_GOLDEN_DATASET_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.eval_golden_dataset (
+    sample_id       STRING,
+    created_at      TIMESTAMP,
+    agent_name      STRING,
+    input_hash      STRING,
+    input_summary   STRING,
+    expected_output STRING,
+    expected_fields STRING,
+    tolerance_json  STRING,
+    source          STRING,
+    run_id          STRING,
+    is_active       BOOLEAN
+)
+USING DELTA
+"""
+
+EVAL_RESULTS_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.eval_results (
+    eval_id         STRING,
+    run_at          TIMESTAMP,
+    agent_name      STRING,
+    prompt_version  STRING,
+    model_id        STRING,
+    sample_id       STRING,
+    passed          BOOLEAN,
+    field_results   STRING,
+    score           DOUBLE,
+    regression      BOOLEAN,
+    notes           STRING
+)
+USING DELTA
+"""
+
+AB_EXPERIMENTS_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.ab_experiments (
+    experiment_id       STRING,
+    name                STRING,
+    description         STRING,
+    created_at          TIMESTAMP,
+    started_at          TIMESTAMP,
+    ended_at            TIMESTAMP,
+    status              STRING,
+    variant_a_json      STRING,
+    variant_b_json      STRING,
+    traffic_split       DOUBLE,
+    success_metric      STRING,
+    winner              STRING
+)
+USING DELTA
+"""
+
+AB_ASSIGNMENTS_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.ab_assignments (
+    assignment_id       STRING,
+    experiment_id       STRING,
+    run_id              STRING,
+    client_id           STRING,
+    variant             STRING,
+    assigned_at         TIMESTAMP,
+    outcome_json        STRING
+)
+USING DELTA
+"""
+
+_RAW_TABLES = ["meta_ads_raw", "hubspot_deals_raw", "stripe_payments_raw", "ad_spend_normalized"]
+_OPS_TABLES = [
+    "pipeline_runs", "audit_log", "insight_reports", "approval_queue",
+    "idempotency_store", "pipeline_checkpoints", "cost_ledger",
+    "agent_memory", "semantic_cache",
+    "eval_golden_dataset", "eval_results",
+    "ab_experiments", "ab_assignments",
+]
+
 
 def ensure_tables(schema: str) -> None:
     _run_sql(META_TABLE_DDL.format(schema=schema))
@@ -203,7 +434,68 @@ def ensure_tables(schema: str) -> None:
         )
     except Exception:
         pass  # column already present
+    set_table_retention_policies(schema)
     logger.info(f"[Databricks] Tables ready: {schema}")
+
+
+def ensure_audit_log_table() -> None:
+    _run_sql(AUDIT_LOG_TABLE_DDL.format(ops_schema=_OPS_SCHEMA))
+    logger.debug(f"[Databricks] Audit log table ready: {_OPS_SCHEMA}.audit_log")
+
+
+def ensure_insight_reports_table() -> None:
+    _run_sql(INSIGHT_REPORTS_DDL.format(ops_schema=_OPS_SCHEMA))
+    logger.debug(f"[Databricks] insight_reports ready: {_OPS_SCHEMA}.insight_reports")
+
+
+def ensure_approval_queue_table() -> None:
+    _run_sql(APPROVAL_QUEUE_DDL.format(ops_schema=_OPS_SCHEMA))
+    logger.debug(f"[Databricks] approval_queue ready: {_OPS_SCHEMA}.approval_queue")
+
+
+def ensure_phase3_tables() -> None:
+    _run_sql(IDEMPOTENCY_STORE_DDL.format(ops_schema=_OPS_SCHEMA))
+    _run_sql(PIPELINE_CHECKPOINTS_DDL.format(ops_schema=_OPS_SCHEMA))
+    _run_sql(COST_LEDGER_DDL.format(ops_schema=_OPS_SCHEMA))
+    logger.debug(f"[Databricks] Phase 3 tables ready: {_OPS_SCHEMA}")
+
+
+def ensure_phase4_tables() -> None:
+    _run_sql(AGENT_MEMORY_DDL.format(ops_schema=_OPS_SCHEMA))
+    _run_sql(SEMANTIC_CACHE_DDL.format(ops_schema=_OPS_SCHEMA))
+    logger.debug(f"[Databricks] Phase 4 tables ready: {_OPS_SCHEMA}")
+
+
+def ensure_phase5_tables() -> None:
+    _run_sql(EVAL_GOLDEN_DATASET_DDL.format(ops_schema=_OPS_SCHEMA))
+    _run_sql(EVAL_RESULTS_DDL.format(ops_schema=_OPS_SCHEMA))
+    logger.debug(f"[Databricks] Phase 5 tables ready: {_OPS_SCHEMA}")
+
+
+def ensure_phase6_tables() -> None:
+    _run_sql(AB_EXPERIMENTS_DDL.format(ops_schema=_OPS_SCHEMA))
+    _run_sql(AB_ASSIGNMENTS_DDL.format(ops_schema=_OPS_SCHEMA))
+    logger.debug(f"[Databricks] Phase 6 tables ready: {_OPS_SCHEMA}")
+
+
+def set_table_retention_policies(schema: str) -> None:
+    """Apply Delta log-retention TBLPROPERTIES to raw and ops tables."""
+    for table in _RAW_TABLES:
+        try:
+            _run_sql(
+                f"ALTER TABLE {schema}.{table} "
+                f"SET TBLPROPERTIES ('delta.logRetentionDuration' = 'interval 90 days')"
+            )
+        except Exception as exc:
+            logger.debug(f"[Databricks] Could not set retention on {schema}.{table}: {exc}")
+    for table in _OPS_TABLES:
+        try:
+            _run_sql(
+                f"ALTER TABLE {_OPS_SCHEMA}.{table} "
+                f"SET TBLPROPERTIES ('delta.logRetentionDuration' = 'interval 365 days')"
+            )
+        except Exception as exc:
+            logger.debug(f"[Databricks] Could not set retention on {_OPS_SCHEMA}.{table}: {exc}")
 
 
 def ensure_ops_tables() -> None:

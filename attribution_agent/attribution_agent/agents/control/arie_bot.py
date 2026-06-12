@@ -87,11 +87,54 @@ def _load_credentials() -> tuple[str, str]:
     return _get("TELEGRAM_BOT_TOKEN"), _get("TELEGRAM_CHAT_ID")
 
 
-def request_approval(description: str, callback) -> str:
+def _write_approval_queue(action_id: str, description: str, action_type: str) -> None:
+    """Persist approval request to Delta for API visibility. Best-effort — never raises."""
+    try:
+        import pandas as pd
+        from datetime import datetime, timezone
+        from utils.databricks_writer import _upsert_dataframe
+        _OPS = __import__("os").environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_ops")
+        df = pd.DataFrame([{
+            "action_id": action_id,
+            "created_at": datetime.now(timezone.utc),
+            "actor": "arie_bot",
+            "description": description,
+            "action_type": action_type,
+            "payload_json": "{}",
+            "status": "pending",
+            "resolved_at": None,
+            "resolved_by": "",
+            "resolution_note": "",
+            "channel": "telegram",
+        }])
+        _upsert_dataframe(df, _OPS, "approval_queue", ["action_id"])
+    except Exception as exc:
+        logger.debug(f"[ARIE] approval_queue write failed: {exc}")
+
+
+def _update_approval_queue(action_id: str, status: str) -> None:
+    """Update the resolution status in Delta. Best-effort — never raises."""
+    try:
+        from datetime import datetime, timezone
+        from utils.databricks_writer import _run_sql
+        _OPS = __import__("os").environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_ops")
+        now = datetime.now(timezone.utc).isoformat()
+        _run_sql(
+            f"UPDATE {_OPS}.approval_queue "
+            f"SET status = '{status}', resolved_at = CAST('{now}' AS TIMESTAMP), resolved_by = 'telegram' "
+            f"WHERE action_id = '{action_id}'"
+        )
+    except Exception as exc:
+        logger.debug(f"[ARIE] approval_queue update failed: {exc}")
+
+
+def request_approval(description: str, callback, action_type: str = "generic") -> str:
     """Queue an action and send an Approve/Reject prompt. Returns action_id."""
     action_id = uuid.uuid4().hex[:8]
     with _lock:
         _pending[action_id] = {"description": description, "callback": callback}
+
+    _write_approval_queue(action_id, description, action_type)
 
     markup = {
         "inline_keyboard": [[
@@ -176,6 +219,7 @@ def _handle_callback_query(query: dict) -> None:
     if action == "approve":
         _api("answerCallbackQuery", callback_query_id=qid, text="✅ Approved")
         send_message("✅ *Approved* — executing now...")
+        _update_approval_queue(action_id, "approved")
         try:
             result = pending["callback"]()
             send_message(f"✓ *Done*\n\n{result}")
@@ -184,6 +228,7 @@ def _handle_callback_query(query: dict) -> None:
     else:
         _api("answerCallbackQuery", callback_query_id=qid, text="❌ Rejected")
         send_message("❌ *Rejected* — action cancelled.")
+        _update_approval_queue(action_id, "rejected")
 
 
 # ── Message handler ────────────────────────────────────────────
