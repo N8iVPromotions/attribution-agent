@@ -17,14 +17,6 @@ logger = logging.getLogger(__name__)
 _OPS_SCHEMA = os.environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_ops")
 
 
-def _is_databricks_app() -> bool:
-    """True when running inside a Databricks App (OAuth M2M env, no Spark runtime)."""
-    return bool(
-        os.environ.get("DATABRICKS_CLIENT_ID")
-        and not os.environ.get("DATABRICKS_RUNTIME_VERSION")
-    )
-
-
 def _is_databricks() -> bool:
     try:
         from pyspark.sql import SparkSession
@@ -509,13 +501,6 @@ def set_table_retention_policies(schema: str) -> None:
 def ensure_ops_tables() -> None:
     _run_sql(f"CREATE SCHEMA IF NOT EXISTS {_OPS_SCHEMA}")
     _run_sql(RUN_HISTORY_TABLE_DDL.format(ops_schema=_OPS_SCHEMA))
-    ensure_audit_log_table()
-    ensure_insight_reports_table()
-    ensure_approval_queue_table()
-    ensure_phase3_tables()
-    ensure_phase4_tables()
-    ensure_phase5_tables()
-    ensure_phase6_tables()
     logger.info(f"[Databricks] Ops tables ready: {_OPS_SCHEMA}")
 
 

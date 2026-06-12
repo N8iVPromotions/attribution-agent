@@ -106,28 +106,3 @@ resources:
             value: "/home/user/.bundle/attribution-agent/production/.claude/agents"
           # All other secrets (API keys, Telegram, email) live in the "attribution"
           # Databricks secret scope and are read via WorkspaceClient().secrets.get_secret().
-
-    attribution_api:
-      name: attribution-pipeline-api
-      description: "FastAPI REST API for the attribution pipeline (RBAC-enforced)"
-      source_code_path: attribution_agent/attribution_agent
-
-      config:
-        command:
-          - uvicorn
-          - api.main:app
-          - "--host"
-          - "0.0.0.0"
-          - "--port"
-          - "8081"
-        env:
-          - name: ATTRIBUTION_JOB_ID
-            value: "500226442246561"
-          - name: ATTRIBUTION_CATALOG
-            value: "workspace"
-          - name: ATTRIBUTION_OPS_SCHEMA
-            value: "workspace.attribution_ops"
-          - name: ATTRIBUTION_CLIENT_REGISTRY_PATH
-            value: "/Volumes/workspace/attribution_ops/client_registry/clients.json"
-          - name: DATABRICKS_BUNDLE_TARGET
-            value: "production"

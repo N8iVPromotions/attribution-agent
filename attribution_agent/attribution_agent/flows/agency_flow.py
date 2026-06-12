@@ -374,7 +374,6 @@ if __name__ == "__main__":
     _dry_run = False
     _attribution_model = "last_touch"
     _run_mode = "agency"
-    _resume_run_id = None
     try:
         from databricks.sdk.runtime import dbutils as _dbutils
         _agency = _dbutils.widgets.get("agency") or None
@@ -394,14 +393,11 @@ if __name__ == "__main__":
                             help="Attribution model to apply")
         parser.add_argument("--run-mode", type=str, default="agency",
                             help="agency or business")
-        parser.add_argument("--resume-run-id", type=str, default=None,
-                            help="Resume a prior run from its last checkpoint")
         args = parser.parse_args()
         _agency = args.agency
         _dry_run = args.dry_run
         _attribution_model = args.attribution_model
         _run_mode = args.run_mode
-        _resume_run_id = args.resume_run_id
 
     if _agency:
         result = run_agency_pipeline(
@@ -409,7 +405,6 @@ if __name__ == "__main__":
             dry_run=_dry_run,
             attribution_model=_attribution_model,
             run_mode=_run_mode,
-            resume_run_id=_resume_run_id,
         )
         print(json.dumps(result, indent=2, default=str))
     else:
@@ -419,7 +414,6 @@ if __name__ == "__main__":
                 dry_run=_dry_run,
                 attribution_model=_attribution_model,
                 run_mode=_run_mode,
-                resume_run_id=_resume_run_id,
             )
             for agency_id in list_agencies()
         ]
