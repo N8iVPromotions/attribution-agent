@@ -36,6 +36,15 @@ AGENCY_REGISTRY: dict[str, AgencyConfig] = {
         brand_color="1A1A1A",
         sender_name="Demo Agency Analytics",
     ),
+    "n8iv_promotions": AgencyConfig(
+        agency_id="n8iv_promotions",
+        agency_name="N8iV Promotions",
+        client_ids=["n8iv_promotions"],
+        brand_color="2563EB",
+        sender_name="N8iV Promotions Analytics",
+        sender_email="zajen@n8ivpromotions.com",
+        reply_to="zajen@n8ivpromotions.com",
+    ),
     # "acme_media": AgencyConfig(
     #     agency_id="acme_media",
     #     agency_name="Acme Media Group",

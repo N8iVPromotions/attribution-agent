@@ -89,8 +89,9 @@ class MetaValidator:
             pct_changes = daily_spend.pct_change().dropna()
             big_drops = pct_changes[pct_changes < -self.spend_drop_pct_alert]
             for date_val, pct in big_drops.items():
+                date_label = pd.to_datetime(date_val).date() if date_val else date_val
                 report.add_warning(
-                    f"Spend dropped {abs(pct):.0%} on {date_val.date()} "
+                    f"Spend dropped {abs(pct):.0%} on {date_label} "
                     f"— verify campaign status"
                 )
 
@@ -101,9 +102,9 @@ class MetaValidator:
 
         # ── 6. Date range sanity ──────────────────────────────────────────────
         if "date" in df.columns:
-            max_date = df["date"].max()
+            max_date = pd.to_datetime(df["date"], errors="coerce").max()
             today = pd.Timestamp.today().normalize()
-            if max_date >= today:
+            if pd.notna(max_date) and max_date >= today:
                 report.add_warning(
                     f"Data includes today ({max_date.date()}) — "
                     "today's spend is not yet finalized"

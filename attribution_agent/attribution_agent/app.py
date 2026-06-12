@@ -69,15 +69,6 @@ html, body, [class*="css"] {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
 }
 
-/* ── Atmospheric background ── */
-[data-testid="stAppViewContainer"] {
-    background:
-        radial-gradient(ellipse 75% 55% at -5% -8%, rgba(37,99,235,0.08) 0%, transparent 55%),
-        radial-gradient(ellipse 55% 45% at 108% 108%, rgba(124,104,252,0.07) 0%, transparent 55%),
-        #05050d !important;
-}
-[data-testid="stHeader"] { background: transparent !important; }
-
 .main .block-container {
     max-width: 1320px;
     padding: 0 2rem 5rem;
@@ -89,9 +80,20 @@ h1, h2, h3 {
     font-weight: 600 !important;
     letter-spacing: -0.01em !important;
 }
-h1 { font-size: 1.5rem !important; color: #e8e8f2 !important; margin-bottom: 0 !important; }
-h2 { font-size: 0.95rem !important; color: #c4c4d8 !important; margin-bottom: 0.25rem !important; }
-h3 { font-size: 0.85rem !important; color: #8888a8 !important; }
+h1 {
+    font-size: 1.5rem !important;
+    color: #e6edf3 !important;
+    margin-bottom: 0 !important;
+}
+h2 {
+    font-size: 0.95rem !important;
+    color: #c9d1d9 !important;
+    margin-bottom: 0.25rem !important;
+}
+h3 {
+    font-size: 0.85rem !important;
+    color: #8b949e !important;
+}
 
 /* ── Top bar ── */
 .topbar {
@@ -99,72 +101,99 @@ h3 { font-size: 0.85rem !important; color: #8888a8 !important; }
     justify-content: space-between;
     align-items: center;
     padding: 1rem 0;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-bottom: 1px solid #21262d;
     margin-bottom: 1.5rem;
 }
-.topbar-left { display: flex; align-items: center; gap: 1.5rem; }
-.topbar-brand { display: flex; align-items: center; gap: 0.6rem; }
+.topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+}
+.topbar-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
 .brand-mark {
-    width: 26px; height: 26px;
-    background: linear-gradient(135deg, #7c68fc 0%, #5b4fdc 100%);
-    border-radius: 7px;
+    width: 24px; height: 24px;
+    background: #7c68fc;
+    border-radius: 5px;
     display: flex; align-items: center; justify-content: center;
     font-size: 0.65rem; color: #fff; font-weight: 700;
-    box-shadow: 0 0 16px rgba(124,104,252,0.4);
 }
-.brand-name { font-size: 0.82rem; font-weight: 600; color: #e8e8f2; letter-spacing: 0; }
-.topbar-sep { width: 1px; height: 16px; background: rgba(255,255,255,0.07); }
-.topbar-sub { font-size: 0.75rem; color: rgba(255,255,255,0.2); font-weight: 400; }
-.topbar-right { display: flex; align-items: center; gap: 0.6rem; }
+.brand-name {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #e6edf3;
+    letter-spacing: 0;
+}
+.topbar-sep {
+    width: 1px;
+    height: 16px;
+    background: #30363d;
+}
+.topbar-sub {
+    font-size: 0.75rem;
+    color: #484f58;
+    font-weight: 400;
+}
+.topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
 .status-pill {
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    font-size: 0.69rem;
+    font-size: 0.7rem;
     font-weight: 500;
-    color: rgba(255,255,255,0.38);
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 999px;
-    padding: 0.26rem 0.72rem;
+    color: #8b949e;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 0.28rem 0.65rem;
     letter-spacing: 0;
 }
-.status-dot { width: 5px; height: 5px; border-radius: 50%; }
+.status-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+}
 
 /* ── Panels ── */
 .panel {
-    background: rgba(255,255,255,0.028);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 16px;
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 8px;
     overflow: hidden;
     margin-bottom: 1rem;
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
 }
 .panel-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 0.7rem 1rem;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
-    background: rgba(255,255,255,0.02);
+    border-bottom: 1px solid #21262d;
+    background: #161b22;
 }
 .panel-title {
-    font-size: 0.7rem;
+    font-size: 0.72rem;
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: rgba(255,255,255,0.3);
+    color: #8b949e;
 }
-.panel-body { padding: 1rem 1rem 0.5rem; }
+.panel-body {
+    padding: 1rem 1rem 0.5rem;
+}
 
 /* ── Section label ── */
 .field-label {
-    font-size: 0.67rem;
+    font-size: 0.68rem;
     font-weight: 600;
-    letter-spacing: 0.07em;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: rgba(255,255,255,0.22);
+    color: #484f58;
     margin-bottom: 0.4rem;
     display: block;
 }
@@ -177,62 +206,65 @@ h3 { font-size: 0.85rem !important; color: #8888a8 !important; }
     margin-top: 0.25rem;
 }
 .client-table th {
-    font-size: 0.64rem;
+    font-size: 0.65rem;
     font-weight: 600;
     letter-spacing: 0.07em;
     text-transform: uppercase;
-    color: rgba(255,255,255,0.22);
+    color: #484f58;
     padding: 0.4rem 0.6rem;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-bottom: 1px solid #21262d;
     text-align: left;
 }
 .client-table td {
     padding: 0.55rem 0.6rem;
-    border-bottom: 1px solid rgba(255,255,255,0.03);
+    border-bottom: 1px solid #161b22;
     vertical-align: middle;
-    color: #b8b8cc;
+    color: #c9d1d9;
 }
 .client-table tr:last-child td { border-bottom: none; }
-.client-table tr:hover td { background: rgba(255,255,255,0.025); }
-.client-cell-name { font-weight: 500; color: #e8e8f2; }
+.client-table tr:hover td { background: rgba(255,255,255,0.02); }
+.client-cell-name { font-weight: 500; color: #e6edf3; }
 
 /* ── Source tags ── */
 .tag {
     display: inline-block;
-    font-size: 0.57rem;
+    font-size: 0.58rem;
     font-weight: 600;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    padding: 0.14rem 0.44rem;
-    border-radius: 5px;
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
     margin-right: 0.2rem;
 }
-.tag-meta     { background: rgba(124,104,252,0.12); color: #a594fe; border: 1px solid rgba(124,104,252,0.22); }
-.tag-google   { background: rgba(56,189,248,0.1);   color: #5cc8f5; border: 1px solid rgba(56,189,248,0.2); }
-.tag-linkedin { background: rgba(10,102,194,0.15);  color: #5baee8; border: 1px solid rgba(10,102,194,0.25); }
-.tag-hubspot  { background: rgba(255,122,89,0.1);   color: #ff8a6e; border: 1px solid rgba(255,122,89,0.2); }
-.tag-stripe   { background: rgba(99,179,237,0.1);   color: #76c8f5; border: 1px solid rgba(99,179,237,0.2); }
+.tag-meta     { background: rgba(124,104,252,0.15); color: #a594fe; border: 1px solid rgba(124,104,252,0.3); }
+.tag-google   { background: rgba(56,189,248,0.12);  color: #60c8f5; border: 1px solid rgba(56,189,248,0.25); }
+.tag-linkedin { background: rgba(10,102,194,0.18);  color: #5baee8; border: 1px solid rgba(10,102,194,0.3); }
+.tag-hubspot  { background: rgba(255,122,89,0.12);  color: #ff8a6e; border: 1px solid rgba(255,122,89,0.25); }
+.tag-stripe   { background: rgba(99,179,237,0.12);  color: #76c8f5; border: 1px solid rgba(99,179,237,0.25); }
 
 /* ── Model chips ── */
 .model-chip {
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 6px;
+    background: #1c2128;
+    border: 1px solid #30363d;
+    border-radius: 4px;
     font-size: 0.68rem;
     font-weight: 500;
-    color: rgba(255,255,255,0.38);
+    color: #8b949e;
     padding: 0.2rem 0.55rem;
     margin: 0 0.2rem 0.3rem 0;
 }
-.model-chip-pct { color: #9b8bff; font-weight: 600; }
+.model-chip-pct {
+    color: #7c68fc;
+    font-weight: 600;
+}
 
 /* ── Model description ── */
 .model-desc {
     font-size: 0.78rem;
-    color: rgba(255,255,255,0.3);
+    color: #6e7681;
     line-height: 1.6;
     margin: 0.2rem 0 1rem;
 }
@@ -240,192 +272,215 @@ h3 { font-size: 0.85rem !important; color: #8888a8 !important; }
 /* ── Streamlit widget overrides ── */
 [data-testid="stSelectbox"] > div > div,
 [data-testid="stMultiSelect"] > div > div {
-    background: rgba(255,255,255,0.04) !important;
-    border: 1px solid rgba(255,255,255,0.08) !important;
-    border-radius: 10px !important;
+    background: #0d1117 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 6px !important;
 }
-[data-testid="stRadio"] label { font-size: 0.8rem !important; font-weight: 500 !important; }
+[data-testid="stRadio"] label {
+    font-size: 0.8rem !important;
+    font-weight: 500 !important;
+}
 [data-testid="stToggle"] label {
-    font-size: 0.8rem !important; font-weight: 400 !important;
-    color: rgba(255,255,255,0.35) !important;
+    font-size: 0.8rem !important;
+    font-weight: 400 !important;
+    color: #8b949e !important;
 }
 [data-testid="stCheckbox"] label {
-    font-size: 0.8rem !important; color: rgba(255,255,255,0.35) !important;
+    font-size: 0.8rem !important;
+    color: #8b949e !important;
 }
 input[type="text"], input[type="number"], textarea {
-    background: rgba(255,255,255,0.04) !important;
-    border: 1px solid rgba(255,255,255,0.08) !important;
-    border-radius: 10px !important;
-    color: #e8e8f2 !important;
+    background: #0d1117 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 6px !important;
+    color: #e6edf3 !important;
     font-size: 0.82rem !important;
 }
 
 /* ── Buttons ── */
 [data-testid="baseButton-primary"] {
-    background: linear-gradient(135deg, #7c68fc 0%, #5f4fe8 100%) !important;
-    border: none !important;
-    border-radius: 10px !important;
+    background: #7c68fc !important;
+    border: 1px solid #7c68fc !important;
+    border-radius: 6px !important;
     font-family: 'Inter', sans-serif !important;
     font-weight: 500 !important;
     font-size: 0.8rem !important;
     letter-spacing: 0 !important;
-    box-shadow: 0 0 20px rgba(124,104,252,0.25) !important;
+    box-shadow: none !important;
     color: #fff !important;
 }
 [data-testid="baseButton-primary"]:hover {
-    box-shadow: 0 0 28px rgba(124,104,252,0.42) !important;
+    background: #6d5ae8 !important;
+    border-color: #6d5ae8 !important;
 }
 [data-testid="baseButton-secondary"] {
-    background: rgba(255,255,255,0.04) !important;
-    border: 1px solid rgba(255,255,255,0.08) !important;
-    border-radius: 10px !important;
+    background: #21262d !important;
+    border: 1px solid #30363d !important;
+    border-radius: 6px !important;
     font-family: 'Inter', sans-serif !important;
     font-weight: 500 !important;
     font-size: 0.8rem !important;
-    color: rgba(255,255,255,0.45) !important;
+    color: #c9d1d9 !important;
     box-shadow: none !important;
 }
 [data-testid="baseButton-secondary"]:hover {
-    background: rgba(255,255,255,0.07) !important;
-    border-color: rgba(255,255,255,0.13) !important;
+    background: #30363d !important;
+    border-color: #484f58 !important;
 }
 
 /* ── Metrics ── */
 [data-testid="metric-container"] {
-    background: rgba(124,104,252,0.07) !important;
-    border: 1px solid rgba(124,104,252,0.14) !important;
-    border-radius: 14px !important;
+    background: #161b22 !important;
+    border: 1px solid #21262d !important;
+    border-radius: 6px !important;
     padding: 0.9rem 1rem !important;
 }
 [data-testid="stMetricValue"] {
     font-family: 'Inter', sans-serif !important;
     font-size: 1.5rem !important;
     font-weight: 600 !important;
-    color: #e8e8f2 !important;
+    color: #e6edf3 !important;
     letter-spacing: -0.02em !important;
 }
 [data-testid="stMetricLabel"] {
-    font-size: 0.63rem !important;
+    font-size: 0.65rem !important;
     font-weight: 600 !important;
     letter-spacing: 0.08em !important;
     text-transform: uppercase !important;
-    color: rgba(255,255,255,0.25) !important;
+    color: #484f58 !important;
 }
 
 /* ── Alerts ── */
 [data-testid="stAlert"] {
-    border-radius: 12px !important;
+    border-radius: 6px !important;
     border-left-width: 3px !important;
     font-size: 0.82rem !important;
-    background: rgba(255,255,255,0.03) !important;
 }
 
 /* ── Code / log viewer ── */
 [data-testid="stCode"] {
-    background: rgba(0,0,0,0.35) !important;
-    border: 1px solid rgba(255,255,255,0.06) !important;
-    border-radius: 12px !important;
+    background: #0d1117 !important;
+    border: 1px solid #21262d !important;
+    border-radius: 6px !important;
     font-size: 0.73rem !important;
 }
 
 /* ── Captions ── */
 [data-testid="stCaptionContainer"] p {
-    color: rgba(255,255,255,0.22) !important;
+    color: #484f58 !important;
     font-size: 0.75rem !important;
 }
 
 /* ── Tabs ── */
 [data-testid="stTabs"] [role="tablist"] {
-    border-bottom: 1px solid rgba(255,255,255,0.06) !important;
-    gap: 0.2rem !important;
-    padding-bottom: 0 !important;
+    border-bottom: 1px solid #21262d !important;
+    gap: 0 !important;
 }
 [data-testid="stTabs"] [role="tab"] {
-    font-size: 0.79rem !important;
+    font-size: 0.8rem !important;
     font-weight: 500 !important;
-    color: rgba(255,255,255,0.32) !important;
-    padding: 0.55rem 1.1rem !important;
-    border-radius: 8px 8px 0 0 !important;
+    color: #8b949e !important;
+    padding: 0.6rem 1rem !important;
+    border-radius: 0 !important;
     border-bottom: 2px solid transparent !important;
 }
 [data-testid="stTabs"] [role="tab"][aria-selected="true"] {
-    color: #c9b8ff !important;
+    color: #e6edf3 !important;
     border-bottom-color: #7c68fc !important;
-    background: rgba(124,104,252,0.07) !important;
-}
-[data-testid="stTabs"] [role="tab"]:hover {
-    color: rgba(255,255,255,0.55) !important;
-    background: rgba(255,255,255,0.03) !important;
-}
-
-/* ── Dataframe ── */
-[data-testid="stDataFrame"] {
-    border-radius: 12px !important;
-    overflow: hidden;
-    border: 1px solid rgba(255,255,255,0.06) !important;
+    background: transparent !important;
 }
 
 /* ── Divider ── */
-.ruled { border: none; border-top: 1px solid rgba(255,255,255,0.06); margin: 1.25rem 0; }
+.ruled {
+    border: none;
+    border-top: 1px solid #21262d;
+    margin: 1.25rem 0;
+}
 
 /* ── Run action bar ── */
 .action-bar {
-    display: flex; align-items: center; gap: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
     padding: 0.85rem 1rem;
-    background: rgba(255,255,255,0.025);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 14px;
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 8px;
     margin-top: 1rem;
-    backdrop-filter: blur(12px);
 }
-.action-context { flex: 1; font-size: 0.75rem; color: rgba(255,255,255,0.22); display: flex; gap: 1.25rem; }
-.action-context-item strong { color: rgba(255,255,255,0.35); font-weight: 500; }
-.action-context-item span   { color: #b8b8cc; }
+.action-context {
+    flex: 1;
+    font-size: 0.75rem;
+    color: #484f58;
+    display: flex;
+    gap: 1.25rem;
+}
+.action-context-item strong {
+    color: #8b949e;
+    font-weight: 500;
+}
+.action-context-item span {
+    color: #c9d1d9;
+}
 
 /* ── Run summary pill ── */
 .run-pill {
-    display: inline-flex; align-items: center; gap: 0.5rem;
-    font-size: 0.72rem; color: rgba(255,255,255,0.3);
-    background: rgba(255,255,255,0.035);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 999px;
-    padding: 0.3rem 0.85rem; margin-bottom: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.72rem;
+    color: #6e7681;
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 4px;
+    padding: 0.3rem 0.75rem;
+    margin-bottom: 0.75rem;
 }
-.run-pill .hl  { color: #9b8bff; font-weight: 600; }
-.run-pill .sep { color: rgba(255,255,255,0.1); }
+.run-pill .hl { color: #7c68fc; font-weight: 600; }
+.run-pill .sep { color: #21262d; }
 
 /* ── Recent runs ── */
 .run-row {
-    display: flex; justify-content: space-between; align-items: center;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     padding: 0.5rem 0;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
+    border-bottom: 1px solid #21262d;
     font-size: 0.75rem;
 }
 .run-row:last-child { border-bottom: none; }
-.run-ts    { color: rgba(255,255,255,0.22); font-family: 'Inter', monospace; }
-.run-label { color: rgba(255,255,255,0.38); }
+.run-ts { color: #484f58; font-family: 'Inter', monospace; }
+.run-label { color: #8b949e; }
 .run-state {
-    font-size: 0.63rem; font-weight: 600; letter-spacing: 0.06em;
-    text-transform: uppercase; padding: 0.15rem 0.6rem; border-radius: 999px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
 }
-.run-state-ok      { background: rgba(46,160,67,0.12);  color: #3fb950; border: 1px solid rgba(46,160,67,0.2); }
-.run-state-fail    { background: rgba(248,81,73,0.1);   color: #f85149; border: 1px solid rgba(248,81,73,0.18); }
-.run-state-running { background: rgba(124,104,252,0.1); color: #a594fe; border: 1px solid rgba(124,104,252,0.18); }
+.run-state-ok      { background: rgba(46,160,67,0.15);  color: #3fb950; border: 1px solid rgba(46,160,67,0.25); }
+.run-state-fail    { background: rgba(248,81,73,0.12);  color: #f85149; border: 1px solid rgba(248,81,73,0.2); }
+.run-state-running { background: rgba(124,104,252,0.12); color: #a594fe; border: 1px solid rgba(124,104,252,0.2); }
 
 /* ── Form section header ── */
 .form-section {
-    font-size: 0.67rem; font-weight: 600; letter-spacing: 0.08em;
-    text-transform: uppercase; color: rgba(255,255,255,0.2);
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #484f58;
     padding: 0.5rem 0 0.5rem;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
-    margin-bottom: 0.75rem; display: block;
+    border-bottom: 1px solid #21262d;
+    margin-bottom: 0.75rem;
+    display: block;
 }
 
 /* ── Scrollbar ── */
-::-webkit-scrollbar { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #0d1117; }
+::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #484f58; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -498,7 +553,7 @@ def _render_comparison_chart(selected_model: str) -> None:
         "Paid Search": "#38bdf8",
         "Email":       "#3fb950",
         "Organic":     "#d29922",
-        "Direct":      "#2a2a3e",
+        "Direct":      "#30363d",
     }
     model_order = [v["label"] for v in ATTRIBUTION_MODELS.values()]
     channel_order = list(channel_colors.keys())
@@ -516,7 +571,7 @@ def _render_comparison_chart(selected_model: str) -> None:
                     title=None,
                     labelFontSize=10,
                     labelFont="Inter, sans-serif",
-                    labelColor="rgba(255,255,255,0.25)",
+                    labelColor="#484f58",
                     tickColor="transparent",
                     domainColor="transparent",
                 ),
@@ -529,9 +584,9 @@ def _render_comparison_chart(selected_model: str) -> None:
                     title=None,
                     labelFontSize=9,
                     labelFont="Inter, sans-serif",
-                    labelColor="rgba(255,255,255,0.25)",
+                    labelColor="#484f58",
                     grid=True,
-                    gridColor="rgba(255,255,255,0.05)",
+                    gridColor="#21262d",
                     domainColor="transparent",
                     tickColor="transparent",
                     tickCount=4,
@@ -571,7 +626,7 @@ def _render_comparison_chart(selected_model: str) -> None:
         .configure_view(strokeWidth=0, fill="transparent")
     )
 
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(chart, width="stretch")
     st.caption("Sample 5-touch journey: Paid Social → Paid Search → Email → Paid Social → Direct")
 
 
@@ -807,7 +862,7 @@ def _source_tags(cfg: ClientConfig) -> str:
         tags.append('<span class="tag tag-hubspot">HubSpot</span>')
     if cfg.stripe_enabled:
         tags.append('<span class="tag tag-stripe">Stripe</span>')
-    return "".join(tags) if tags else '<span style="color:rgba(255,255,255,0.18);font-size:0.7rem;">—</span>'
+    return "".join(tags) if tags else '<span style="color:#484f58;font-size:0.7rem;">—</span>'
 
 
 def _render_client_manager() -> None:
@@ -1024,8 +1079,8 @@ import datetime as _dt
 env_label = "Databricks" if _DATABRICKS_MODE else "Local"
 env_dot_color = "#7c68fc" if _DATABRICKS_MODE else "#3fb950"
 now_str = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-arie_dot_color = "#3fb950" if (_arie_enabled and arie_bot.is_running()) else "rgba(255,255,255,0.15)"
-api_dot_color = "#3fb950" if _api_healthy else "rgba(255,255,255,0.15)"
+arie_dot_color = "#3fb950" if (_arie_enabled and arie_bot.is_running()) else "#484f58"
+api_dot_color = "#3fb950" if _api_healthy else "#484f58"
 
 st.markdown(
     f'<div class="topbar">'
@@ -1131,7 +1186,7 @@ with tab_pipeline:
                     f'<tr>'
                     f'  <td class="client-cell-name">{cfg.client_name}</td>'
                     f'  <td>{_source_tags(cfg)}</td>'
-                    f'  <td style="color:rgba(255,255,255,0.28);font-size:0.72rem;">{model_label}</td>'
+                    f'  <td style="color:#484f58;font-size:0.72rem;">{model_label}</td>'
                     f'</tr>'
                 )
             st.markdown(
@@ -1247,7 +1302,7 @@ with tab_clients:
                 f'  <td style="color:#6e7681;font-size:0.75rem;">{agency_name}</td>'
                 f'  <td>{_source_tags(cfg)}</td>'
                 f'  <td style="color:#6e7681;font-size:0.75rem;">{model_label}</td>'
-                f'  <td style="color:rgba(255,255,255,0.28);font-size:0.72rem;">{cfg.client_report_email or "—"}</td>'
+                f'  <td style="color:#484f58;font-size:0.72rem;">{cfg.client_report_email or "—"}</td>'
                 f'</tr>'
             )
         st.markdown(
@@ -1293,86 +1348,84 @@ with tab_outreach:
     st.markdown("""
 <style>
 .or-stat-card {
-    background: rgba(255,255,255,0.028);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 14px;
+    background: #111111;
+    border: 1px solid #1E1E1E;
+    border-radius: 8px;
     padding: 18px 12px;
     text-align: center;
-    backdrop-filter: blur(16px);
 }
 .or-stat-val {
     font-size: 1.75rem;
     font-weight: 700;
-    font-family: 'Inter', sans-serif;
+    font-family: 'DM Mono', 'Courier New', monospace;
     line-height: 1;
 }
 .or-stat-label {
-    font-size: 0.67rem;
-    color: rgba(255,255,255,0.3);
+    font-size: 0.7rem;
+    color: #888888;
     margin-top: 6px;
     text-transform: uppercase;
     letter-spacing: 0.6px;
 }
 .or-prospect-card {
-    background: rgba(255,255,255,0.028);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 14px;
+    background: #111111;
+    border: 1px solid #1E1E1E;
+    border-radius: 8px;
     padding: 20px;
     margin-bottom: 16px;
-    backdrop-filter: blur(16px);
 }
 .or-industry-badge {
     display: inline-block;
-    font-size: 0.63rem;
-    font-family: 'Inter', sans-serif;
+    font-size: 0.65rem;
+    font-family: monospace;
     padding: 3px 9px;
-    border-radius: 999px;
-    border: 1px solid rgba(124,104,252,0.3);
-    color: #a594fe;
-    background: rgba(124,104,252,0.1);
+    border-radius: 4px;
+    border: 1px solid #2563EB44;
+    color: #2563EB;
+    background: rgba(37,99,235,0.08);
     letter-spacing: 0.4px;
     margin-left: 10px;
     vertical-align: middle;
 }
 .or-field-label {
-    font-size: 0.64rem;
-    color: rgba(255,255,255,0.25);
+    font-size: 0.65rem;
+    color: #888888;
     text-transform: uppercase;
     letter-spacing: 0.7px;
     margin-bottom: 3px;
 }
 .or-field-val {
     font-size: 0.82rem;
-    color: #e8e8f2;
-    font-family: 'Inter', monospace;
+    color: #e6edf3;
+    font-family: 'DM Mono', 'Courier New', monospace;
 }
 .or-notes {
     font-size: 0.8rem;
-    color: rgba(255,255,255,0.32);
+    color: #888888;
     line-height: 1.6;
     padding: 10px 12px;
-    background: rgba(255,255,255,0.02);
-    border-left: 2px solid rgba(124,104,252,0.3);
-    border-radius: 0 6px 6px 0;
+    background: rgba(255,255,255,0.03);
+    border-left: 2px solid #1E1E1E;
+    border-radius: 0 4px 4px 0;
     margin-top: 12px;
 }
 .or-sent-badge {
     display: inline-block;
-    font-size: 0.68rem;
-    font-family: 'Inter', sans-serif;
-    padding: 4px 12px;
-    border-radius: 999px;
-    background: rgba(63,185,80,0.12);
-    color: #3fb950;
-    border: 1px solid rgba(63,185,80,0.22);
+    font-size: 0.7rem;
+    font-family: monospace;
+    padding: 4px 10px;
+    border-radius: 4px;
+    background: rgba(16,185,129,0.12);
+    color: #10B981;
+    border: 1px solid rgba(16,185,129,0.25);
 }
 .or-email-meta {
     font-size: 0.72rem;
-    color: rgba(255,255,255,0.3);
-    font-family: 'Inter', monospace;
+    color: #888888;
+    font-family: 'DM Mono', 'Courier New', monospace;
     margin-bottom: 8px;
 }
-.or-email-meta strong { color: #e8e8f2; }
+.or-email-meta strong { color: #e6edf3; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1387,7 +1440,7 @@ with tab_outreach:
 
     sc1, sc2, sc3, sc4 = st.columns(4)
     for col, val, label, color in [
-        (sc1, total,     "Total Prospects",     "#e8e8f2"),
+        (sc1, total,     "Total Prospects",     "#e6edf3"),
         (sc2, generated, "Sequences Generated", "#F59E0B"),
         (sc3, drafted,   "Drafted to Inbox",    "#10B981"),
         (sc4, pending,   "Pending",             "#888888"),
@@ -1441,7 +1494,7 @@ with tab_outreach:
         st.markdown(
             f'<div class="or-prospect-card">'
             f'  <div style="display:flex;align-items:center;margin-bottom:14px;">'
-            f'    <span style="font-size:1.05rem;font-weight:600;color:#e8e8f2">{p["name"]}</span>'
+            f'    <span style="font-size:1.05rem;font-weight:600;color:#e6edf3">{p["name"]}</span>'
             f'    <span class="or-industry-badge">{p["industry"]}</span>'
             f'  </div>'
             f'  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:4px;">'
@@ -1557,7 +1610,7 @@ with tab_outreach:
 # TAB: OBSERVABILITY
 # ══════════════════════════════════════════════
 with tab_observability:
-    st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
+    st.markdown("### Observability")
 
     try:
         from utils.observability_queries import (
@@ -1570,60 +1623,36 @@ with tab_observability:
         obs_col1, obs_col2 = st.columns(2)
 
         with obs_col1:
-            st.markdown(
-                '<div class="panel-header" style="border-radius:14px 14px 0 0;">'
-                '  <span class="panel-title">Token Cost — This Month</span>'
-                '</div>',
-                unsafe_allow_html=True,
-            )
+            st.markdown("**Token Cost — This Month**")
             cost_rows = get_monthly_cost_by_agency()
             if cost_rows:
                 cost_df = pd.DataFrame(cost_rows)
-                st.dataframe(cost_df, use_container_width=True, hide_index=True)
+                st.dataframe(cost_df, width="stretch", hide_index=True)
             else:
                 st.caption("No cost data yet.")
 
-            st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
-
-            st.markdown(
-                '<div class="panel-header" style="border-radius:14px 14px 0 0;">'
-                '  <span class="panel-title">Eval Scores — Latest Run</span>'
-                '</div>',
-                unsafe_allow_html=True,
-            )
+            st.markdown("**Eval Scores (Latest)**")
             eval_rows = get_latest_eval_scores()
             if eval_rows:
                 eval_df = pd.DataFrame(eval_rows)
-                st.dataframe(eval_df, use_container_width=True, hide_index=True)
+                st.dataframe(eval_df, width="stretch", hide_index=True)
             else:
-                st.caption("No eval runs yet — run eval_runner.py to generate scores.")
+                st.caption("No eval runs yet. Run eval_runner.py to generate scores.")
 
         with obs_col2:
-            st.markdown(
-                '<div class="panel-header" style="border-radius:14px 14px 0 0;">'
-                '  <span class="panel-title">Pipeline Health — Last 30 Days</span>'
-                '</div>',
-                unsafe_allow_html=True,
-            )
+            st.markdown("**Pipeline Health — Last 30 Days**")
             health_rows = get_pipeline_health_last_30d()
             if health_rows:
                 health_df = pd.DataFrame(health_rows)
-                st.dataframe(health_df, use_container_width=True, hide_index=True)
+                st.dataframe(health_df, width="stretch", hide_index=True)
             else:
                 st.caption("No pipeline runs in the last 30 days.")
 
-            st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
-
-            st.markdown(
-                '<div class="panel-header" style="border-radius:14px 14px 0 0;">'
-                '  <span class="panel-title">Recent Audit Events</span>'
-                '</div>',
-                unsafe_allow_html=True,
-            )
+            st.markdown("**Recent Audit Events**")
             audit_rows = get_recent_audit_events(limit=20)
             if audit_rows:
                 audit_df = pd.DataFrame(audit_rows)
-                st.dataframe(audit_df, use_container_width=True, hide_index=True)
+                st.dataframe(audit_df, width="stretch", hide_index=True)
             else:
                 st.caption("No audit events yet.")
 

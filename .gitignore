@@ -1,5 +1,6 @@
 # Credentials — never commit
 .env
+attribution_agent/attribution_agent/config/client_registry.local.json
 
 # Python
 __pycache__/
@@ -31,5 +32,13 @@ Thumbs.db
 # Logs
 *.log
 
+# ARIE runtime
+arie.pid
+
 # Databricks
 .databricks/
+
+# Claude Code — ignore session data but track agent definitions
+.claude/
+!.claude/agents/
+!.claude/agents/**

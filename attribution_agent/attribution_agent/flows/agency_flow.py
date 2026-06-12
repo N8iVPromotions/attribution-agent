@@ -17,7 +17,9 @@ import json
 import logging
 import os
 import sys
+import uuid
 from pathlib import Path
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -32,11 +34,24 @@ except NameError:
 sys.path.insert(0, _root)
 
 from config.agency_config import AgencyConfig, get_agency, list_agencies
-from config.client_config import get_client
+from config.client_config import get_client, list_clients
 from flows.ingest_flow import ingest_flow
 from agents.insight.insight_agent import generate_insight_report
 from agents.comms.comms_agent import send_agency_report
-from utils.databricks_writer import _run_sql
+from attribution_models import normalize_model
+from utils.databricks_writer import _run_sql, write_pipeline_run
+
+try:
+    from agents.control import arie_bot as _arie
+except Exception:
+    _arie = None
+
+def _notify(text: str) -> None:
+    if _arie:
+        try:
+            _arie.notify(text)
+        except Exception:
+            pass
 
 
 def _get_client_recipient(client_id: str) -> str:
@@ -53,7 +68,7 @@ def _get_client_recipient(client_id: str) -> str:
 def _build_union_all(agency: AgencyConfig) -> str:
     """Generate the UNION ALL clause across all client schemas for SQL templates."""
     clauses = []
-    for client_id in agency.client_ids:
+    for client_id in _agency_client_ids(agency):
         config = get_client(client_id)
         client_name = config.client_display_name or config.client_name
         schema = config.databricks_schema
@@ -62,6 +77,15 @@ def _build_union_all(agency: AgencyConfig) -> str:
             f"FROM {schema}.channel_performance"
         )
     return "\nUNION ALL\n".join(clauses)
+
+
+def _agency_client_ids(agency: AgencyConfig) -> list[str]:
+    client_ids = list(agency.client_ids)
+    for client_id in list_clients():
+        config = get_client(client_id)
+        if config.agency_id == agency.agency_id and client_id not in client_ids:
+            client_ids.append(client_id)
+    return client_ids
 
 
 def run_agency_benchmark_sql(agency: AgencyConfig) -> None:
@@ -89,10 +113,31 @@ def run_agency_benchmark_sql(agency: AgencyConfig) -> None:
         logger.warning(f"[Agency] Benchmark SQL failed (non-fatal): {exc}")
 
 
+def run_client_attribution_sql(client_id: str, attribution_model: str) -> None:
+    """Refresh model-specific closed-revenue attribution tables for a client."""
+    config = get_client(client_id)
+    sql_path = Path(__file__).parent.parent / "transforms" / "closed_revenue_attribution.sql"
+    sql = sql_path.read_text()
+    for stmt in sql.format(
+        schema=config.databricks_schema,
+        attribution_model=normalize_model(attribution_model),
+    ).split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            _run_sql(stmt)
+    logger.info(
+        f"[Attribution] Refreshed closed-revenue tables | "
+        f"client={client_id} | model={attribution_model}"
+    )
+
+
 def run_agency_pipeline(
     agency_id: str,
     dry_run: bool = False,
     client_filter: list[str] | None = None,
+    attribution_model: str | None = None,
+    run_mode: str = "agency",
+    resume_run_id: str | None = None,
 ) -> dict:
     """
     Run the full pipeline for every client in the agency:
@@ -101,55 +146,183 @@ def run_agency_pipeline(
     3. send white-labeled email (skipped if dry_run=True)
 
     Runs clients sequentially to avoid API rate limits.
+    Pass resume_run_id to resume from the last completed checkpoint.
     """
+    from flows.saga import PipelineSaga
+    from utils.checkpoint import Checkpointer
+
     agency = get_agency(agency_id)
-    client_ids = client_filter or agency.client_ids
+    client_ids = client_filter or _agency_client_ids(agency)
+    selected_model = normalize_model(attribution_model or "last_touch")
+    run_id = resume_run_id or str(uuid.uuid4())
+    checkpointer = Checkpointer()
+
+    if resume_run_id:
+        logger.info(f"[Agency] Resuming run {resume_run_id}")
 
     logger.info(
         f"[Agency] Starting pipeline | agency={agency_id} | "
-        f"clients={client_ids} | dry_run={dry_run}"
+        f"clients={client_ids} | dry_run={dry_run} | model={selected_model}"
+    )
+    _notify(
+        f"⚡ *Pipeline started*\n"
+        f"Agency: `{agency_id}` · {len(client_ids)} client{'s' if len(client_ids) != 1 else ''}\n"
+        f"Model: `{selected_model}` · {'Dry run' if dry_run else 'Live'}"
     )
 
     results = []
     errors = []
 
     for client_id in client_ids:
+        started_at = datetime.now(timezone.utc)
         logger.info(f"[Agency] Processing client: {client_id}")
-        try:
-            # 1. Ingest
-            ingest_result = ingest_flow(client_id)
 
-            # 2. Generate report
-            report = generate_insight_report(client_id)
+        # Resume: skip clients already completed in a prior run
+        completed_steps = checkpointer.get_completed_steps(run_id, client_id)
+        if "pipeline_complete" in completed_steps:
+            logger.info(f"[Agency] Skipping {client_id} — already completed in run {run_id}")
+            continue
 
-            # 3. Send white-labeled email
-            email_sent = False
-            if not dry_run:
-                recipient = _get_client_recipient(client_id)
-                email_sent = send_agency_report(
-                    report=report,
-                    recipient_email=recipient,
-                    agency_config=agency,
-                    powerbi_url=agency.powerbi_workspace_url,
+        with PipelineSaga(run_id=run_id, client_id=client_id, agency_id=agency_id) as saga:
+            try:
+                # 1. Ingest
+                if "ingest" not in completed_steps:
+                    checkpointer.start_step(run_id, agency_id, client_id, "ingest")
+                    ingest_result = ingest_flow(client_id)
+                    checkpointer.complete_step(run_id, agency_id, client_id, "ingest", ingest_result)
+                else:
+                    logger.info(f"[Agency] Resuming — skipping ingest for {client_id}")
+                    ingest_result = {}
+
+                # 2. Refresh attribution outputs for the selected model
+                if "attribution_sql" not in completed_steps:
+                    checkpointer.start_step(run_id, agency_id, client_id, "attribution_sql")
+                    run_client_attribution_sql(client_id, selected_model)
+                    checkpointer.complete_step(run_id, agency_id, client_id, "attribution_sql")
+
+                # 3. Generate report from refreshed attributed revenue
+                if "generate_report" not in completed_steps:
+                    checkpointer.start_step(run_id, agency_id, client_id, "generate_report")
+                    report = generate_insight_report(client_id, attribution_model=selected_model)
+                    checkpointer.complete_step(run_id, agency_id, client_id, "generate_report")
+                else:
+                    report = generate_insight_report(client_id, attribution_model=selected_model)
+
+                # 3b. Governance review (advisory — never blocks)
+                try:
+                    from agents.intelligence.n8iv_agents import run_governance_review
+                    gov_warnings = run_governance_review(
+                        client_id=client_id,
+                        client_name=get_client(client_id).client_name,
+                        report_narrative=report.narrative,
+                        report_json=report.to_dict(),
+                    )
+                    if gov_warnings:
+                        logger.warning(
+                            f"[Governance] {len(gov_warnings)} advisory item(s) for "
+                            f"{client_id}: " + "; ".join(gov_warnings[:3])
+                        )
+                except Exception as gov_exc:
+                    logger.warning(f"[Governance] review failed (non-fatal): {gov_exc!r}")
+
+                # 4. Send white-labeled email
+                email_sent = False
+                if not dry_run and "email_sent" not in completed_steps:
+                    checkpointer.start_step(run_id, agency_id, client_id, "email_sent")
+                    recipient = _get_client_recipient(client_id)
+                    email_sent = send_agency_report(
+                        report=report,
+                        recipient_email=recipient,
+                        agency_config=agency,
+                        powerbi_url=agency.powerbi_workspace_url,
+                    )
+                    checkpointer.complete_step(run_id, agency_id, client_id, "email_sent")
+                    logger.info(f"[Agency] Report sent to {recipient}")
+                elif dry_run:
+                    logger.info(f"[Agency] dry_run — skipping email for {client_id}")
+
+                checkpointer.complete_step(run_id, agency_id, client_id, "pipeline_complete")
+
+                # Write pipeline summary to cross-run memory
+                try:
+                    from utils.memory_store import MemoryStore
+                    MemoryStore().remember(
+                        client_id=client_id,
+                        memory_type="pipeline_summary",
+                        content=(
+                            f"Pipeline run {run_id[:8]}: "
+                            f"top_channel={report.top_channel}, "
+                            f"pipeline=${report.total_pipeline:,.0f}, "
+                            f"model={selected_model}"
+                        ),
+                        source_run_id=run_id,
+                        importance="medium",
+                    )
+                except Exception:
+                    pass
+
+                _notify(
+                    f"✅ *{get_client(client_id).client_name}* complete\n"
+                    f"Pipeline: `${report.total_pipeline:,.0f}` · Top: `{report.top_channel}`\n"
+                    f"{'📧 Report sent' if email_sent else '🔕 Dry run — email skipped'}"
                 )
-                logger.info(f"[Agency] Report sent to {recipient}")
-            else:
-                logger.info(f"[Agency] dry_run — skipping email for {client_id}")
+                results.append({
+                    "client_id":     client_id,
+                    "meta_rows":     ingest_result.get("meta_rows", 0),
+                    "google_rows":   ingest_result.get("google_rows", 0),
+                    "linkedin_rows": ingest_result.get("linkedin_rows", 0),
+                    "hubspot_rows":  ingest_result.get("hubspot_rows", 0),
+                    "stripe_rows":   ingest_result.get("stripe_rows", 0),
+                    "normalized_ad_rows": ingest_result.get("normalized_ad_rows", 0),
+                    "attribution_model": selected_model,
+                    "top_channel":   report.top_channel,
+                    "total_pipeline": report.total_pipeline,
+                    "email_sent":    email_sent,
+                    "status":        "ok",
+                })
+                write_pipeline_run({
+                    "run_id": run_id,
+                    "agency_id": agency_id,
+                    "client_id": client_id,
+                    "run_mode": run_mode,
+                    "attribution_model": selected_model,
+                    "status": "success",
+                    "dry_run": dry_run,
+                    "meta_rows": ingest_result.get("meta_rows", 0),
+                    "google_rows": ingest_result.get("google_rows", 0),
+                    "linkedin_rows": ingest_result.get("linkedin_rows", 0),
+                    "hubspot_rows": ingest_result.get("hubspot_rows", 0),
+                    "stripe_rows": ingest_result.get("stripe_rows", 0),
+                    "normalized_ad_rows": ingest_result.get("normalized_ad_rows", 0),
+                    "total_pipeline": report.total_pipeline,
+                    "top_channel": report.top_channel,
+                    "email_sent": email_sent,
+                    "started_at": started_at,
+                    "finished_at": datetime.now(timezone.utc),
+                    "output_schema": get_client(client_id).databricks_schema,
+                })
 
-            results.append({
-                "client_id":     client_id,
-                "meta_rows":     ingest_result.get("meta_rows", 0),
-                "hubspot_rows":  ingest_result.get("hubspot_rows", 0),
-                "stripe_rows":   ingest_result.get("stripe_rows", 0),
-                "top_channel":   report.top_channel,
-                "total_pipeline": report.total_pipeline,
-                "email_sent":    email_sent,
-                "status":        "ok",
-            })
-
-        except Exception as exc:
-            logger.error(f"[Agency] Failed for client '{client_id}': {exc}")
-            errors.append({"client_id": client_id, "error": str(exc)})
+            except Exception as exc:
+                logger.error(f"[Agency] Failed for client '{client_id}': {exc}")
+                checkpointer.fail_step(run_id, agency_id, client_id, "pipeline_complete", str(exc))
+                _notify(f"❌ *{client_id}* failed\n`{str(exc)[:200]}`")
+                errors.append({"client_id": client_id, "error": str(exc)})
+                try:
+                    write_pipeline_run({
+                        "run_id": run_id,
+                        "agency_id": agency_id,
+                        "client_id": client_id,
+                        "run_mode": run_mode,
+                        "attribution_model": selected_model,
+                        "status": "failed",
+                        "dry_run": dry_run,
+                        "error": str(exc),
+                        "started_at": started_at,
+                        "finished_at": datetime.now(timezone.utc),
+                        "output_schema": get_client(client_id).databricks_schema,
+                    })
+                except Exception as write_exc:
+                    logger.warning(f"[Ops] Failed to write run history: {write_exc}")
 
     # Run cross-client benchmark SQL (best-effort)
     if not dry_run and results:
@@ -157,6 +330,8 @@ def run_agency_pipeline(
 
     summary = {
         "agency_id":         agency_id,
+        "run_id":            run_id,
+        "attribution_model": selected_model,
         "clients_processed": len(results),
         "clients_failed":    len(errors),
         "dry_run":           dry_run,
@@ -164,39 +339,82 @@ def run_agency_pipeline(
         "errors":            errors,
     }
     logger.info(f"[Agency] Pipeline complete | {summary}")
+    _notify(
+        f"{'✅' if not errors else '⚠️'} *Pipeline complete*\n"
+        f"{len(results)} succeeded · {len(errors)} failed\n"
+        f"Run ID: `{run_id[:8]}`"
+    )
     return summary
 
 
-def run_all_agencies(dry_run: bool = False) -> list[dict]:
+def run_all_agencies(
+    dry_run: bool = False,
+    attribution_model: str | None = None,
+) -> list[dict]:
     """Run run_agency_pipeline for every agency in AGENCY_REGISTRY."""
     return [
-        run_agency_pipeline(agency_id, dry_run=dry_run)
+        run_agency_pipeline(
+            agency_id,
+            dry_run=dry_run,
+            attribution_model=attribution_model,
+            run_mode="agency",
+        )
         for agency_id in list_agencies()
     ]
 
 
-# ─── CLI ENTRYPOINT ───────────────────────────────────────────
+# ─── CLI / DATABRICKS JOB ENTRYPOINT ────────────────────────────────────────
 
 if __name__ == "__main__":
     import argparse
     logging.basicConfig(level=logging.INFO)
 
-    parser = argparse.ArgumentParser(description="Run attribution pipeline for an agency")
-    parser.add_argument("--agency", type=str, default=None,
-                        help="Agency ID (runs all agencies if omitted)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Generate reports but do not send emails")
-    parser.add_argument("--client-filter", type=str, nargs="+", default=None,
-                        help="Run only specific client IDs within the agency")
-    args = parser.parse_args()
+    # --- Databricks Job widget parameters (set via job parameters in databricks.yml)
+    _agency = None
+    _dry_run = False
+    _attribution_model = "last_touch"
+    _run_mode = "agency"
+    try:
+        from databricks.sdk.runtime import dbutils as _dbutils
+        _agency = _dbutils.widgets.get("agency") or None
+        _dry_run = _dbutils.widgets.get("dry_run", "false").lower() == "true"
+        _attribution_model = _dbutils.widgets.get("attribution_model", "last_touch") or "last_touch"
+        logger.info(f"[Job] Running with Databricks widget params: agency={_agency}, dry_run={_dry_run}, model={_attribution_model}")
+    except Exception:
+        # Not inside a Databricks Job — fall through to argparse
+        parser = argparse.ArgumentParser(description="Run attribution pipeline for an agency")
+        parser.add_argument("--agency", type=str, default=None,
+                            help="Agency ID (runs all agencies if omitted)")
+        parser.add_argument("--dry-run", action="store_true",
+                            help="Generate reports but do not send emails")
+        parser.add_argument("--client-filter", type=str, nargs="+", default=None,
+                            help="Run only specific client IDs within the agency")
+        parser.add_argument("--attribution-model", type=str, default="last_touch",
+                            help="Attribution model to apply")
+        parser.add_argument("--run-mode", type=str, default="agency",
+                            help="agency or business")
+        args = parser.parse_args()
+        _agency = args.agency
+        _dry_run = args.dry_run
+        _attribution_model = args.attribution_model
+        _run_mode = args.run_mode
 
-    if args.agency:
+    if _agency:
         result = run_agency_pipeline(
-            agency_id=args.agency,
-            dry_run=args.dry_run,
-            client_filter=args.client_filter,
+            agency_id=_agency,
+            dry_run=_dry_run,
+            attribution_model=_attribution_model,
+            run_mode=_run_mode,
         )
         print(json.dumps(result, indent=2, default=str))
     else:
-        results = run_all_agencies(dry_run=args.dry_run)
+        results = [
+            run_agency_pipeline(
+                agency_id=agency_id,
+                dry_run=_dry_run,
+                attribution_model=_attribution_model,
+                run_mode=_run_mode,
+            )
+            for agency_id in list_agencies()
+        ]
         print(json.dumps(results, indent=2, default=str))

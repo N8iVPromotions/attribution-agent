@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Check formatting
+        run: ruff format --check attribution_agent/attribution_agent/
+      - name: Check linting
+        run: ruff check attribution_agent/attribution_agent/
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r attribution_agent/attribution_agent/requirements.txt pytest
+      - name: Run tests
+        run: pytest attribution_agent/attribution_agent/tests/ -v --tb=short
+        env:
+          DATABRICKS_SERVER_HOSTNAME: mock
+          DATABRICKS_HTTP_PATH: mock
+          DATABRICKS_TOKEN: mock
+          ANTHROPIC_API_KEY: mock
+
+  bundle-validate:
+    name: Bundle Validate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Databricks CLI
+        run: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+      - name: Validate bundle
+        run: databricks bundle validate
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+
+  eval-gate:
+    name: Eval Gate
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: |
+      github.event_name == 'pull_request' &&
+      contains(toJson(github.event.pull_request.changed_files), '.claude/agents/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r attribution_agent/attribution_agent/requirements.txt
+      - name: Run eval gate
+        run: python attribution_agent/attribution_agent/evals/eval_runner.py --all-agents --ci-mode
+        env:
+          DATABRICKS_SERVER_HOSTNAME: ${{ secrets.DATABRICKS_SERVER_HOSTNAME }}
+          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
