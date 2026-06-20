@@ -18,14 +18,16 @@ _OPS_SCHEMA = os.environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_op
 
 
 def _is_databricks() -> bool:
+    """True only when a live Spark session is active (notebooks / jobs on a cluster).
+
+    Databricks Apps run as plain Python web servers with no Spark session and no
+    pyspark installed, so they return False here and take the SQL-connector path.
+    """
     try:
         from pyspark.sql import SparkSession
-        spark = SparkSession.getActiveSession()
-        if spark is not None:
-            return True
+        return SparkSession.getActiveSession() is not None
     except Exception:
-        pass
-    return _is_databricks_app()
+        return False
 
 
 def _get_spark():
@@ -41,14 +43,31 @@ def _get_spark():
 def _get_connection():
     from databricks import sql
     # DATABRICKS_HOST is auto-injected by Databricks Apps; strip the scheme if present
-    hostname = os.environ.get("DATABRICKS_SERVER_HOSTNAME") or \
-        os.environ.get("DATABRICKS_HOST", "").lstrip("https://").rstrip("/")
+    host = os.environ.get("DATABRICKS_SERVER_HOSTNAME") or os.environ.get("DATABRICKS_HOST", "")
+    hostname = host.replace("https://", "").replace("http://", "").rstrip("/")
     if not hostname:
         raise EnvironmentError("DATABRICKS_SERVER_HOSTNAME (or DATABRICKS_HOST) is not set")
+    http_path = os.environ.get("DATABRICKS_HTTP_PATH")
+    if not http_path:
+        raise EnvironmentError("DATABRICKS_HTTP_PATH is not set")
+
+    # Local dev authenticates with a PAT; the Databricks App has no token and
+    # instead uses the OAuth (M2M) service-principal credentials it auto-injects
+    # as DATABRICKS_CLIENT_ID / DATABRICKS_CLIENT_SECRET (picked up by Config()).
+    access_token = os.environ.get("DATABRICKS_TOKEN")
+    if access_token:
+        return sql.connect(
+            server_hostname=hostname,
+            http_path=http_path,
+            access_token=access_token,
+        )
+
+    from databricks.sdk.core import Config, oauth_service_principal
+    cfg = Config(host=f"https://{hostname}")
     return sql.connect(
         server_hostname=hostname,
-        http_path=os.environ["DATABRICKS_HTTP_PATH"],
-        access_token=os.environ["DATABRICKS_TOKEN"],
+        http_path=http_path,
+        credentials_provider=lambda: oauth_service_principal(cfg),
     )
 
 

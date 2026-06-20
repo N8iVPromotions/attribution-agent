@@ -1087,6 +1087,7 @@ def _inject_secrets() -> None:
         "GOOGLE_ADS_REFRESH_TOKEN",
         "LINKEDIN_ACCESS_TOKEN",
         "DATABRICKS_TOKEN",
+        "DATABRICKS_HTTP_PATH",
     ):
         if not os.environ.get(key):
             val = _get_secret(key)
