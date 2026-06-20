@@ -13,9 +13,13 @@ pydantic>=2.5.0,<3
 tenacity>=8.2.0,<10
 loguru>=0.7.0,<0.8
 stripe>=7.0.0,<16
-google-ads>=24.0.0,<28
+google-ads==31.0.0
 streamlit>=1.35.0,<1.50
 databricks-sdk>=0.28.0,<1.0
 fastapi>=0.115.0,<1.0
 uvicorn>=0.30.0,<1.0
 fastmcp>=0.1.0,<3
+# Constrain transitive deps that otherwise resolve to versions conflicting with
+# base-image packages (mlflow-skinny needs protobuf<6; gradio-client needs websockets<13).
+protobuf>=4.25.0,<6
+websockets>=10,<13
