@@ -65,6 +65,22 @@ def _with_retry(fn, retries: int = 3, delay: int = 15, label: str = ""):
     raise last_exc
 
 
+def _collect(future, label: str, failures: dict):
+    """Resolve a source-pull future without letting one bad source abort the run.
+
+    On failure the source degrades to "no data" (returns None) and the error is
+    recorded in `failures` so the run can finish with the sources that did
+    succeed and report partial status. Retries already happened inside the
+    future via `_with_retry`; reaching here means they were exhausted.
+    """
+    try:
+        return future.result()
+    except Exception as exc:
+        logger.error(f"[{label}] source failed after retries — skipping: {exc!r}")
+        failures[label] = repr(exc)
+        return None
+
+
 def step_setup(schema: str) -> None:
     logger.info(f"[Setup] Ensuring schema + tables: {schema}")
     _with_retry(lambda: ensure_schema(schema), label="setup-schema")
@@ -281,17 +297,18 @@ def ingest_flow(client_id: str) -> dict:
 
     step_setup(config.databricks_schema)
 
+    source_failures: dict = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
         meta_future    = pool.submit(step_pull_meta,    config, meta_token)
         google_future  = pool.submit(step_pull_google_ads, config, google_token)
         linkedin_future = pool.submit(step_pull_linkedin_ads, config, linkedin_token)
         hubspot_future = pool.submit(step_pull_hubspot, config, hubspot_token)
         stripe_future  = pool.submit(step_pull_stripe,  config, stripe_token)
-        meta_df    = meta_future.result()
-        google_df  = google_future.result()
-        linkedin_df = linkedin_future.result()
-        hubspot_df = hubspot_future.result()
-        stripe_df  = stripe_future.result()
+        meta_df    = _collect(meta_future,    "pull-meta",         source_failures)
+        google_df  = _collect(google_future,  "pull-google-ads",   source_failures)
+        linkedin_df = _collect(linkedin_future, "pull-linkedin-ads", source_failures)
+        hubspot_df = _collect(hubspot_future, "pull-hubspot",      source_failures)
+        stripe_df  = _collect(stripe_future,  "pull-stripe",       source_failures)
 
     meta_validated    = step_validate_meta(meta_df,    config)
     hubspot_validated = step_validate_hubspot(hubspot_df, config)
@@ -312,8 +329,14 @@ def ingest_flow(client_id: str) -> dict:
         "hubspot_rows": hubspot_rows,
         "stripe_rows":  stripe_rows,
         "normalized_ad_rows": normalized_ad_rows,
-        "status":       "complete",
+        "source_failures": source_failures,
+        "status":       "partial" if source_failures else "complete",
     }
+    if source_failures:
+        logger.error(
+            f"[Ingest] {len(source_failures)} source(s) failed for {client_id}: "
+            + ", ".join(source_failures.keys())
+        )
 
     step_data_quality_agent(
         meta_validated, hubspot_validated, stripe_validated,

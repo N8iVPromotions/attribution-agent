@@ -7,10 +7,39 @@ GOOGLE_ADS_REFRESH_TOKEN, and optionally GOOGLE_ADS_LOGIN_CUSTOMER_ID.
 """
 from __future__ import annotations
 
+import logging
 import os
 from datetime import date, timedelta
 
 import pandas as pd
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+logger = logging.getLogger(__name__)
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10), reraise=True)
+def _search_rows(service, customer_id: str, query: str) -> list[dict]:
+    """Run the GAQL query and collect rows. Retried on transient API errors."""
+    rows: list[dict] = []
+    response = service.search_stream(customer_id=customer_id, query=query)
+    for batch in response:
+        for row in batch.results:
+            rows.append({
+                "date": row.segments.date,
+                "customer_id": str(row.customer.id),
+                "campaign_id": str(row.campaign.id),
+                "campaign_name": row.campaign.name,
+                "ad_group_id": str(row.ad_group.id),
+                "ad_group_name": row.ad_group.name,
+                "ad_id": "",
+                "ad_name": "",
+                "spend": float(row.metrics.cost_micros or 0) / 1_000_000,
+                "impressions": int(row.metrics.impressions or 0),
+                "clicks": int(row.metrics.clicks or 0),
+                "conversions": float(row.metrics.conversions or 0),
+                "landing_url": "",
+            })
+    return rows
 
 
 def pull_google_ads_data(
@@ -31,6 +60,7 @@ def pull_google_ads_data(
 
     end_date = date.today() - timedelta(days=1)
     start_date = end_date - timedelta(days=lookback_days - 1)
+    logger.info(f"[Google Ads] Pulling insights for {customer_id} | {start_date} to {end_date}")
 
     credentials = {
         "developer_token": os.environ.get("GOOGLE_ADS_DEVELOPER_TOKEN", ""),
@@ -62,25 +92,8 @@ def pull_google_ads_data(
         WHERE segments.date BETWEEN '{start_date}' AND '{end_date}'
     """
 
-    rows = []
-    response = service.search_stream(customer_id=str(customer_id).replace("-", ""), query=query)
-    for batch in response:
-        for row in batch.results:
-            rows.append({
-                "date": row.segments.date,
-                "customer_id": str(row.customer.id),
-                "campaign_id": str(row.campaign.id),
-                "campaign_name": row.campaign.name,
-                "ad_group_id": str(row.ad_group.id),
-                "ad_group_name": row.ad_group.name,
-                "ad_id": "",
-                "ad_name": "",
-                "spend": float(row.metrics.cost_micros or 0) / 1_000_000,
-                "impressions": int(row.metrics.impressions or 0),
-                "clicks": int(row.metrics.clicks or 0),
-                "conversions": float(row.metrics.conversions or 0),
-                "landing_url": "",
-            })
+    rows = _search_rows(service, str(customer_id).replace("-", ""), query)
+    logger.info(f"[Google Ads] Retrieved {len(rows)} rows")
 
     df = pd.DataFrame(rows)
     if not df.empty:
