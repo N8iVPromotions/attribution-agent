@@ -188,6 +188,24 @@ USING DELTA
 PARTITIONED BY (date)
 """
 
+ATTRIBUTION_RESULTS_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS {schema}.attribution_results (
+    client_id               STRING,
+    source_platform         STRING,
+    attribution_model       STRING,
+    spend                   DOUBLE,
+    attributed_revenue      DOUBLE,
+    attributed_conversions  DOUBLE,
+    roas                    DOUBLE,
+    cac                     DOUBLE,
+    cpa                     DOUBLE,
+    window_start            DATE,
+    window_end              DATE,
+    computed_at             TIMESTAMP
+)
+USING DELTA
+"""
+
 RUN_HISTORY_TABLE_DDL = """
 CREATE TABLE IF NOT EXISTS {ops_schema}.pipeline_runs (
     run_id              STRING,
@@ -430,7 +448,10 @@ CREATE TABLE IF NOT EXISTS {ops_schema}.ab_assignments (
 USING DELTA
 """
 
-_RAW_TABLES = ["meta_ads_raw", "hubspot_deals_raw", "stripe_payments_raw", "ad_spend_normalized"]
+_RAW_TABLES = [
+    "meta_ads_raw", "hubspot_deals_raw", "stripe_payments_raw",
+    "ad_spend_normalized", "attribution_results",
+]
 _OPS_TABLES = [
     "pipeline_runs", "audit_log", "insight_reports", "approval_queue",
     "idempotency_store", "pipeline_checkpoints", "cost_ledger",
@@ -445,6 +466,7 @@ def ensure_tables(schema: str) -> None:
     _run_sql(HUBSPOT_TABLE_DDL.format(schema=schema))
     _run_sql(STRIPE_TABLE_DDL.format(schema=schema))
     _run_sql(NORMALIZED_AD_TABLE_DDL.format(schema=schema))
+    _run_sql(ATTRIBUTION_RESULTS_TABLE_DDL.format(schema=schema))
     # contact_email was added in v2 — backfill the column on existing tables
     try:
         _run_sql(
@@ -663,6 +685,31 @@ def write_normalized_ad_data(df: pd.DataFrame, schema: str) -> int:
         ["client_id", "source_platform", "campaign_id", "ad_group_id", "ad_id", "date"],
     )
     logger.info(f"[Databricks] Wrote {rows} normalized ad rows")
+    return rows
+
+
+def write_attribution_results(df: pd.DataFrame, schema: str) -> int:
+    """Overwrite the per-client closed-loop attribution scorecard for a model.
+
+    Results are a full recompute over the lookback window, so the existing rows
+    for the same (client_id, source_platform, attribution_model) are replaced.
+    """
+    if df is None or df.empty:
+        logger.warning("[Databricks] Attribution results empty — skipping")
+        return 0
+    df = df.copy()
+    df["computed_at"] = pd.Timestamp.utcnow()
+    for col in ("window_start", "window_end"):
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors="coerce").dt.date
+            df[col] = df[col].astype(object).where(df[col].notna(), None)
+    rows = _upsert_dataframe(
+        df,
+        schema,
+        "attribution_results",
+        ["client_id", "source_platform", "attribution_model"],
+    )
+    logger.info(f"[Databricks] Wrote {rows} attribution result rows")
     return rows
 
 

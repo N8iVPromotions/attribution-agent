@@ -45,6 +45,10 @@ class ClientConfig:
     linkedin_ads_enabled: bool = False
     linkedin_ads_account_id: str = ""       # sponsored account ID or URN
 
+    # TikTok Ads
+    tiktok_ads_enabled: bool = False
+    tiktok_ads_advertiser_id: str = ""      # TikTok advertiser (ad account) ID
+
     # ── HubSpot ───────────────────────────────────────────────────────────────
     hubspot_enabled: bool = False
     hubspot_pipeline_id: str = ""           # leave blank for default pipeline
@@ -88,6 +92,10 @@ class ClientConfig:
     @property
     def linkedin_access_token(self) -> str:
         return _get_secret("LINKEDIN_ACCESS_TOKEN")
+
+    @property
+    def tiktok_access_token(self) -> str:
+        return _get_secret("TIKTOK_ACCESS_TOKEN")
 
 
 # ─── CLIENT REGISTRY ──────────────────────────────────────────────────────────

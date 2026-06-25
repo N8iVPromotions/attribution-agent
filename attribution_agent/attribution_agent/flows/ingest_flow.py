@@ -38,17 +38,21 @@ from agents.ingest.meta_connector import pull_meta_data
 from agents.ingest.google_ads_connector import pull_google_ads_data
 from agents.ingest.hubspot_connector import pull_hubspot_data
 from agents.ingest.linkedin_connector import pull_linkedin_ads_data
+from agents.ingest.tiktok_connector import pull_tiktok_ads_data
 from agents.ingest.stripe_connector import pull_stripe_data
 from agents.ingest.ad_sources import (
     combine_normalized_ads,
     normalize_google_ads,
     normalize_linkedin_ads,
     normalize_meta_ads,
+    normalize_tiktok_ads,
 )
 from agents.ingest.validator import validate_meta, validate_hubspot, validate_stripe, ValidationReport
+from attribution_engine import run_attribution
 from utils.databricks_writer import (
     ensure_schema, ensure_tables,
     write_meta_data, write_hubspot_data, write_stripe_data, write_normalized_ad_data,
+    write_attribution_results,
 )
 
 
@@ -143,6 +147,20 @@ def step_pull_linkedin_ads(config: ClientConfig, linkedin_token: str):
     )
 
 
+def step_pull_tiktok_ads(config: ClientConfig, tiktok_token: str):
+    if not getattr(config, "tiktok_ads_enabled", False):
+        logger.info("[TikTok Ads] Not enabled — skipping")
+        return None
+    return _with_retry(
+        lambda: pull_tiktok_ads_data(
+            advertiser_id=config.tiktok_ads_advertiser_id,
+            lookback_days=config.lookback_days,
+            access_token=tiktok_token,
+        ),
+        retries=3, delay=30, label="pull-tiktok-ads",
+    )
+
+
 def step_validate_meta(df, config: ClientConfig):
     if df is None:
         return None, None
@@ -218,19 +236,60 @@ def step_write_stripe(validated_result, config: ClientConfig) -> int:
     )
 
 
-def step_write_normalized_ads(meta_df, google_df, linkedin_df, config: ClientConfig) -> int:
-    normalized = combine_normalized_ads([
+def build_normalized_ads(meta_df, google_df, linkedin_df, tiktok_df, config: ClientConfig):
+    return combine_normalized_ads([
         normalize_meta_ads(meta_df, config.client_id),
         normalize_google_ads(google_df, config.client_id),
         normalize_linkedin_ads(linkedin_df, config.client_id),
+        normalize_tiktok_ads(tiktok_df, config.client_id),
     ])
-    if normalized.empty:
+
+
+def step_write_normalized_ads(normalized, config: ClientConfig) -> int:
+    if normalized is None or normalized.empty:
         logger.warning("[Ads] No normalized ad rows to write")
         return 0
     return _with_retry(
         lambda: write_normalized_ad_data(normalized, schema=config.databricks_schema),
         retries=2, delay=15, label="write-normalized-ads",
     )
+
+
+def step_build_attribution(normalized_ads, hubspot_df, stripe_df, config: ClientConfig) -> dict:
+    """Closed-loop join: connect ad touchpoints to closed/won revenue.
+
+    Non-fatal — attribution is a downstream read model, so a failure here must
+    not fail the ingest. Returns a small summary dict for the run record.
+    """
+    try:
+        result = run_attribution(
+            client_id=config.client_id,
+            ads=normalized_ads if normalized_ads is not None else None,
+            model=config.attribution_model,
+            hubspot_df=hubspot_df,
+            stripe_df=stripe_df,
+            lookback_days=max(config.lookback_days, 90),
+        )
+        scorecard = result.channel_performance
+        rows_written = _with_retry(
+            lambda: write_attribution_results(scorecard, schema=config.databricks_schema),
+            retries=2, delay=15, label="write-attribution-results",
+        )
+        logger.info(
+            f"[Attribution] {config.client_id} | model={config.attribution_model} | "
+            f"total=${result.total_revenue:,.0f} attributed=${result.attributed_revenue:,.0f} "
+            f"unattributed=${result.unattributed_revenue:,.0f} | rows={rows_written}"
+        )
+        return {
+            "attribution_model": config.attribution_model,
+            "total_revenue": result.total_revenue,
+            "attributed_revenue": result.attributed_revenue,
+            "unattributed_revenue": result.unattributed_revenue,
+            "attribution_rows": rows_written,
+        }
+    except Exception as exc:
+        logger.error(f"[Attribution] build failed for {config.client_id}: {exc!r}")
+        return {"attribution_error": repr(exc)}
 
 
 def step_alert(meta_result, hubspot_result, stripe_result, config: ClientConfig) -> None:
@@ -294,19 +353,22 @@ def ingest_flow(client_id: str) -> dict:
     stripe_token  = _get_secret("STRIPE_SECRET_KEY")
     google_token  = _get_secret("GOOGLE_ADS_REFRESH_TOKEN")
     linkedin_token = _get_secret("LINKEDIN_ACCESS_TOKEN")
+    tiktok_token  = _get_secret("TIKTOK_ACCESS_TOKEN")
 
     step_setup(config.databricks_schema)
 
     source_failures: dict = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
         meta_future    = pool.submit(step_pull_meta,    config, meta_token)
         google_future  = pool.submit(step_pull_google_ads, config, google_token)
         linkedin_future = pool.submit(step_pull_linkedin_ads, config, linkedin_token)
+        tiktok_future  = pool.submit(step_pull_tiktok_ads, config, tiktok_token)
         hubspot_future = pool.submit(step_pull_hubspot, config, hubspot_token)
         stripe_future  = pool.submit(step_pull_stripe,  config, stripe_token)
         meta_df    = _collect(meta_future,    "pull-meta",         source_failures)
         google_df  = _collect(google_future,  "pull-google-ads",   source_failures)
         linkedin_df = _collect(linkedin_future, "pull-linkedin-ads", source_failures)
+        tiktok_df  = _collect(tiktok_future,  "pull-tiktok-ads",   source_failures)
         hubspot_df = _collect(hubspot_future, "pull-hubspot",      source_failures)
         stripe_df  = _collect(stripe_future,  "pull-stripe",       source_failures)
 
@@ -317,7 +379,11 @@ def ingest_flow(client_id: str) -> dict:
     meta_rows    = step_write_meta(meta_validated,    config)
     hubspot_rows = step_write_hubspot(hubspot_validated, config)
     stripe_rows  = step_write_stripe(stripe_validated,  config)
-    normalized_ad_rows = step_write_normalized_ads(meta_df, google_df, linkedin_df, config)
+    normalized_ads = build_normalized_ads(meta_df, google_df, linkedin_df, tiktok_df, config)
+    normalized_ad_rows = step_write_normalized_ads(normalized_ads, config)
+
+    # Closed-loop join: attribute closed/won revenue back to ad touchpoints.
+    attribution = step_build_attribution(normalized_ads, hubspot_df, stripe_df, config)
 
     step_alert(meta_validated, hubspot_validated, stripe_validated, config)
 
@@ -326,9 +392,11 @@ def ingest_flow(client_id: str) -> dict:
         "meta_rows":    meta_rows,
         "google_rows":  0 if google_df is None else len(google_df),
         "linkedin_rows": 0 if linkedin_df is None else len(linkedin_df),
+        "tiktok_rows":  0 if tiktok_df is None else len(tiktok_df),
         "hubspot_rows": hubspot_rows,
         "stripe_rows":  stripe_rows,
         "normalized_ad_rows": normalized_ad_rows,
+        "attribution":  attribution,
         "source_failures": source_failures,
         "status":       "partial" if source_failures else "complete",
     }
