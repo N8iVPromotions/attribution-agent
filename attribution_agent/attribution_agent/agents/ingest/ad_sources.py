@@ -1,7 +1,7 @@
 """
 Shared normalized ad source schema.
 
-Meta, Google Ads, and LinkedIn Ads each expose different field names. The
+Meta, Google, TikTok, and LinkedIn Ads each expose different field names. The
 pipeline lands source-specific raw tables and also writes this normalized shape
 so attribution SQL can reason about spend and touchpoints consistently.
 """
@@ -113,6 +113,32 @@ def normalize_linkedin_ads(df: pd.DataFrame, client_id: str) -> pd.DataFrame:
         "clicks": _col(df, "clicks").astype("int64"),
         "conversions": _col(df, "conversions"),
         "utm_source": "linkedin",
+        "utm_medium": "paid_social",
+        "utm_campaign": df.get("campaign_name", ""),
+        "landing_url": "",
+    })
+    return out[NORMALIZED_AD_COLUMNS]
+
+
+def normalize_tiktok_ads(df: pd.DataFrame, client_id: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return empty_normalized_ads()
+    out = pd.DataFrame({
+        "client_id": client_id,
+        "source_platform": "tiktok",
+        "account_id": df.get("advertiser_id", ""),
+        "campaign_id": df.get("campaign_id", ""),
+        "campaign_name": df.get("campaign_name", ""),
+        "ad_group_id": "",
+        "ad_group_name": "",
+        "ad_id": "",
+        "ad_name": "",
+        "date": pd.to_datetime(df["date"], errors="coerce"),
+        "spend": _col(df, "spend"),
+        "impressions": _col(df, "impressions").astype("int64"),
+        "clicks": _col(df, "clicks").astype("int64"),
+        "conversions": _col(df, "conversions"),
+        "utm_source": "tiktok",
         "utm_medium": "paid_social",
         "utm_campaign": df.get("campaign_name", ""),
         "landing_url": "",
