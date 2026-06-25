@@ -78,11 +78,13 @@ async def audit_middleware(request: Request, call_next) -> Response:
 # ── Routers ───────────────────────────────────────────────────────────────────
 
 from api.routers import pipeline, clients, reports, approvals  # noqa: E402
+from agents.a2a.server import router as a2a_router  # noqa: E402
 
 app.include_router(pipeline.router, prefix="/api/v1")
 app.include_router(clients.router, prefix="/api/v1")
 app.include_router(reports.router, prefix="/api/v1")
 app.include_router(approvals.router, prefix="/api/v1")
+app.include_router(a2a_router)  # A2A discovery + dispatch (well-known paths, no prefix)
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

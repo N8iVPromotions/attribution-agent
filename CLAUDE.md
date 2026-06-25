@@ -1,5 +1,11 @@
 # Attribution Agent — Claude Code Instructions
 
+## Documentation
+
+- [`docs/RUNBOOK.md`](docs/RUNBOOK.md) — deploy, rollback, health checks, log access, common failures
+- [`docs/ONBOARDING_CLIENT.md`](docs/ONBOARDING_CLIENT.md) — add a new client/agency and provision secrets
+- [`docs/A2A.md`](docs/A2A.md) — agent-to-agent local & network dispatch
+
 ## Git Workflow
 
 All changes must go through a pull request. Never push directly to `main`.
