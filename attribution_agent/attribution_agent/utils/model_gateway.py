@@ -55,7 +55,11 @@ def select_model(task_type: str) -> str:
 
 
 def _cache_key(model: str, agent_name: str, message: str) -> str:
-    raw = f"{model}:{agent_name}:{message[:200]}"
+    # Hash the FULL message — cacheable tasks (data_quality, governance_review)
+    # build messages that share a long fixed prefix, so truncating to the first
+    # N chars would collide distinct inputs onto the same key and serve a wrong
+    # cached response. SHA-256 handles arbitrary length; key stays 32 hex chars.
+    raw = f"{model}:{agent_name}:{message}"
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
