@@ -9,6 +9,7 @@ Key lookup order:
 
 Header: X-API-Key: <key>
 """
+
 from __future__ import annotations
 import os
 from fastapi import Depends, HTTPException, Security, status
@@ -22,6 +23,7 @@ def _get_secret(key: str) -> str:
     try:
         import base64
         from databricks.sdk import WorkspaceClient
+
         resp = WorkspaceClient().secrets.get_secret(scope="attribution", key=key)
         val = resp.value or ""
         try:
@@ -34,6 +36,7 @@ def _get_secret(key: str) -> str:
 
 def _resolve_key(api_key: str) -> Role | None:
     """Return the Role for an API key, or None if unrecognized."""
+
     def _matches(secret_name: str, env_name: str) -> bool:
         env_val = os.environ.get(env_name, "")
         if env_val and api_key == env_val:
@@ -45,6 +48,7 @@ def _resolve_key(api_key: str) -> Role | None:
         return Role.ADMIN
 
     from config.client_config import CLIENT_REGISTRY
+
     for client_id in CLIENT_REGISTRY:
         secret_name = f"api_key_{client_id}"
         env_name = f"API_KEY_{client_id.upper()}"

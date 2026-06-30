@@ -18,6 +18,7 @@ Each public function corresponds to one injection point in the pipeline:
   run_governance_review(client_id, report_narrative, report_json)
       → called pre-send in agency_flow.py; returns advisory warnings list
 """
+
 from __future__ import annotations
 
 import json
@@ -26,6 +27,7 @@ import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
 
 # Path to .claude/agents/ — set N8IV_AGENTS_DIR env var to override (required in Databricks Jobs).
 # Databricks Jobs: set N8IV_AGENTS_DIR to the absolute path where the bundle deploys agent files.
@@ -41,7 +43,14 @@ def _find_agents_dir() -> Path:
         if agents_dir.is_dir():
             return agents_dir
     # Last resort: relative to the bundle deploy path
-    return Path("/Workspace/Users/zajen@n8ivpromotions.com/.bundle/attribution-agent/production") / ".claude" / "agents"
+    return (
+        Path(
+            "/Workspace/Users/zajen@n8ivpromotions.com/.bundle/attribution-agent/production"
+        )
+        / ".claude"
+        / "agents"
+    )
+
 
 _AGENTS_DIR = _find_agents_dir()
 
@@ -86,8 +95,13 @@ EXEC_REPORT_SCHEMA: dict = {
         "attribution_model": {"type": "string"},
     },
     "required": [
-        "narrative", "key_findings", "top_channel", "total_pipeline",
-        "total_spend", "overall_roi", "attribution_model",
+        "narrative",
+        "key_findings",
+        "top_channel",
+        "total_pipeline",
+        "total_spend",
+        "overall_roi",
+        "attribution_model",
     ],
 }
 
@@ -166,6 +180,7 @@ def _parse_json_response(text: str) -> dict:
 
 # ─── DATA QUALITY AGENT ───────────────────────────────────────
 
+
 def run_data_quality_agent(
     client_id: str,
     validation_reports: list,
@@ -203,8 +218,11 @@ def run_data_quality_agent(
         )
 
         raw = _call_agent(
-            "data-quality", message, max_tokens=800,
-            client_id=client_id, response_schema=DATA_QUALITY_SCHEMA,
+            "data-quality",
+            message,
+            max_tokens=800,
+            client_id=client_id,
+            response_schema=DATA_QUALITY_SCHEMA,
         )
         result = _parse_json_response(raw)
         logger.info(
@@ -221,6 +239,7 @@ def run_data_quality_agent(
 
 # ─── REVENUE ANALYST AGENT ────────────────────────────────────
 
+
 def run_revenue_analyst_agent(
     client_id: str,
     client_name: str,
@@ -235,14 +254,17 @@ def run_revenue_analyst_agent(
     data_str = json.dumps(channel_data, indent=2, default=str)
 
     total_pipeline = sum(r.get("pipeline_value") or 0 for r in channel_data)
-    total_spend    = sum(r.get("total_spend") or 0 for r in channel_data)
-    total_deals    = sum(r.get("deals_count") or 0 for r in channel_data)
-    report_month   = channel_data[0].get("report_month", "Unknown") if channel_data else "Unknown"
+    total_spend = sum(r.get("total_spend") or 0 for r in channel_data)
+    total_deals = sum(r.get("deals_count") or 0 for r in channel_data)
+    report_month = (
+        channel_data[0].get("report_month", "Unknown") if channel_data else "Unknown"
+    )
 
     # Prepend any cross-run client memories as context
     memory_context = ""
     try:
         from utils.memory_store import MemoryStore
+
         memory_context = MemoryStore().recall_as_context(client_id, limit=5)
     except Exception:
         pass
@@ -269,6 +291,7 @@ def run_revenue_analyst_agent(
 
 # ─── EXECUTIVE REPORTING AGENT ────────────────────────────────
 
+
 def run_executive_reporting_agent(
     client_id: str,
     client_name: str,
@@ -280,13 +303,15 @@ def run_executive_reporting_agent(
     Stage 2 of two-stage insight generation.
     Takes revenue analyst output and produces the final JSON InsightReport payload.
     """
-    total_pipeline    = sum(r.get("pipeline_value") or 0 for r in channel_data)
-    total_spend       = sum(r.get("total_spend") or 0 for r in channel_data)
+    total_pipeline = sum(r.get("pipeline_value") or 0 for r in channel_data)
+    total_spend = sum(r.get("total_spend") or 0 for r in channel_data)
     collected_revenue = sum(r.get("collected_revenue") or 0 for r in channel_data)
-    top_channel       = channel_data[0]["channel"] if channel_data else "Unknown"
-    overall_roi       = round(total_pipeline / total_spend, 2) if total_spend else 0.0
-    true_roi          = round(collected_revenue / total_spend, 2) if total_spend else 0.0
-    report_month      = channel_data[0].get("report_month", "Unknown") if channel_data else "Unknown"
+    top_channel = channel_data[0]["channel"] if channel_data else "Unknown"
+    overall_roi = round(total_pipeline / total_spend, 2) if total_spend else 0.0
+    true_roi = round(collected_revenue / total_spend, 2) if total_spend else 0.0
+    report_month = (
+        channel_data[0].get("report_month", "Unknown") if channel_data else "Unknown"
+    )
 
     message = (
         f"Client: {client_name} ({client_id})\n"
@@ -311,13 +336,17 @@ def run_executive_reporting_agent(
     )
 
     raw = _call_agent(
-        "executive-reporting", message, max_tokens=1500,
-        client_id=client_id, response_schema=EXEC_REPORT_SCHEMA,
+        "executive-reporting",
+        message,
+        max_tokens=1500,
+        client_id=client_id,
+        response_schema=EXEC_REPORT_SCHEMA,
     )
     return _parse_json_response(raw)
 
 
 # ─── GOVERNANCE REVIEWER AGENT ────────────────────────────────
+
 
 def run_governance_review(
     client_id: str,
@@ -344,8 +373,11 @@ def run_governance_review(
         )
 
         raw = _call_agent(
-            "governance-reviewer", message, max_tokens=600,
-            client_id=client_id, response_schema=GOVERNANCE_SCHEMA,
+            "governance-reviewer",
+            message,
+            max_tokens=600,
+            client_id=client_id,
+            response_schema=GOVERNANCE_SCHEMA,
         )
         result = _parse_json_response(raw)
         warnings = result.get("warnings", []) + result.get("critical_issues", [])

@@ -6,6 +6,7 @@ Delta-backed idempotency store.
 Prevents double-writes when a pipeline step is retried. Keys are
 `{run_id}:{client_id}:{step_name}`. TTL defaults to 7 days.
 """
+
 from __future__ import annotations
 import hashlib
 import json
@@ -28,7 +29,12 @@ class IdempotencyStore:
         """Return the previously stored result, or None if step hasn't run."""
         key = _make_key(run_id, client_id, step_name)
         try:
-            from utils.databricks_writer import _get_connection, _is_databricks, _get_spark
+            from utils.databricks_writer import (
+                _get_connection,
+                _is_databricks,
+                _get_spark,
+            )
+
             now = datetime.now(timezone.utc).isoformat()
             query = (
                 f"SELECT result_json FROM {_OPS_SCHEMA}.idempotency_store "
@@ -66,15 +72,20 @@ class IdempotencyStore:
         try:
             import pandas as pd
             from utils.databricks_writer import _upsert_dataframe
-            df = pd.DataFrame([{
-                "key": key,
-                "created_at": now,
-                "expires_at": expires_at,
-                "result_json": json.dumps(result, default=str),
-                "step_name": step_name,
-                "run_id": run_id,
-                "client_id": client_id,
-            }])
+
+            df = pd.DataFrame(
+                [
+                    {
+                        "key": key,
+                        "created_at": now,
+                        "expires_at": expires_at,
+                        "result_json": json.dumps(result, default=str),
+                        "step_name": step_name,
+                        "run_id": run_id,
+                        "client_id": client_id,
+                    }
+                ]
+            )
             _upsert_dataframe(df, _OPS_SCHEMA, "idempotency_store", ["key"])
         except Exception as exc:
             logger.debug(f"[Idempotency] record failed for {step_name}: {exc}")

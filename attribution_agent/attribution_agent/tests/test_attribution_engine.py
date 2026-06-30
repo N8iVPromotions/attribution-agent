@@ -17,42 +17,92 @@ CLIENT = "acme_co"
 
 def _ads():
     """Two platforms, two campaigns, spend across the window."""
-    return pd.DataFrame([
-        {"client_id": CLIENT, "source_platform": "meta", "campaign_name": "Spring Sale",
-         "utm_campaign": "spring_sale", "date": "2026-05-01", "spend": 500.0},
-        {"client_id": CLIENT, "source_platform": "meta", "campaign_name": "Spring Sale",
-         "utm_campaign": "spring_sale", "date": "2026-05-10", "spend": 500.0},
-        {"client_id": CLIENT, "source_platform": "tiktok", "campaign_name": "Awareness",
-         "utm_campaign": "awareness", "date": "2026-05-05", "spend": 250.0},
-    ])
+    return pd.DataFrame(
+        [
+            {
+                "client_id": CLIENT,
+                "source_platform": "meta",
+                "campaign_name": "Spring Sale",
+                "utm_campaign": "spring_sale",
+                "date": "2026-05-01",
+                "spend": 500.0,
+            },
+            {
+                "client_id": CLIENT,
+                "source_platform": "meta",
+                "campaign_name": "Spring Sale",
+                "utm_campaign": "spring_sale",
+                "date": "2026-05-10",
+                "spend": 500.0,
+            },
+            {
+                "client_id": CLIENT,
+                "source_platform": "tiktok",
+                "campaign_name": "Awareness",
+                "utm_campaign": "awareness",
+                "date": "2026-05-05",
+                "spend": 250.0,
+            },
+        ]
+    )
 
 
 def _hubspot():
-    return pd.DataFrame([
-        # Closed/won, attributable to meta/spring_sale
-        {"deal_id": "D1", "deal_stage": "closedwon", "amount": 2000.0,
-         "close_date": "2026-05-15", "create_date": "2026-05-01",
-         "contact_email": "buyer@acme.com", "utm_source": "facebook",
-         "utm_campaign": "spring_sale", "utm_medium": "paid_social"},
-        # Open deal — must be ignored
-        {"deal_id": "D2", "deal_stage": "qualifiedtobuy", "amount": 9999.0,
-         "close_date": "2026-05-16", "create_date": "2026-05-02",
-         "contact_email": "lead@acme.com", "utm_source": "google",
-         "utm_campaign": "brand", "utm_medium": "paid_search"},
-    ])
+    return pd.DataFrame(
+        [
+            # Closed/won, attributable to meta/spring_sale
+            {
+                "deal_id": "D1",
+                "deal_stage": "closedwon",
+                "amount": 2000.0,
+                "close_date": "2026-05-15",
+                "create_date": "2026-05-01",
+                "contact_email": "buyer@acme.com",
+                "utm_source": "facebook",
+                "utm_campaign": "spring_sale",
+                "utm_medium": "paid_social",
+            },
+            # Open deal — must be ignored
+            {
+                "deal_id": "D2",
+                "deal_stage": "qualifiedtobuy",
+                "amount": 9999.0,
+                "close_date": "2026-05-16",
+                "create_date": "2026-05-02",
+                "contact_email": "lead@acme.com",
+                "utm_source": "google",
+                "utm_campaign": "brand",
+                "utm_medium": "paid_search",
+            },
+        ]
+    )
 
 
 def _stripe():
-    return pd.DataFrame([
-        # Same deal as D1, paid via Stripe — should dedupe, Stripe revenue wins
-        {"payment_id": "P1", "status": "succeeded", "amount_paid": 2500.0,
-         "refund_amount": 0.0, "created_at": "2026-05-16",
-         "customer_email": "buyer@acme.com", "deal_id": "D1"},
-        # Standalone checkout, no CRM record, no utm → unattributable
-        {"payment_id": "P2", "status": "succeeded", "amount_paid": 300.0,
-         "refund_amount": 50.0, "created_at": "2026-05-20",
-         "customer_email": "walkin@acme.com", "deal_id": ""},
-    ])
+    return pd.DataFrame(
+        [
+            # Same deal as D1, paid via Stripe — should dedupe, Stripe revenue wins
+            {
+                "payment_id": "P1",
+                "status": "succeeded",
+                "amount_paid": 2500.0,
+                "refund_amount": 0.0,
+                "created_at": "2026-05-16",
+                "customer_email": "buyer@acme.com",
+                "deal_id": "D1",
+            },
+            # Standalone checkout, no CRM record, no utm → unattributable
+            {
+                "payment_id": "P2",
+                "status": "succeeded",
+                "amount_paid": 300.0,
+                "refund_amount": 50.0,
+                "created_at": "2026-05-20",
+                "customer_email": "walkin@acme.com",
+                "deal_id": "",
+            },
+        ]
+    )
 
 
 def test_hubspot_only_closed_won_conversions():
@@ -76,7 +126,7 @@ def test_reconcile_dedupes_and_prefers_stripe_revenue():
     ids = sorted(c.conversion_id for c in reconciled)
     assert ids == ["hubspot:D1", "stripe:P2"]
     d1 = next(c for c in reconciled if c.conversion_id == "hubspot:D1")
-    assert d1.revenue == 2500.0          # Stripe cash beats CRM amount
+    assert d1.revenue == 2500.0  # Stripe cash beats CRM amount
     assert d1.utm_campaign == "spring_sale"  # inherited CRM identity
 
 
@@ -122,25 +172,47 @@ def test_run_attribution_end_to_end_balances_revenue():
     assert result.attributed_revenue == 2500.0
     assert result.unattributed_revenue == 250.0
     assert (
-        result.attributed_revenue + result.unattributed_revenue
-        == result.total_revenue
+        result.attributed_revenue + result.unattributed_revenue == result.total_revenue
     )
 
 
 def test_multi_touch_splits_credit_across_campaigns():
-    ads = pd.DataFrame([
-        {"client_id": CLIENT, "source_platform": "meta", "campaign_name": "A",
-         "utm_campaign": "a", "date": "2026-05-01", "spend": 100.0},
-        {"client_id": CLIENT, "source_platform": "meta", "campaign_name": "B",
-         "utm_campaign": "b", "date": "2026-05-10", "spend": 100.0},
-    ])
+    ads = pd.DataFrame(
+        [
+            {
+                "client_id": CLIENT,
+                "source_platform": "meta",
+                "campaign_name": "A",
+                "utm_campaign": "a",
+                "date": "2026-05-01",
+                "spend": 100.0,
+            },
+            {
+                "client_id": CLIENT,
+                "source_platform": "meta",
+                "campaign_name": "B",
+                "utm_campaign": "b",
+                "date": "2026-05-10",
+                "spend": 100.0,
+            },
+        ]
+    )
     # utm_campaign empty → conversion matches all meta campaigns in window (2 touches)
-    hub = pd.DataFrame([
-        {"deal_id": "D9", "deal_stage": "closedwon", "amount": 1000.0,
-         "close_date": "2026-05-15", "create_date": "2026-05-01",
-         "contact_email": "x@acme.com", "utm_source": "facebook",
-         "utm_campaign": "", "utm_medium": "paid_social"},
-    ])
+    hub = pd.DataFrame(
+        [
+            {
+                "deal_id": "D9",
+                "deal_stage": "closedwon",
+                "amount": 1000.0,
+                "close_date": "2026-05-15",
+                "create_date": "2026-05-01",
+                "contact_email": "x@acme.com",
+                "utm_source": "facebook",
+                "utm_campaign": "",
+                "utm_medium": "paid_social",
+            },
+        ]
+    )
     convs = conversions_from_hubspot(hub, CLIENT)
     rows = attribute_conversions(convs, ads, "linear")
     assert len(rows) == 2

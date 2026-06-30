@@ -1,6 +1,5 @@
 from __future__ import annotations
 from datetime import datetime
-from typing import Any
 from pydantic import BaseModel, Field
 
 
@@ -12,6 +11,7 @@ class HealthResponse(BaseModel):
 
 
 # ── Pipeline ──────────────────────────────────────────────────────────────────
+
 
 class PipelineRunRequest(BaseModel):
     agency_id: str
@@ -53,6 +53,7 @@ class PipelineRunRecord(BaseModel):
 
 # ── Clients ───────────────────────────────────────────────────────────────────
 
+
 class ClientConfigRequest(BaseModel):
     client_name: str
     attribution_model: str = "last_touch"
@@ -89,6 +90,7 @@ class ClientConfigResponse(BaseModel):
 
 # ── Reports ───────────────────────────────────────────────────────────────────
 
+
 class InsightReportResponse(BaseModel):
     report_id: str
     client_id: str
@@ -111,6 +113,7 @@ class InsightReportResponse(BaseModel):
 
 
 # ── Approvals ─────────────────────────────────────────────────────────────────
+
 
 class ApprovalItem(BaseModel):
     action_id: str

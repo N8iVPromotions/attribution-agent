@@ -5,7 +5,7 @@ Store all secrets in .env or your secret manager — never hardcode.
 """
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -14,28 +14,30 @@ load_dotenv()
 @dataclass
 class ClientConfig:
     """All settings for a single client's attribution pipeline."""
-    client_id: str                    # Unique slug, e.g. "acme-corp"
-    client_name: str                  # Human-readable name
-    meta_ad_account_id: str           # Format: act_XXXXXXXXXX
-    meta_access_token: str            # Meta system user token
-    hubspot_access_token: str         # HubSpot private app token
-    lookback_days: int = 30           # How far back to pull data
+
+    client_id: str  # Unique slug, e.g. "acme-corp"
+    client_name: str  # Human-readable name
+    meta_ad_account_id: str  # Format: act_XXXXXXXXXX
+    meta_access_token: str  # Meta system user token
+    hubspot_access_token: str  # HubSpot private app token
+    lookback_days: int = 30  # How far back to pull data
     databricks_catalog: str = "main"  # Unity Catalog name
-    databricks_schema: str = "bronze" # Bronze = raw landing zone
+    databricks_schema: str = "bronze"  # Bronze = raw landing zone
 
 
 @dataclass
 class DatabricksConfig:
     """Shared Databricks connection settings (same for all clients)."""
+
     host: str
-    http_path: str      # SQL warehouse HTTP path
+    http_path: str  # SQL warehouse HTTP path
     access_token: str
 
 
 def get_databricks_config() -> DatabricksConfig:
     return DatabricksConfig(
-        host=os.environ["DATABRICKS_HOST"],           # e.g. adb-XXXXX.azuredatabricks.net
-        http_path=os.environ["DATABRICKS_HTTP_PATH"], # /sql/1.0/warehouses/XXXXX
+        host=os.environ["DATABRICKS_HOST"],  # e.g. adb-XXXXX.azuredatabricks.net
+        http_path=os.environ["DATABRICKS_HTTP_PATH"],  # /sql/1.0/warehouses/XXXXX
         access_token=os.environ["DATABRICKS_TOKEN"],
     )
 

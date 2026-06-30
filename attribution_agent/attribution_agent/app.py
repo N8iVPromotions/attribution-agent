@@ -12,6 +12,7 @@ Databricks App:
     Deployed via `databricks bundle deploy`. Triggers the
     "[Attribution] Monthly Pipeline" Job via the Databricks Jobs API.
 """
+
 import logging
 import os
 import sys
@@ -33,7 +34,6 @@ from agents.outreach.outreach_agent import (
 from config.agency_config import get_agency, list_agencies, AGENCY_REGISTRY
 from config.client_config import (
     CLIENT_REGISTRY,
-    CLIENT_REGISTRY_PATH,
     ClientConfig,
     default_client_schema,
     delete_client_config,
@@ -57,7 +57,8 @@ st.set_page_config(
 )
 
 # ── Global styles ─────────────────────────────────────────────
-st.markdown("""
+st.markdown(
+    """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
@@ -520,7 +521,9 @@ input[type="text"], input[type="number"], textarea {
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 
 # ── Attribution model definitions ─────────────────────────────
@@ -528,32 +531,68 @@ ATTRIBUTION_MODELS: dict[str, dict] = {
     "last_touch": {
         "label": "Last Touch",
         "description": "100% credit to the final touchpoint. Simple to implement and interpret. Best when the closing channel is clearly distinct from awareness channels.",
-        "credits": {"Paid Social": 0, "Paid Search": 0, "Email": 0, "Organic": 0, "Direct": 100},
+        "credits": {
+            "Paid Social": 0,
+            "Paid Search": 0,
+            "Email": 0,
+            "Organic": 0,
+            "Direct": 100,
+        },
     },
     "first_touch": {
         "label": "First Touch",
         "description": "100% credit to the channel that first introduced the lead. Useful for measuring top-of-funnel investment and brand awareness spend.",
-        "credits": {"Paid Social": 100, "Paid Search": 0, "Email": 0, "Organic": 0, "Direct": 0},
+        "credits": {
+            "Paid Social": 100,
+            "Paid Search": 0,
+            "Email": 0,
+            "Organic": 0,
+            "Direct": 0,
+        },
     },
     "linear": {
         "label": "Linear",
         "description": "Equal credit distributed across all touchpoints in the journey. No channel is weighted over another — useful as a neutral baseline.",
-        "credits": {"Paid Social": 40, "Paid Search": 20, "Email": 20, "Organic": 0, "Direct": 20},
+        "credits": {
+            "Paid Social": 40,
+            "Paid Search": 20,
+            "Email": 20,
+            "Organic": 0,
+            "Direct": 20,
+        },
     },
     "time_decay": {
         "label": "Time Decay",
         "description": "Recency-weighted — touchpoints closer to conversion receive exponentially more credit. Emphasizes what influenced the final decision.",
-        "credits": {"Paid Social": 29, "Paid Search": 6, "Email": 13, "Organic": 0, "Direct": 52},
+        "credits": {
+            "Paid Social": 29,
+            "Paid Search": 6,
+            "Email": 13,
+            "Organic": 0,
+            "Direct": 52,
+        },
     },
     "u_shape": {
         "label": "U-Shape",
         "description": "40% to first touch, 40% to last touch, 20% shared across middle touchpoints. Balances acquisition and close without ignoring the middle.",
-        "credits": {"Paid Social": 47, "Paid Search": 7, "Email": 6, "Organic": 0, "Direct": 40},
+        "credits": {
+            "Paid Social": 47,
+            "Paid Search": 7,
+            "Email": 6,
+            "Organic": 0,
+            "Direct": 40,
+        },
     },
     "w_shape": {
         "label": "W-Shape",
         "description": "30% each to first touch, lead-stage conversion, and close — 10% across remaining middle touchpoints. Recommended for B2B sales cycles.",
-        "credits": {"Paid Social": 35, "Paid Search": 5, "Email": 30, "Organic": 0, "Direct": 30},
+        "credits": {
+            "Paid Social": 35,
+            "Paid Search": 5,
+            "Email": 30,
+            "Organic": 0,
+            "Direct": 30,
+        },
     },
 }
 
@@ -579,19 +618,21 @@ def _render_comparison_chart(selected_model: str) -> None:
     rows = []
     for key, meta in ATTRIBUTION_MODELS.items():
         for channel, pct in meta["credits"].items():
-            rows.append({
-                "Model": meta["label"],
-                "Channel": channel,
-                "Credit": pct,
-            })
+            rows.append(
+                {
+                    "Model": meta["label"],
+                    "Channel": channel,
+                    "Credit": pct,
+                }
+            )
     df = pd.DataFrame(rows)
 
     channel_colors = {
         "Paid Social": "#7c68fc",
         "Paid Search": "#38bdf8",
-        "Email":       "#3fb950",
-        "Organic":     "#d29922",
-        "Direct":      "#2a2a3e",
+        "Email": "#3fb950",
+        "Organic": "#d29922",
+        "Direct": "#2a2a3e",
     }
     model_order = [v["label"] for v in ATTRIBUTION_MODELS.values()]
     channel_order = list(channel_colors.keys())
@@ -665,10 +706,13 @@ def _render_comparison_chart(selected_model: str) -> None:
     )
 
     st.altair_chart(chart, width="stretch")
-    st.caption("Sample 5-touch journey: Paid Social → Paid Search → Email → Paid Social → Direct")
+    st.caption(
+        "Sample 5-touch journey: Paid Social → Paid Search → Email → Paid Social → Direct"
+    )
 
 
 # ── Pipeline helpers ──────────────────────────────────────────
+
 
 def _trigger_databricks_job(
     agency_id: str,
@@ -690,18 +734,23 @@ def _trigger_databricks_job(
     os.environ.pop("DATABRICKS_TOKEN", None)
     w = WorkspaceClient()
 
-
     # Resolve job ID — prefer the env var to avoid a list-all-jobs permission check
     job_id = _JOB_ID
     if not job_id:
-        job = next((j for j in w.jobs.list() if j.settings and j.settings.name == _JOB_NAME), None)
+        job = next(
+            (j for j in w.jobs.list() if j.settings and j.settings.name == _JOB_NAME),
+            None,
+        )
         if not job:
             st.error(f"Job '{_JOB_NAME}' not found in this workspace.")
             return
         job_id = job.job_id
 
     with st.spinner("Submitting run…"):
-        job_parameters = {"dry_run": str(dry_run).lower(), "attribution_model": attribution_model}
+        job_parameters = {
+            "dry_run": str(dry_run).lower(),
+            "attribution_model": attribution_model,
+        }
         if agency_id:
             job_parameters["agency"] = agency_id
         run = w.jobs.run_now(job_id=job_id, job_parameters=job_parameters)
@@ -719,14 +768,19 @@ def _trigger_databricks_job(
     st.markdown(
         f'<a href="https://{host}/#job/{job_id}/run/{run_id}" target="_blank" '
         f'style="font-size:0.75rem;color:#7c68fc;text-decoration:none;font-family:Inter,sans-serif;">'
-        f'↗ View run {run_id} in Databricks</a>',
+        f"↗ View run {run_id} in Databricks</a>",
         unsafe_allow_html=True,
     )
 
     status_area = st.empty()
-    terminal = {RunLifeCycleState.TERMINATED, RunLifeCycleState.SKIPPED, RunLifeCycleState.INTERNAL_ERROR}
+    terminal = {
+        RunLifeCycleState.TERMINATED,
+        RunLifeCycleState.SKIPPED,
+        RunLifeCycleState.INTERNAL_ERROR,
+    }
 
     import time
+
     while True:
         info = w.jobs.get_run(run_id=run_id)
         state = info.state.life_cycle_state
@@ -756,6 +810,7 @@ def _trigger_databricks_job(
 def _show_recent_runs() -> None:
     try:
         from utils.databricks_writer import fetch_recent_pipeline_runs
+
         runs = fetch_recent_pipeline_runs(limit=8)
     except Exception:
         runs = []
@@ -764,7 +819,6 @@ def _show_recent_runs() -> None:
         st.caption("No recent runs found.")
         return
 
-    import datetime
     for r in runs:
         state = str(r.get("status", "unknown")).upper()
         if state == "SUCCESS":
@@ -775,18 +829,29 @@ def _show_recent_runs() -> None:
             state_cls, state_label = "run-state-running", state.title()
 
         start = r.get("started_at")
-        ts = start.strftime("%b %d, %H:%M") if hasattr(start, "strftime") else str(start or "—")[:16]
-        label = " · ".join(filter(None, [
-            r.get("client_id", ""),
-            r.get("attribution_model", ""),
-            f"${float(r.get('total_pipeline') or 0):,.0f}" if r.get("total_pipeline") else "",
-        ]))
+        ts = (
+            start.strftime("%b %d, %H:%M")
+            if hasattr(start, "strftime")
+            else str(start or "—")[:16]
+        )
+        label = " · ".join(
+            filter(
+                None,
+                [
+                    r.get("client_id", ""),
+                    r.get("attribution_model", ""),
+                    f"${float(r.get('total_pipeline') or 0):,.0f}"
+                    if r.get("total_pipeline")
+                    else "",
+                ],
+            )
+        )
         st.markdown(
             f'<div class="run-row">'
             f'  <span class="run-ts">{ts}</span>'
             f'  <span class="run-label">{label}</span>'
             f'  <span class="run-state {state_cls}">{state_label}</span>'
-            f'</div>',
+            f"</div>",
             unsafe_allow_html=True,
         )
 
@@ -805,6 +870,7 @@ def _run_local(
 
     class _UIHandler(logging.Handler):
         ICONS = {"INFO": "·", "WARNING": "!", "ERROR": "✗"}
+
         def emit(self, record: logging.LogRecord) -> None:
             if record.name.startswith("databricks.sql"):
                 return
@@ -838,7 +904,9 @@ def _run_local(
 def _render_results(result: dict, dry_run: bool) -> None:
     processed, failed = result["clients_processed"], result["clients_failed"]
     if failed == 0:
-        st.success(f"Pipeline complete — {processed} client{'s' if processed != 1 else ''} processed.")
+        st.success(
+            f"Pipeline complete — {processed} client{'s' if processed != 1 else ''} processed."
+        )
     else:
         st.warning(f"{processed} succeeded · {failed} failed.")
 
@@ -851,7 +919,7 @@ def _render_results(result: dict, dry_run: bool) -> None:
             st.markdown(
                 f'<div class="panel-header" style="border-radius:6px 6px 0 0;">'
                 f'  <span class="panel-title">{cfg.client_name}</span>'
-                f'</div>',
+                f"</div>",
                 unsafe_allow_html=True,
             )
             m1, m2 = st.columns(2)
@@ -861,8 +929,10 @@ def _render_results(result: dict, dry_run: bool) -> None:
             m3.metric("Meta rows", r["meta_rows"])
             m4.metric("Stripe rows", r["stripe_rows"])
             email_status = (
-                "Dry run — not sent" if dry_run
-                else f"Sent to {cfg.client_report_email}" if r["email_sent"]
+                "Dry run — not sent"
+                if dry_run
+                else f"Sent to {cfg.client_report_email}"
+                if r["email_sent"]
                 else "Email not sent"
             )
             st.caption(f"Top channel: {r['top_channel']}  ·  {email_status}")
@@ -900,7 +970,11 @@ def _source_tags(cfg: ClientConfig) -> str:
         tags.append('<span class="tag tag-hubspot">HubSpot</span>')
     if cfg.stripe_enabled:
         tags.append('<span class="tag tag-stripe">Stripe</span>')
-    return "".join(tags) if tags else '<span style="color:rgba(255,255,255,0.18);font-size:0.7rem;">—</span>'
+    return (
+        "".join(tags)
+        if tags
+        else '<span style="color:rgba(255,255,255,0.18);font-size:0.7rem;">—</span>'
+    )
 
 
 def _render_client_manager() -> None:
@@ -914,8 +988,11 @@ def _render_client_manager() -> None:
     existing_clients = list_clients()
     selected_client_id = ""
     base = ClientConfig(
-        client_id="", client_name="", attribution_model="last_touch",
-        databricks_schema="", lookback_days=30,
+        client_id="",
+        client_name="",
+        attribution_model="last_touch",
+        databricks_schema="",
+        lookback_days=30,
     )
     if action == "Edit client" and existing_clients:
         selected_client_id = st.selectbox(
@@ -926,75 +1003,141 @@ def _render_client_manager() -> None:
         base = get_client(selected_client_id)
 
     with st.form("client_config_form"):
-        st.markdown('<span class="form-section">Identity</span>', unsafe_allow_html=True)
+        st.markdown(
+            '<span class="form-section">Identity</span>', unsafe_allow_html=True
+        )
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             client_name = st.text_input("Business name", value=base.client_name)
         with c2:
-            default_id = base.client_id or slugify_client_id(client_name or "new_client")
-            client_id = st.text_input("Client ID", value=default_id, disabled=bool(base.client_id))
+            default_id = base.client_id or slugify_client_id(
+                client_name or "new_client"
+            )
+            client_id = st.text_input(
+                "Client ID", value=default_id, disabled=bool(base.client_id)
+            )
         with c3:
-            display_name = st.text_input("Display name", value=base.client_display_name or base.client_name)
+            display_name = st.text_input(
+                "Display name", value=base.client_display_name or base.client_name
+            )
         with c4:
             report_email = st.text_input("Report email", value=base.client_report_email)
 
-        st.markdown('<span class="form-section">Configuration</span>', unsafe_allow_html=True)
+        st.markdown(
+            '<span class="form-section">Configuration</span>', unsafe_allow_html=True
+        )
         d1, d2, d3, d4 = st.columns(4)
         with d1:
             agency_options = [""] + list_agencies()
-            agency_index = agency_options.index(base.agency_id) if base.agency_id in agency_options else 0
+            agency_index = (
+                agency_options.index(base.agency_id)
+                if base.agency_id in agency_options
+                else 0
+            )
             form_agency_id = st.selectbox(
                 "Agency",
                 agency_options,
                 index=agency_index,
-                format_func=lambda a: "Direct account" if not a else AGENCY_REGISTRY[a].agency_name,
+                format_func=lambda a: (
+                    "Direct account" if not a else AGENCY_REGISTRY[a].agency_name
+                ),
             )
         with d2:
-            model_index = _MODEL_KEYS.index(base.attribution_model) if base.attribution_model in _MODEL_KEYS else 0
+            model_index = (
+                _MODEL_KEYS.index(base.attribution_model)
+                if base.attribution_model in _MODEL_KEYS
+                else 0
+            )
             attribution_model = st.selectbox(
-                "Default model", _MODEL_KEYS, index=model_index,
+                "Default model",
+                _MODEL_KEYS,
+                index=model_index,
                 format_func=lambda m: ATTRIBUTION_MODELS[m]["label"],
             )
         with d3:
-            lookback_days = st.number_input("Lookback days", min_value=1, max_value=365,
-                                            value=int(base.lookback_days or 30), step=1)
+            lookback_days = st.number_input(
+                "Lookback days",
+                min_value=1,
+                max_value=365,
+                value=int(base.lookback_days or 30),
+                step=1,
+            )
         with d4:
             schema_default = base.databricks_schema or default_client_schema(default_id)
             databricks_schema = st.text_input("Databricks schema", value=schema_default)
 
-        st.markdown('<span class="form-section">Data Sources</span>', unsafe_allow_html=True)
+        st.markdown(
+            '<span class="form-section">Data Sources</span>', unsafe_allow_html=True
+        )
         s1, s2, s3, s4, s5 = st.columns(5)
         with s1:
             meta_enabled = st.checkbox("Meta Ads", value=base.meta_enabled)
-            meta_ad_account_id = st.text_input("Account ID", value=base.meta_ad_account_id,
-                                               disabled=not meta_enabled, key="meta_id")
+            meta_ad_account_id = st.text_input(
+                "Account ID",
+                value=base.meta_ad_account_id,
+                disabled=not meta_enabled,
+                key="meta_id",
+            )
         with s2:
-            google_ads_enabled = st.checkbox("Google Ads", value=base.google_ads_enabled)
-            google_ads_customer_id = st.text_input("Customer ID", value=base.google_ads_customer_id,
-                                                   disabled=not google_ads_enabled, key="google_id")
+            google_ads_enabled = st.checkbox(
+                "Google Ads", value=base.google_ads_enabled
+            )
+            google_ads_customer_id = st.text_input(
+                "Customer ID",
+                value=base.google_ads_customer_id,
+                disabled=not google_ads_enabled,
+                key="google_id",
+            )
         with s3:
-            linkedin_ads_enabled = st.checkbox("LinkedIn Ads", value=base.linkedin_ads_enabled)
-            linkedin_ads_account_id = st.text_input("Account ID", value=base.linkedin_ads_account_id,
-                                                    disabled=not linkedin_ads_enabled, key="li_id")
+            linkedin_ads_enabled = st.checkbox(
+                "LinkedIn Ads", value=base.linkedin_ads_enabled
+            )
+            linkedin_ads_account_id = st.text_input(
+                "Account ID",
+                value=base.linkedin_ads_account_id,
+                disabled=not linkedin_ads_enabled,
+                key="li_id",
+            )
         with s4:
             hubspot_enabled = st.checkbox("HubSpot", value=base.hubspot_enabled)
-            hubspot_pipeline_id = st.text_input("Pipeline ID", value=base.hubspot_pipeline_id,
-                                                disabled=not hubspot_enabled, key="hs_id")
+            hubspot_pipeline_id = st.text_input(
+                "Pipeline ID",
+                value=base.hubspot_pipeline_id,
+                disabled=not hubspot_enabled,
+                key="hs_id",
+            )
         with s5:
             stripe_enabled = st.checkbox("Stripe", value=base.stripe_enabled)
-            stripe_account_id = st.text_input("Account ID", value=base.stripe_account_id,
-                                              disabled=not stripe_enabled, key="stripe_id")
+            stripe_account_id = st.text_input(
+                "Account ID",
+                value=base.stripe_account_id,
+                disabled=not stripe_enabled,
+                key="stripe_id",
+            )
 
-        st.markdown('<span class="form-section">Alert Thresholds</span>', unsafe_allow_html=True)
+        st.markdown(
+            '<span class="form-section">Alert Thresholds</span>', unsafe_allow_html=True
+        )
         t1, t2 = st.columns(2)
         with t1:
-            spend_drop_pct_alert = st.slider("Spend drop alert (%)", min_value=5, max_value=90,
-                                             value=int(float(base.spend_drop_pct_alert or 0.30) * 100), step=5)
+            spend_drop_pct_alert = st.slider(
+                "Spend drop alert (%)",
+                min_value=5,
+                max_value=90,
+                value=int(float(base.spend_drop_pct_alert or 0.30) * 100),
+                step=5,
+            )
         with t2:
-            zero_spend_days_allowed = st.number_input("Zero-spend days allowed", min_value=0,
-                                                      max_value=30, value=int(base.zero_spend_days_allowed or 1))
+            zero_spend_days_allowed = st.number_input(
+                "Zero-spend days allowed",
+                min_value=0,
+                max_value=30,
+                value=int(base.zero_spend_days_allowed or 1),
+            )
 
-        save_btn = st.form_submit_button("Save client", type="primary", use_container_width=False)
+        save_btn = st.form_submit_button(
+            "Save client", type="primary", use_container_width=False
+        )
 
     if save_btn:
         clean_id = base.client_id or slugify_client_id(client_id or client_name)
@@ -1013,7 +1156,9 @@ def _render_client_manager() -> None:
             linkedin_ads_account_id=linkedin_ads_account_id.strip(),
             hubspot_enabled=hubspot_enabled,
             hubspot_pipeline_id=hubspot_pipeline_id.strip(),
-            databricks_schema=(databricks_schema or default_client_schema(clean_id)).strip(),
+            databricks_schema=(
+                databricks_schema or default_client_schema(clean_id)
+            ).strip(),
             lookback_days=int(lookback_days),
             spend_drop_pct_alert=spend_drop_pct_alert / 100,
             zero_spend_days_allowed=int(zero_spend_days_allowed),
@@ -1027,7 +1172,11 @@ def _render_client_manager() -> None:
         st.success(f"Saved — {config.client_name}")
         st.rerun()
 
-    if action == "Edit client" and selected_client_id and is_custom_client(selected_client_id):
+    if (
+        action == "Edit client"
+        and selected_client_id
+        and is_custom_client(selected_client_id)
+    ):
         st.markdown('<hr class="ruled">', unsafe_allow_html=True)
         if st.button("Delete client", type="secondary"):
             delete_client_config(selected_client_id)
@@ -1038,6 +1187,7 @@ def _render_client_manager() -> None:
 # ═══════════════════════════════════════════════
 # UI
 # ═══════════════════════════════════════════════
+
 
 # ── Start ARIE (once per process) ─────────────
 def _get_secret(key: str) -> str:
@@ -1051,6 +1201,7 @@ def _get_secret(key: str) -> str:
     try:
         import base64
         from databricks.sdk import WorkspaceClient
+
         resp = WorkspaceClient().secrets.get_secret(scope="attribution", key=key)
         val = resp.value or ""
         try:
@@ -1062,11 +1213,13 @@ def _get_secret(key: str) -> str:
     # 2. dbutils — notebooks / jobs
     try:
         from databricks.sdk.runtime import dbutils
+
         return dbutils.secrets.get(scope="attribution", key=key)
     except Exception:
         pass
     # 3. Local .env
     return os.environ.get(key, "")
+
 
 @st.cache_resource
 def _inject_secrets() -> None:
@@ -1094,31 +1247,38 @@ def _inject_secrets() -> None:
             if val:
                 os.environ[key] = val
 
+
 _inject_secrets()
 
 # Databricks App has no outbound internet (api.telegram.org is unreachable
 # inside the workspace VPC). ARIE must run locally on the operator's machine.
 _arie_enabled = False
-_arie_status  = {"ok": False, "reason": "ARIE runs locally — see README"}
+_arie_status = {"ok": False, "reason": "ARIE runs locally — see README"}
+
 
 # ── API health probe ──────────────────────────
 def _probe_api() -> bool:
     try:
         import requests as _req
+
         api_port = os.environ.get("ATTRIBUTION_API_PORT", "8081")
         r = _req.get(f"http://localhost:{api_port}/health", timeout=1)
         return r.status_code == 200
     except Exception:
         return False
 
+
 _api_healthy = _probe_api()
 
 # ── Top bar ───────────────────────────────────
 import datetime as _dt
+
 env_label = "Databricks" if _DATABRICKS_MODE else "Local"
 env_dot_color = "#7c68fc" if _DATABRICKS_MODE else "#3fb950"
 now_str = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-arie_dot_color = "#3fb950" if (_arie_enabled and arie_bot.is_running()) else "rgba(255,255,255,0.15)"
+arie_dot_color = (
+    "#3fb950" if (_arie_enabled and arie_bot.is_running()) else "rgba(255,255,255,0.15)"
+)
 api_dot_color = "#3fb950" if _api_healthy else "rgba(255,255,255,0.15)"
 
 st.markdown(
@@ -1127,26 +1287,26 @@ st.markdown(
     f'    <div class="topbar-brand">'
     f'      <div class="brand-mark">◆</div>'
     f'      <span class="brand-name">Attribution Command Center</span>'
-    f'    </div>'
+    f"    </div>"
     f'    <div class="topbar-sep"></div>'
     f'    <span class="topbar-sub">N8iV Promotions</span>'
-    f'  </div>'
+    f"  </div>"
     f'  <div class="topbar-right">'
     f'    <span class="status-pill">'
     f'      <span class="status-dot" style="background:{env_dot_color};"></span>'
-    f'      {env_label}'
-    f'    </span>'
+    f"      {env_label}"
+    f"    </span>"
     f'    <span class="status-pill">{now_str}</span>'
     f'    <span class="status-pill">'
     f'      <span class="status-dot" style="background:{api_dot_color};"></span>'
-    f'      API'
-    f'    </span>'
+    f"      API"
+    f"    </span>"
     f'    <span class="status-pill">'
     f'      <span class="status-dot" style="background:{arie_dot_color};"></span>'
-    f'      ARIE'
-    f'    </span>'
-    f'  </div>'
-    f'</div>',
+    f"      ARIE"
+    f"    </span>"
+    f"  </div>"
+    f"</div>",
     unsafe_allow_html=True,
 )
 
@@ -1160,7 +1320,6 @@ tab_pipeline, tab_clients, tab_outreach, tab_observability = st.tabs(
 # TAB: PIPELINE
 # ══════════════════════════════════════════════
 with tab_pipeline:
-
     left_col, gap_col, right_col = st.columns([5, 1, 6])
 
     # ── LEFT: Target ──────────────────────────
@@ -1168,7 +1327,7 @@ with tab_pipeline:
         st.markdown(
             '<div class="panel-header" style="border-radius:8px 8px 0 0;margin-top:1rem;">'
             '  <span class="panel-title">Target</span>'
-            '</div>',
+            "</div>",
             unsafe_allow_html=True,
         )
 
@@ -1210,7 +1369,9 @@ with tab_pipeline:
                 label_visibility="visible",
             )
             cfg_sel = get_client(selected_client)
-            agency_id = cfg_sel.agency_id or (list_agencies()[0] if list_agencies() else "")
+            agency_id = cfg_sel.agency_id or (
+                list_agencies()[0] if list_agencies() else ""
+            )
             client_filter = [selected_client]
 
         # Client table
@@ -1220,21 +1381,23 @@ with tab_pipeline:
                 if cid not in CLIENT_REGISTRY:
                     continue
                 cfg = get_client(cid)
-                model_label = ATTRIBUTION_MODELS.get(cfg.attribution_model, {}).get("label", cfg.attribution_model)
+                model_label = ATTRIBUTION_MODELS.get(cfg.attribution_model, {}).get(
+                    "label", cfg.attribution_model
+                )
                 rows_html += (
-                    f'<tr>'
+                    f"<tr>"
                     f'  <td class="client-cell-name">{cfg.client_name}</td>'
-                    f'  <td>{_source_tags(cfg)}</td>'
+                    f"  <td>{_source_tags(cfg)}</td>"
                     f'  <td style="color:rgba(255,255,255,0.28);font-size:0.72rem;">{model_label}</td>'
-                    f'</tr>'
+                    f"</tr>"
                 )
             st.markdown(
                 f'<table class="client-table">'
-                f'  <thead><tr>'
-                f'    <th>Client</th><th>Sources</th><th>Default model</th>'
-                f'  </tr></thead>'
-                f'  <tbody>{rows_html}</tbody>'
-                f'</table>',
+                f"  <thead><tr>"
+                f"    <th>Client</th><th>Sources</th><th>Default model</th>"
+                f"  </tr></thead>"
+                f"  <tbody>{rows_html}</tbody>"
+                f"</table>",
                 unsafe_allow_html=True,
             )
 
@@ -1243,7 +1406,7 @@ with tab_pipeline:
         st.markdown(
             '<div class="panel-header" style="border-radius:8px 8px 0 0;margin-top:1rem;">'
             '  <span class="panel-title">Attribution Model</span>'
-            '</div>',
+            "</div>",
             unsafe_allow_html=True,
         )
 
@@ -1262,21 +1425,31 @@ with tab_pipeline:
         )
 
         # Credit chips
-        st.markdown('<span class="field-label">Credit distribution</span>', unsafe_allow_html=True)
+        st.markdown(
+            '<span class="field-label">Credit distribution</span>',
+            unsafe_allow_html=True,
+        )
         chips = "".join(
             f'<span class="model-chip">{ch} <span class="model-chip-pct">{pct}%</span></span>'
-            for ch, pct in model_meta["credits"].items() if pct > 0
+            for ch, pct in model_meta["credits"].items()
+            if pct > 0
         )
-        st.markdown(f'<div style="margin-bottom:1.2rem;">{chips}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="margin-bottom:1.2rem;">{chips}</div>', unsafe_allow_html=True
+        )
 
-        st.markdown('<span class="field-label">Model comparison</span>', unsafe_allow_html=True)
+        st.markdown(
+            '<span class="field-label">Model comparison</span>', unsafe_allow_html=True
+        )
         _render_comparison_chart(selected_model)
 
     # ── Run bar ────────────────────────────────
     n_clients = len(client_filter)
     btn_label = (
         f"Run All  ({n_clients})"
-        if run_mode == "Agency" and agency_id and n_clients == len(_client_ids_for_agency(agency_id))
+        if run_mode == "Agency"
+        and agency_id
+        and n_clients == len(_client_ids_for_agency(agency_id))
         else f"Run Selected  ({n_clients})"
     )
 
@@ -1284,18 +1457,25 @@ with tab_pipeline:
     with bar_l:
         dry_run = st.checkbox("Dry run — generate reports, skip email delivery")
     with bar_m:
-        run_btn = st.button(btn_label, type="primary", use_container_width=True, disabled=not client_filter)
+        run_btn = st.button(
+            btn_label,
+            type="primary",
+            use_container_width=True,
+            disabled=not client_filter,
+        )
     with bar_r:
         if _DATABRICKS_MODE:
             if st.button("Recent runs", type="secondary", use_container_width=True):
-                st.session_state["show_runs"] = not st.session_state.get("show_runs", False)
+                st.session_state["show_runs"] = not st.session_state.get(
+                    "show_runs", False
+                )
 
     if _DATABRICKS_MODE and st.session_state.get("show_runs"):
         st.markdown('<hr class="ruled">', unsafe_allow_html=True)
         st.markdown(
             '<div class="panel-header">'
             '  <span class="panel-title">Recent runs</span>'
-            '</div>',
+            "</div>",
             unsafe_allow_html=True,
         )
         _show_recent_runs()
@@ -1306,10 +1486,10 @@ with tab_pipeline:
             f'<div class="run-pill">'
             f'  <span class="hl">{model_meta["label"]}</span>'
             f'  <span class="sep">|</span>'
-            f'  {n_clients} client{"s" if n_clients != 1 else ""}'
+            f"  {n_clients} client{'s' if n_clients != 1 else ''}"
             f'  <span class="sep">|</span>'
-            f'  {"Dry run" if dry_run else "Live"}'
-            f'</div>',
+            f"  {'Dry run' if dry_run else 'Live'}"
+            f"</div>",
             unsafe_allow_html=True,
         )
         st.markdown('<hr class="ruled">', unsafe_allow_html=True)
@@ -1325,33 +1505,40 @@ with tab_clients:
     # Client roster table
     all_clients = list_clients()
     if all_clients:
-        st.markdown('<span class="field-label">Client roster</span>', unsafe_allow_html=True)
+        st.markdown(
+            '<span class="field-label">Client roster</span>', unsafe_allow_html=True
+        )
         roster_rows = ""
         for cid in all_clients:
             cfg = get_client(cid)
-            agency_name = AGENCY_REGISTRY.get(cfg.agency_id, type("", (), {"agency_name": "Direct"})()).agency_name
-            model_label = ATTRIBUTION_MODELS.get(cfg.attribution_model, {}).get("label", cfg.attribution_model)
+            agency_name = AGENCY_REGISTRY.get(
+                cfg.agency_id, type("", (), {"agency_name": "Direct"})()
+            ).agency_name
+            model_label = ATTRIBUTION_MODELS.get(cfg.attribution_model, {}).get(
+                "label", cfg.attribution_model
+            )
             custom_badge = (
                 '<span class="tag tag-meta" style="font-size:0.55rem;">Custom</span>'
-                if is_custom_client(cid) else ""
+                if is_custom_client(cid)
+                else ""
             )
             roster_rows += (
-                f'<tr>'
+                f"<tr>"
                 f'  <td class="client-cell-name">{cfg.client_name} {custom_badge}</td>'
                 f'  <td style="color:rgba(255,255,255,0.32);font-size:0.75rem;">{agency_name}</td>'
-                f'  <td>{_source_tags(cfg)}</td>'
+                f"  <td>{_source_tags(cfg)}</td>"
                 f'  <td style="color:rgba(255,255,255,0.32);font-size:0.75rem;">{model_label}</td>'
                 f'  <td style="color:rgba(255,255,255,0.28);font-size:0.72rem;">{cfg.client_report_email or "—"}</td>'
-                f'</tr>'
+                f"</tr>"
             )
         st.markdown(
             f'<table class="client-table">'
-            f'  <thead><tr>'
-            f'    <th>Name</th><th>Agency</th><th>Sources</th>'
-            f'    <th>Default model</th><th>Report email</th>'
-            f'  </tr></thead>'
-            f'  <tbody>{roster_rows}</tbody>'
-            f'</table>',
+            f"  <thead><tr>"
+            f"    <th>Name</th><th>Agency</th><th>Sources</th>"
+            f"    <th>Default model</th><th>Report email</th>"
+            f"  </tr></thead>"
+            f"  <tbody>{roster_rows}</tbody>"
+            f"</table>",
             unsafe_allow_html=True,
         )
         st.markdown("<div style='height:1.5rem'></div>", unsafe_allow_html=True)
@@ -1364,7 +1551,6 @@ with tab_clients:
 # TAB: OUTREACH AGENT
 # ══════════════════════════════════════════════
 with tab_outreach:
-
     # ── ARIE status banner ─────────────────────
     st.info(
         "**ARIE runs on your local machine** — the Databricks workspace has no outbound internet access.\n\n"
@@ -1384,7 +1570,8 @@ with tab_outreach:
         st.session_state.outreach_selected = PROSPECTS[0]["id"]
 
     # ── Outreach-specific styles ───────────────
-    st.markdown("""
+    st.markdown(
+        """
 <style>
 .or-stat-card {
     background: linear-gradient(135deg, rgba(124,104,252,0.12) 0%, rgba(37,99,235,0.06) 100%);
@@ -1474,30 +1661,33 @@ with tab_outreach:
 }
 .or-email-meta strong { color: #e8e8f2; }
 </style>
-""", unsafe_allow_html=True)
+""",
+        unsafe_allow_html=True,
+    )
 
     # ── Stats row ──────────────────────────────
     total = len(PROSPECTS)
     generated = len(st.session_state.outreach_sequences)
     drafted = sum(
-        1 for pid, status in st.session_state.outreach_draft_status.items()
+        1
+        for pid, status in st.session_state.outreach_draft_status.items()
         if any(status.values())
     )
     pending = total - generated
 
     sc1, sc2, sc3, sc4 = st.columns(4)
     for col, val, label, color in [
-        (sc1, total,     "Total Prospects",     "#e8e8f2"),
+        (sc1, total, "Total Prospects", "#e8e8f2"),
         (sc2, generated, "Sequences Generated", "#F59E0B"),
-        (sc3, drafted,   "Drafted to Inbox",    "#10B981"),
-        (sc4, pending,   "Pending",             "#888888"),
+        (sc3, drafted, "Drafted to Inbox", "#10B981"),
+        (sc4, pending, "Pending", "#888888"),
     ]:
         with col:
             st.markdown(
                 f'<div class="or-stat-card">'
                 f'  <div class="or-stat-val" style="color:{color}">{val}</div>'
                 f'  <div class="or-stat-label">{label}</div>'
-                f'</div>',
+                f"</div>",
                 unsafe_allow_html=True,
             )
 
@@ -1510,7 +1700,7 @@ with tab_outreach:
         st.markdown(
             '<div class="panel-header" style="border-radius:8px 8px 0 0;">'
             '  <span class="panel-title">Prospects</span>'
-            '</div>',
+            "</div>",
             unsafe_allow_html=True,
         )
 
@@ -1543,7 +1733,7 @@ with tab_outreach:
             f'  <div style="display:flex;align-items:center;margin-bottom:14px;">'
             f'    <span style="font-size:1.05rem;font-weight:600;color:#e8e8f2">{p["name"]}</span>'
             f'    <span class="or-industry-badge">{p["industry"]}</span>'
-            f'  </div>'
+            f"  </div>"
             f'  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:4px;">'
             f'    <div><div class="or-field-label">Contact</div>'
             f'         <div class="or-field-val">{p["contact"]}</div></div>'
@@ -1551,9 +1741,9 @@ with tab_outreach:
             f'         <div class="or-field-val" style="font-size:0.72rem">{p["email"]}</div></div>'
             f'    <div><div class="or-field-label">Phone</div>'
             f'         <div class="or-field-val">{p["phone"]}</div></div>'
-            f'  </div>'
+            f"  </div>"
             f'  <div class="or-notes">{p["notes"]}</div>'
-            f'</div>',
+            f"</div>",
             unsafe_allow_html=True,
         )
 
@@ -1561,7 +1751,12 @@ with tab_outreach:
 
         # Generate button
         if seq is None:
-            if st.button(f"⚡ Generate 3-Email Sequence for {p['name']}", use_container_width=True, type="primary", key=f"gen_{pid}"):
+            if st.button(
+                f"⚡ Generate 3-Email Sequence for {p['name']}",
+                use_container_width=True,
+                type="primary",
+                key=f"gen_{pid}",
+            ):
                 with st.spinner("Generating personalized email sequence via Claude..."):
                     try:
                         result = generate_email_sequence(p)
@@ -1573,7 +1768,9 @@ with tab_outreach:
             # Regenerate + Draft All row
             regen_col, draft_all_col = st.columns([1, 1])
             with regen_col:
-                if st.button("↺ Regenerate", key=f"regen_{pid}", use_container_width=True):
+                if st.button(
+                    "↺ Regenerate", key=f"regen_{pid}", use_container_width=True
+                ):
                     with st.spinner("Regenerating..."):
                         try:
                             result = generate_email_sequence(p)
@@ -1583,16 +1780,25 @@ with tab_outreach:
                         except Exception as exc:
                             st.error(f"Regeneration failed — {exc}")
             with draft_all_col:
-                if st.button("✉ Draft All 3 to Inbox", key=f"draft_all_{pid}", use_container_width=True, type="primary"):
+                if st.button(
+                    "✉ Draft All 3 to Inbox",
+                    key=f"draft_all_{pid}",
+                    use_container_width=True,
+                    type="primary",
+                ):
                     _gmail_sender = os.environ.get("GMAIL_SENDER", "")
                     _gmail_pw = os.environ.get("GMAIL_APP_PASSWORD", "")
                     if not _gmail_sender or not _gmail_pw:
-                        st.error("GMAIL_SENDER and GMAIL_APP_PASSWORD must be set in .env")
+                        st.error(
+                            "GMAIL_SENDER and GMAIL_APP_PASSWORD must be set in .env"
+                        )
                     else:
                         errors = []
                         for ekey in ["email1", "email2", "email3"]:
                             try:
-                                send_draft_to_self(seq[ekey], p, _gmail_sender, _gmail_pw)
+                                send_draft_to_self(
+                                    seq[ekey], p, _gmail_sender, _gmail_pw
+                                )
                                 if pid not in st.session_state.outreach_draft_status:
                                     st.session_state.outreach_draft_status[pid] = {}
                                 st.session_state.outreach_draft_status[pid][ekey] = True
@@ -1606,9 +1812,9 @@ with tab_outreach:
 
             # Email sequence expanders
             email_meta = [
-                ("email1", "FIRST TOUCH",  "Day 1"),
-                ("email2", "FOLLOW-UP 1",  "Day 5"),
-                ("email3", "FOLLOW-UP 2",  "Day 12"),
+                ("email1", "FIRST TOUCH", "Day 1"),
+                ("email2", "FOLLOW-UP 1", "Day 5"),
+                ("email3", "FOLLOW-UP 2", "Day 12"),
             ]
             draft_status = st.session_state.outreach_draft_status.get(pid, {})
 
@@ -1617,13 +1823,16 @@ with tab_outreach:
                 is_drafted = draft_status.get(ekey, False)
                 drafted_suffix = " ✓ In Inbox" if is_drafted else ""
 
-                with st.expander(f"{label} — {email['subject']}{drafted_suffix}", expanded=(ekey == "email1")):
+                with st.expander(
+                    f"{label} — {email['subject']}{drafted_suffix}",
+                    expanded=(ekey == "email1"),
+                ):
                     st.markdown(
                         f'<div class="or-email-meta">'
-                        f'  <strong>To:</strong> {p["email"]} &nbsp;·&nbsp; '
-                        f'  <strong>From:</strong> zajen@n8ivpromotions.com &nbsp;·&nbsp; '
-                        f'  <strong>Send:</strong> {day}'
-                        f'</div>',
+                        f"  <strong>To:</strong> {p['email']} &nbsp;·&nbsp; "
+                        f"  <strong>From:</strong> zajen@n8ivpromotions.com &nbsp;·&nbsp; "
+                        f"  <strong>Send:</strong> {day}"
+                        f"</div>",
                         unsafe_allow_html=True,
                     )
                     st.code(email["body"], language=None)
@@ -1631,17 +1840,30 @@ with tab_outreach:
                     action_col, status_col = st.columns([1, 2])
                     with action_col:
                         if not is_drafted:
-                            if st.button(f"✉ Send to Inbox", key=f"draft_{pid}_{ekey}", type="primary"):
+                            if st.button(
+                                "✉ Send to Inbox",
+                                key=f"draft_{pid}_{ekey}",
+                                type="primary",
+                            ):
                                 _gmail_sender = os.environ.get("GMAIL_SENDER", "")
                                 _gmail_pw = os.environ.get("GMAIL_APP_PASSWORD", "")
                                 if not _gmail_sender or not _gmail_pw:
                                     st.error("GMAIL credentials not configured")
                                 else:
                                     try:
-                                        send_draft_to_self(email, p, _gmail_sender, _gmail_pw)
-                                        if pid not in st.session_state.outreach_draft_status:
-                                            st.session_state.outreach_draft_status[pid] = {}
-                                        st.session_state.outreach_draft_status[pid][ekey] = True
+                                        send_draft_to_self(
+                                            email, p, _gmail_sender, _gmail_pw
+                                        )
+                                        if (
+                                            pid
+                                            not in st.session_state.outreach_draft_status
+                                        ):
+                                            st.session_state.outreach_draft_status[
+                                                pid
+                                            ] = {}
+                                        st.session_state.outreach_draft_status[pid][
+                                            ekey
+                                        ] = True
                                         st.rerun()
                                     except Exception as exc:
                                         st.error(f"Failed to send — {exc}")

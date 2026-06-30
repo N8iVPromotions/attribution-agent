@@ -6,6 +6,7 @@ Manages golden eval samples for behavioral regression testing.
 Samples are promoted from real pipeline runs and stored in
 workspace.attribution_ops.eval_golden_dataset Delta table.
 """
+
 from __future__ import annotations
 import hashlib
 import json
@@ -35,19 +36,24 @@ class GoldenDatasetManager:
         try:
             import pandas as pd
             from utils.databricks_writer import _upsert_dataframe
-            df = pd.DataFrame([{
-                "sample_id": sample_id,
-                "created_at": datetime.now(timezone.utc),
-                "agent_name": agent_name,
-                "input_hash": input_hash,
-                "input_summary": input_text[:500],
-                "expected_output": expected_output,
-                "expected_fields": json.dumps(expected_fields or {}),
-                "tolerance_json": json.dumps({}),
-                "source": source,
-                "run_id": run_id,
-                "is_active": True,
-            }])
+
+            df = pd.DataFrame(
+                [
+                    {
+                        "sample_id": sample_id,
+                        "created_at": datetime.now(timezone.utc),
+                        "agent_name": agent_name,
+                        "input_hash": input_hash,
+                        "input_summary": input_text[:500],
+                        "expected_output": expected_output,
+                        "expected_fields": json.dumps(expected_fields or {}),
+                        "tolerance_json": json.dumps({}),
+                        "source": source,
+                        "run_id": run_id,
+                        "is_active": True,
+                    }
+                ]
+            )
             _upsert_dataframe(df, _OPS_SCHEMA, "eval_golden_dataset", ["sample_id"])
             logger.info(f"[GoldenDataset] Promoted sample {sample_id} for {agent_name}")
         except Exception as exc:
@@ -56,7 +62,12 @@ class GoldenDatasetManager:
 
     def load_samples(self, agent_name: str) -> list[dict]:
         try:
-            from utils.databricks_writer import _get_connection, _is_databricks, _get_spark
+            from utils.databricks_writer import (
+                _get_connection,
+                _is_databricks,
+                _get_spark,
+            )
+
             query = (
                 f"SELECT * FROM {_OPS_SCHEMA}.eval_golden_dataset "
                 f"WHERE agent_name = '{agent_name}' AND is_active = true "
@@ -92,25 +103,39 @@ class GoldenDatasetManager:
         passed_count = 0
 
         try:
-            actual = json.loads(actual_output) if actual_output.strip().startswith("{") else {}
+            actual = (
+                json.loads(actual_output)
+                if actual_output.strip().startswith("{")
+                else {}
+            )
         except Exception:
             actual = {}
 
         for field, expected_val in expected_fields.items():
             actual_val = actual.get(field)
             passed = actual_val is not None
-            if isinstance(expected_val, (int, float)) and isinstance(actual_val, (int, float)):
-                tolerance = float(sample.get("tolerance_json", "{}") or "{}").get(field, 0.1)
+            if isinstance(expected_val, (int, float)) and isinstance(
+                actual_val, (int, float)
+            ):
+                tolerance = float(sample.get("tolerance_json", "{}") or "{}").get(
+                    field, 0.1
+                )
                 try:
                     tol_dict = json.loads(sample.get("tolerance_json", "{}") or "{}")
                     tolerance = tol_dict.get(field, 0.1)
                 except Exception:
                     tolerance = 0.1
                 if expected_val != 0:
-                    passed = abs(actual_val - expected_val) / abs(expected_val) <= tolerance
+                    passed = (
+                        abs(actual_val - expected_val) / abs(expected_val) <= tolerance
+                    )
                 else:
                     passed = actual_val == 0
-            field_results[field] = {"passed": passed, "expected": expected_val, "actual": actual_val}
+            field_results[field] = {
+                "passed": passed,
+                "expected": expected_val,
+                "actual": actual_val,
+            }
             if passed:
                 passed_count += 1
 

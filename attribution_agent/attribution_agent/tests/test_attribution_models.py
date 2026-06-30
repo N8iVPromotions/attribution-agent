@@ -52,4 +52,3 @@ def test_time_decay_sums_to_one_and_favors_recent_touchpoints():
     credits = [item.credit for item in result]
     assert sum(credits) == pytest.approx(1.0)
     assert result[-1].credit > result[0].credit
-

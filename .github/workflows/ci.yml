@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install ruff
-        run: pip install ruff
+        run: pip install ruff==0.15.19
       - name: Check formatting
         run: ruff format --check attribution_agent/attribution_agent/
       - name: Check linting

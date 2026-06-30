@@ -6,6 +6,7 @@ A2A dispatch — local and network transports, plus the HTTP server surface.
 No live agents are invoked: `run_local` is stubbed so the tests exercise routing,
 the transport contract, and the server endpoints without Anthropic credentials.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -29,6 +30,7 @@ def stub_local(monkeypatch):
 
 # ── Dispatcher + LocalTransport ─────────────────────────────────────────────────
 
+
 def test_local_dispatch_routes_to_run_local(stub_local):
     d = AgentDispatcher()  # defaults to LocalTransport
     out = d.dispatch("revenue-analyst", {"client_id": "c1"})
@@ -43,6 +45,7 @@ def test_dispatch_rejects_unknown_agent(stub_local):
 
 
 # ── HttpA2ATransport ────────────────────────────────────────────────────────────
+
 
 def test_http_transport_posts_and_unwraps_output(monkeypatch):
     captured = {}
@@ -61,6 +64,7 @@ def test_http_transport_posts_and_unwraps_output(monkeypatch):
         return _Resp()
 
     import requests
+
     monkeypatch.setattr(requests, "post", _fake_post)
 
     transport = HttpA2ATransport("http://peer:8000/", headers={"X-API-Key": "k"})
@@ -69,11 +73,15 @@ def test_http_transport_posts_and_unwraps_output(monkeypatch):
 
     assert out == {"passed": True}
     assert captured["url"] == "http://peer:8000/a2a/dispatch"
-    assert captured["json"] == {"agent_id": "data-quality", "input": {"client_id": "c1"}}
+    assert captured["json"] == {
+        "agent_id": "data-quality",
+        "input": {"client_id": "c1"},
+    }
     assert captured["headers"] == {"X-API-Key": "k"}
 
 
 # ── Server (discovery + dispatch) ───────────────────────────────────────────────
+
 
 @pytest.fixture
 def client(monkeypatch):
@@ -91,13 +99,23 @@ def test_discovery_lists_agent_cards(client):
     resp = client.get("/.well-known/agent-cards")
     assert resp.status_code == 200
     ids = {c["agent_id"] for c in resp.json()["agent_cards"]}
-    assert {"data-quality", "revenue-analyst", "executive-reporting", "governance-reviewer"} <= ids
+    assert {
+        "data-quality",
+        "revenue-analyst",
+        "executive-reporting",
+        "governance-reviewer",
+    } <= ids
 
 
 def test_server_dispatch_runs_agent(client):
-    resp = client.post("/a2a/dispatch", json={"agent_id": "data-quality", "input": {"client_id": "c1"}})
+    resp = client.post(
+        "/a2a/dispatch", json={"agent_id": "data-quality", "input": {"client_id": "c1"}}
+    )
     assert resp.status_code == 200
-    assert resp.json() == {"agent_id": "data-quality", "output": {"echoed": "data-quality"}}
+    assert resp.json() == {
+        "agent_id": "data-quality",
+        "output": {"echoed": "data-quality"},
+    }
 
 
 def test_server_dispatch_unknown_agent_404(client):

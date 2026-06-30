@@ -4,6 +4,7 @@ config/agency_config.py
 Agency tier configuration. An agency manages multiple clients under one umbrella.
 Agency reports are white-labeled with agency branding.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -11,19 +12,21 @@ from dataclasses import dataclass, field
 
 @dataclass
 class AgencyConfig:
-    agency_id: str                          # short slug, e.g. "acme_media"
-    agency_name: str                        # display name, e.g. "Acme Media Group"
-    client_ids: list[str] = field(default_factory=list)  # client_ids from CLIENT_REGISTRY
+    agency_id: str  # short slug, e.g. "acme_media"
+    agency_name: str  # display name, e.g. "Acme Media Group"
+    client_ids: list[str] = field(
+        default_factory=list
+    )  # client_ids from CLIENT_REGISTRY
 
     # ── Branding ──────────────────────────────────────────────────────────────
-    brand_color: str = "1A1A1A"            # hex color (no #) for email header
-    brand_logo_url: str = ""               # URL to agency logo image
-    sender_name: str = ""                  # e.g. "Acme Media Analytics"
-    sender_email: str = ""                 # overrides GMAIL_SENDER env var
-    reply_to: str = ""                     # where client replies are routed
+    brand_color: str = "1A1A1A"  # hex color (no #) for email header
+    brand_logo_url: str = ""  # URL to agency logo image
+    sender_name: str = ""  # e.g. "Acme Media Analytics"
+    sender_email: str = ""  # overrides GMAIL_SENDER env var
+    reply_to: str = ""  # where client replies are routed
 
     # ── Dashboard ─────────────────────────────────────────────────────────────
-    powerbi_workspace_url: str = ""        # agency Power BI workspace link
+    powerbi_workspace_url: str = ""  # agency Power BI workspace link
 
 
 # ─── AGENCY REGISTRY ──────────────────────────────────────────────────────────

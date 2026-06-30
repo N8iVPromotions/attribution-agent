@@ -20,6 +20,7 @@ from loguru import logger
 @dataclass
 class ValidationResult:
     """Holds the outcome of a validation run."""
+
     passed: bool
     dataset: str
     client_id: str
@@ -49,8 +50,14 @@ class IngestValidator:
     # ─── META VALIDATION ────────────────────────────────────────────────────
 
     REQUIRED_META_COLS = [
-        "client_id", "campaign_id", "campaign_name",
-        "ad_id", "spend", "impressions", "clicks", "date",
+        "client_id",
+        "campaign_id",
+        "campaign_name",
+        "ad_id",
+        "spend",
+        "impressions",
+        "clicks",
+        "date",
     ]
 
     def validate_meta(self, df: pd.DataFrame, client_id: str) -> ValidationResult:
@@ -117,7 +124,9 @@ class IngestValidator:
     # ─── HUBSPOT CONTACTS VALIDATION ────────────────────────────────────────
 
     REQUIRED_CONTACT_COLS = [
-        "client_id", "contact_id", "created_at",
+        "client_id",
+        "contact_id",
+        "created_at",
     ]
 
     UTM_COLS = ["utm_source", "utm_medium", "utm_campaign", "hs_source"]
@@ -177,7 +186,11 @@ class IngestValidator:
     # ─── HUBSPOT DEALS VALIDATION ────────────────────────────────────────────
 
     REQUIRED_DEAL_COLS = [
-        "client_id", "deal_id", "deal_stage", "amount", "created_at",
+        "client_id",
+        "deal_id",
+        "deal_stage",
+        "amount",
+        "created_at",
     ]
 
     def validate_deals(self, df: pd.DataFrame, client_id: str) -> ValidationResult:

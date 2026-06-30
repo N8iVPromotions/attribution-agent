@@ -4,6 +4,7 @@ Attribution model utilities.
 This module is intentionally pure Python so it can be unit tested without
 Databricks or external API credentials.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -157,4 +158,3 @@ def _lead_creation_index(touchpoints: list[Touchpoint]) -> int:
         if touchpoint.role == "lead_creation":
             return idx
     return len(touchpoints) // 2
-

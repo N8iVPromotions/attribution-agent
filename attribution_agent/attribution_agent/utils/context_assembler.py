@@ -6,11 +6,11 @@ Single source of truth for all context passed to agent prompts.
 Gathers client config, agency config, recent memories, last 3 run
 summaries, and MoM trends from channel_performance.
 """
+
 from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,7 @@ class ClientContextAssembler:
         prior_memories = ""
         try:
             from utils.memory_store import MemoryStore
+
             prior_memories = MemoryStore().recall_as_context(client_id, limit=5)
         except Exception as exc:
             logger.debug(f"[ContextAssembler] memory recall failed: {exc}")
@@ -90,7 +91,12 @@ class ClientContextAssembler:
 
     def _fetch_prior_runs(self, client_id: str) -> list[dict]:
         try:
-            from utils.databricks_writer import _get_connection, _is_databricks, _get_spark
+            from utils.databricks_writer import (
+                _get_connection,
+                _is_databricks,
+                _get_spark,
+            )
+
             query = (
                 f"SELECT started_at, total_pipeline, top_channel, status "
                 f"FROM {_OPS_SCHEMA}.pipeline_runs "
@@ -114,7 +120,12 @@ class ClientContextAssembler:
 
     def _compute_mom_trend(self, schema: str) -> dict:
         try:
-            from utils.databricks_writer import _get_connection, _is_databricks, _get_spark
+            from utils.databricks_writer import (
+                _get_connection,
+                _is_databricks,
+                _get_spark,
+            )
+
             query = (
                 f"SELECT report_month, SUM(total_spend) AS spend, SUM(pipeline_value) AS pipeline "
                 f"FROM {schema}.channel_performance "
@@ -142,8 +153,12 @@ class ClientContextAssembler:
                 return round((curr_val - prev_val) / prev_val * 100, 1)
 
             return {
-                "spend_change_pct": pct_change(curr.get("spend", 0), prev.get("spend", 0)),
-                "pipeline_change_pct": pct_change(curr.get("pipeline", 0), prev.get("pipeline", 0)),
+                "spend_change_pct": pct_change(
+                    curr.get("spend", 0), prev.get("spend", 0)
+                ),
+                "pipeline_change_pct": pct_change(
+                    curr.get("pipeline", 0), prev.get("pipeline", 0)
+                ),
             }
         except Exception as exc:
             logger.debug(f"[ContextAssembler] MoM trend failed: {exc}")

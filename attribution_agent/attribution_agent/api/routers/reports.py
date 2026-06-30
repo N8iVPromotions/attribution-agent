@@ -39,8 +39,11 @@ def _row_to_response(row: dict) -> InsightReportResponse:
 
 
 def _fetch_reports(client_id: str, limit: int = 1) -> list[dict]:
-    from utils.databricks_writer import _run_sql, _get_connection, _is_databricks, _get_spark
-    _OPS_SCHEMA = __import__("os").environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_ops")
+    from utils.databricks_writer import _get_connection, _is_databricks, _get_spark
+
+    _OPS_SCHEMA = __import__("os").environ.get(
+        "ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_ops"
+    )
     query = (
         f"SELECT * FROM {_OPS_SCHEMA}.insight_reports "
         f"WHERE client_id = '{client_id}' "
@@ -70,7 +73,9 @@ async def get_latest_report(
     require_permission(role, Permission.VIEW_REPORTS)
     rows = _fetch_reports(client_id, limit=1)
     if not rows:
-        raise HTTPException(status_code=404, detail=f"No reports found for client '{client_id}'")
+        raise HTTPException(
+            status_code=404, detail=f"No reports found for client '{client_id}'"
+        )
     return _row_to_response(rows[0])
 
 
@@ -93,6 +98,7 @@ async def trigger_report_generation(
 ) -> dict:
     require_permission(role, Permission.RUN_PIPELINE_DRY)
     from config.client_config import CLIENT_REGISTRY, reload_client_registry
+
     reload_client_registry()
     if client_id not in CLIENT_REGISTRY:
         raise HTTPException(status_code=404, detail=f"Client '{client_id}' not found")
@@ -103,12 +109,20 @@ async def trigger_report_generation(
         try:
             from agents.insight.insight_agent import InsightAgent
             from config.client_config import get_client
+
             cfg = get_client(client_id)
             agent = InsightAgent(cfg)
             agent.generate_and_store()
         except Exception as exc:
             import logging
-            logging.getLogger(__name__).warning(f"[ReportAPI] Background generation failed for {client_id}: {exc}")
+
+            logging.getLogger(__name__).warning(
+                f"[ReportAPI] Background generation failed for {client_id}: {exc}"
+            )
 
     background_tasks.add_task(_generate)
-    return {"run_id": run_id, "status": "accepted", "message": "Report generation started"}
+    return {
+        "run_id": run_id,
+        "status": "accepted",
+        "message": "Report generation started",
+    }

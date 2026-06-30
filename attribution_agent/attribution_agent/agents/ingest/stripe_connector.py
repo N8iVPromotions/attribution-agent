@@ -6,6 +6,7 @@ Normalizes into a flat DataFrame for Databricks upsert.
 
 Matches to HubSpot deals via customer_email for the revenue attribution join.
 """
+
 from __future__ import annotations
 
 import logging
@@ -31,9 +32,12 @@ class StripeConnector:
 
     def _get_client(self):
         import stripe
+
         return stripe.StripeClient(self.access_token)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10), reraise=True)
+    @retry(
+        stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10), reraise=True
+    )
     def _list_payment_intents(self, created_gte: int, created_lte: int) -> list:
         client = self._get_client()
         results = []
@@ -96,25 +100,25 @@ class StripeConnector:
 
             metadata = pi.get("metadata") or {}
             hubspot_deal_id = (
-                metadata.get("hubspot_deal_id")
-                or metadata.get("deal_id")
-                or ""
+                metadata.get("hubspot_deal_id") or metadata.get("deal_id") or ""
             )
 
-            rows.append({
-                "payment_id":      pi.get("id", ""),
-                "customer_id":     customer_id,
-                "customer_email":  customer_email.lower() if customer_email else "",
-                "amount_paid":     (pi.get("amount_received") or 0) / 100.0,
-                "currency":        (pi.get("currency") or "usd").upper(),
-                "status":          pi.get("status", ""),
-                "refunded":        refunded,
-                "refund_amount":   refund_amount,
-                "created_at":      pd.Timestamp(pi["created"], unit="s", tz="UTC"),
-                "description":     pi.get("description") or "",
-                "hubspot_deal_id": hubspot_deal_id,
-                "source":          "stripe",
-            })
+            rows.append(
+                {
+                    "payment_id": pi.get("id", ""),
+                    "customer_id": customer_id,
+                    "customer_email": customer_email.lower() if customer_email else "",
+                    "amount_paid": (pi.get("amount_received") or 0) / 100.0,
+                    "currency": (pi.get("currency") or "usd").upper(),
+                    "status": pi.get("status", ""),
+                    "refunded": refunded,
+                    "refund_amount": refund_amount,
+                    "created_at": pd.Timestamp(pi["created"], unit="s", tz="UTC"),
+                    "description": pi.get("description") or "",
+                    "hubspot_deal_id": hubspot_deal_id,
+                    "source": "stripe",
+                }
+            )
 
         df = pd.DataFrame(rows)
         logger.info(f"[Stripe] Normalized DataFrame shape: {df.shape}")

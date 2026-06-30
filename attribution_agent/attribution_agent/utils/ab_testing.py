@@ -6,6 +6,7 @@ Deterministic hash-based A/B experiment assignment.
 Variant assignment is stable per (experiment_id, client_id) — the same
 client always lands in the same bucket. No p-values; descriptive stats only.
 """
+
 from __future__ import annotations
 import hashlib
 import json
@@ -42,15 +43,20 @@ class ABTestingManager:
         try:
             import pandas as pd
             from utils.databricks_writer import _upsert_dataframe
-            df = pd.DataFrame([{
-                "assignment_id": uuid.uuid4().hex,
-                "experiment_id": experiment_id,
-                "run_id": run_id,
-                "client_id": client_id,
-                "variant": variant,
-                "assigned_at": datetime.now(timezone.utc),
-                "outcome_json": json.dumps(outcome, default=str),
-            }])
+
+            df = pd.DataFrame(
+                [
+                    {
+                        "assignment_id": uuid.uuid4().hex,
+                        "experiment_id": experiment_id,
+                        "run_id": run_id,
+                        "client_id": client_id,
+                        "variant": variant,
+                        "assigned_at": datetime.now(timezone.utc),
+                        "outcome_json": json.dumps(outcome, default=str),
+                    }
+                ]
+            )
             _upsert_dataframe(df, _OPS_SCHEMA, "ab_assignments", ["assignment_id"])
         except Exception as exc:
             logger.debug(f"[ABTesting] record_outcome failed: {exc}")
@@ -58,7 +64,12 @@ class ABTestingManager:
     def compute_results(self, experiment_id: str) -> dict:
         """Return descriptive stats (no p-values) per variant."""
         try:
-            from utils.databricks_writer import _get_connection, _is_databricks, _get_spark
+            from utils.databricks_writer import (
+                _get_connection,
+                _is_databricks,
+                _get_spark,
+            )
+
             query = (
                 f"SELECT variant, COUNT(*) AS assignments "
                 f"FROM {_OPS_SCHEMA}.ab_assignments "
@@ -83,10 +94,14 @@ class ABTestingManager:
 
     def get_active_experiments(self) -> list[dict]:
         try:
-            from utils.databricks_writer import _get_connection, _is_databricks, _get_spark
+            from utils.databricks_writer import (
+                _get_connection,
+                _is_databricks,
+                _get_spark,
+            )
+
             query = (
-                f"SELECT * FROM {_OPS_SCHEMA}.ab_experiments "
-                f"WHERE status = 'running'"
+                f"SELECT * FROM {_OPS_SCHEMA}.ab_experiments WHERE status = 'running'"
             )
             if _is_databricks():
                 rows = _get_spark().sql(query).collect()
@@ -104,7 +119,12 @@ class ABTestingManager:
 
     def _get_experiment(self, experiment_id: str) -> dict | None:
         try:
-            from utils.databricks_writer import _get_connection, _is_databricks, _get_spark
+            from utils.databricks_writer import (
+                _get_connection,
+                _is_databricks,
+                _get_spark,
+            )
+
             query = (
                 f"SELECT * FROM {_OPS_SCHEMA}.ab_experiments "
                 f"WHERE experiment_id = '{experiment_id}' LIMIT 1"

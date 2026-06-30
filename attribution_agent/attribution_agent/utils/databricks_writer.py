@@ -3,6 +3,7 @@ utils/databricks_writer.py
 Writes validated pandas DataFrames to Databricks Delta tables.
 Runs via SQL Connector when local, Spark when inside Databricks.
 """
+
 from __future__ import annotations
 import logging
 import os
@@ -25,6 +26,7 @@ def _is_databricks() -> bool:
     """
     try:
         from pyspark.sql import SparkSession
+
         return SparkSession.getActiveSession() is not None
     except Exception:
         return False
@@ -32,21 +34,28 @@ def _is_databricks() -> bool:
 
 def _get_spark():
     from pyspark.sql import SparkSession
+
     spark = SparkSession.getActiveSession()
     if spark is not None:
         return spark
     # Databricks App — use serverless Databricks Connect
     from databricks.connect import DatabricksSession
+
     return DatabricksSession.builder.serverless().getOrCreate()
 
 
 def _get_connection():
     from databricks import sql
+
     # DATABRICKS_HOST is auto-injected by Databricks Apps; strip the scheme if present
-    host = os.environ.get("DATABRICKS_SERVER_HOSTNAME") or os.environ.get("DATABRICKS_HOST", "")
+    host = os.environ.get("DATABRICKS_SERVER_HOSTNAME") or os.environ.get(
+        "DATABRICKS_HOST", ""
+    )
     hostname = host.replace("https://", "").replace("http://", "").rstrip("/")
     if not hostname:
-        raise EnvironmentError("DATABRICKS_SERVER_HOSTNAME (or DATABRICKS_HOST) is not set")
+        raise EnvironmentError(
+            "DATABRICKS_SERVER_HOSTNAME (or DATABRICKS_HOST) is not set"
+        )
     http_path = os.environ.get("DATABRICKS_HTTP_PATH")
     if not http_path:
         raise EnvironmentError("DATABRICKS_HTTP_PATH is not set")
@@ -63,6 +72,7 @@ def _get_connection():
         )
 
     from databricks.sdk.core import Config, oauth_service_principal
+
     cfg = Config(host=f"https://{hostname}")
     return sql.connect(
         server_hostname=hostname,
@@ -449,15 +459,26 @@ USING DELTA
 """
 
 _RAW_TABLES = [
-    "meta_ads_raw", "hubspot_deals_raw", "stripe_payments_raw",
-    "ad_spend_normalized", "attribution_results",
+    "meta_ads_raw",
+    "hubspot_deals_raw",
+    "stripe_payments_raw",
+    "ad_spend_normalized",
+    "attribution_results",
 ]
 _OPS_TABLES = [
-    "pipeline_runs", "audit_log", "insight_reports", "approval_queue",
-    "idempotency_store", "pipeline_checkpoints", "cost_ledger",
-    "agent_memory", "semantic_cache",
-    "eval_golden_dataset", "eval_results",
-    "ab_experiments", "ab_assignments",
+    "pipeline_runs",
+    "audit_log",
+    "insight_reports",
+    "approval_queue",
+    "idempotency_store",
+    "pipeline_checkpoints",
+    "cost_ledger",
+    "agent_memory",
+    "semantic_cache",
+    "eval_golden_dataset",
+    "eval_results",
+    "ab_experiments",
+    "ab_assignments",
 ]
 
 
@@ -470,8 +491,7 @@ def ensure_tables(schema: str) -> None:
     # contact_email was added in v2 — backfill the column on existing tables
     try:
         _run_sql(
-            f"ALTER TABLE {schema}.hubspot_deals_raw "
-            f"ADD COLUMNS (contact_email STRING)"
+            f"ALTER TABLE {schema}.hubspot_deals_raw ADD COLUMNS (contact_email STRING)"
         )
     except Exception:
         pass  # column already present
@@ -528,7 +548,9 @@ def set_table_retention_policies(schema: str) -> None:
                 f"SET TBLPROPERTIES ('delta.logRetentionDuration' = 'interval 90 days')"
             )
         except Exception as exc:
-            logger.debug(f"[Databricks] Could not set retention on {schema}.{table}: {exc}")
+            logger.debug(
+                f"[Databricks] Could not set retention on {schema}.{table}: {exc}"
+            )
     for table in _OPS_TABLES:
         try:
             _run_sql(
@@ -536,7 +558,9 @@ def set_table_retention_policies(schema: str) -> None:
                 f"SET TBLPROPERTIES ('delta.logRetentionDuration' = 'interval 365 days')"
             )
         except Exception as exc:
-            logger.debug(f"[Databricks] Could not set retention on {_OPS_SCHEMA}.{table}: {exc}")
+            logger.debug(
+                f"[Databricks] Could not set retention on {_OPS_SCHEMA}.{table}: {exc}"
+            )
 
 
 def ensure_ops_tables() -> None:
@@ -587,7 +611,7 @@ def _upsert_dataframe(
         for i in range(0, len(rows), 1000):
             cursor.executemany(
                 f"INSERT INTO {staging_table} ({col_str}) VALUES ({ph})",
-                rows[i:i+1000]
+                rows[i : i + 1000],
             )
         merge_sql = f"""
             MERGE INTO {full_table} AS t
@@ -619,8 +643,9 @@ def write_meta_data(df: pd.DataFrame, schema: str) -> int:
     ]:
         if col not in df.columns:
             df[col] = 0
-    rows = _upsert_dataframe(df, schema, "meta_ads_raw",
-                             ["ad_account_id", "campaign_id", "adset_id", "date"])
+    rows = _upsert_dataframe(
+        df, schema, "meta_ads_raw", ["ad_account_id", "campaign_id", "adset_id", "date"]
+    )
     logger.info(f"[Databricks] Wrote {rows} Meta rows")
     return rows
 

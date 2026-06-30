@@ -6,6 +6,7 @@ Agent cards per Google A2A draft spec (infrastructure stub).
 Each card documents an agent's interface machine-readably so a future
 dispatcher can route tasks across agents or external systems.
 """
+
 from __future__ import annotations
 from dataclasses import dataclass, field
 
@@ -72,7 +73,10 @@ AGENT_CARDS: dict[str, AgentCard] = {
                 "attribution_model": {"type": "string"},
             },
         },
-        output_schema={"type": "string", "description": "Structured analyst briefing text"},
+        output_schema={
+            "type": "string",
+            "description": "Structured analyst briefing text",
+        },
         capabilities=["channel_analysis", "text_output"],
         model="claude-sonnet-4-6",
     ),

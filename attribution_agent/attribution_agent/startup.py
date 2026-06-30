@@ -3,6 +3,7 @@ startup.py — Databricks App entry point
 Fetches secrets in the main process (which has Databricks SDK credentials),
 injects them as env vars, then starts ARIE and Streamlit as subprocesses.
 """
+
 import base64
 import os
 import signal
@@ -30,6 +31,7 @@ def _fetch_secrets() -> dict:
     result = {}
     try:
         from databricks.sdk import WorkspaceClient
+
         w = WorkspaceClient()
         for key in _SECRET_KEYS:
             if os.environ.get(key):
@@ -67,9 +69,15 @@ def main() -> None:
     # Start Streamlit with secrets baked into env
     streamlit_proc = subprocess.Popen(
         [
-            sys.executable, "-m", "streamlit", "run", "app.py",
-            "--server.port", "8080",
-            "--server.headless", "true",
+            sys.executable,
+            "-m",
+            "streamlit",
+            "run",
+            "app.py",
+            "--server.port",
+            "8080",
+            "--server.headless",
+            "true",
         ],
         cwd=str(ROOT),
         env=env,

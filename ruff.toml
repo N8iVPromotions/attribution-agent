@@ -1,0 +1,19 @@
+# Ruff configuration for the attribution-agent repo.
+# Pinned in CI (.github/workflows/ci.yml installs ruff==0.15.19) so local and CI
+# formatting/linting stay byte-for-byte in sync.
+
+target-version = "py311"
+
+[lint]
+# Default rule set (E4, E7, E9, F). Listed explicitly for clarity.
+select = ["E4", "E7", "E9", "F"]
+
+[lint.per-file-ignores]
+# These modules intentionally manipulate sys.path before importing first-party
+# packages (entry points / Streamlit app), which trips E402. The import order is
+# deliberate, so E402 is ignored for these files only.
+"attribution_agent/attribution_agent/app.py" = ["E402"]
+"attribution_agent/attribution_agent/flows/agency_flow.py" = ["E402"]
+"attribution_agent/attribution_agent/flows/ingest_flow.py" = ["E402"]
+"attribution_agent/attribution_agent/agents/comms/comms_agent.py" = ["E402"]
+"attribution_agent/attribution_agent/agents/insight/insight_agent.py" = ["E402"]

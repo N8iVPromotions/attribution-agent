@@ -9,6 +9,7 @@ Responsibilities:
 - Budget enforcement with Telegram alert at 80% usage
 - Semantic caching for eligible tasks (data_quality, governance_review)
 """
+
 from __future__ import annotations
 import hashlib
 import json
@@ -66,6 +67,7 @@ def _cache_key(model: str, agent_name: str, message: str) -> str:
 def _check_cache(cache_key: str) -> str | None:
     try:
         from utils.databricks_writer import _get_connection, _is_databricks, _get_spark
+
         now = datetime.now(timezone.utc).isoformat()
         query = (
             f"SELECT response_text FROM {_OPS_SCHEMA}.semantic_cache "
@@ -90,24 +92,31 @@ def _check_cache(cache_key: str) -> str | None:
     return None
 
 
-def _write_cache(cache_key: str, agent_name: str, model_id: str, response_text: str) -> None:
+def _write_cache(
+    cache_key: str, agent_name: str, model_id: str, response_text: str
+) -> None:
     try:
         import pandas as pd
         from datetime import timedelta
         from utils.databricks_writer import _upsert_dataframe
+
         now = datetime.now(timezone.utc)
-        df = pd.DataFrame([{
-            "cache_key": cache_key,
-            "created_at": now,
-            "expires_at": now + timedelta(hours=24),
-            "input_hash": cache_key,
-            "agent_name": agent_name,
-            "model_id": model_id,
-            "response_text": response_text,
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "hit_count": 1,
-        }])
+        df = pd.DataFrame(
+            [
+                {
+                    "cache_key": cache_key,
+                    "created_at": now,
+                    "expires_at": now + timedelta(hours=24),
+                    "input_hash": cache_key,
+                    "agent_name": agent_name,
+                    "model_id": model_id,
+                    "response_text": response_text,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "hit_count": 1,
+                }
+            ]
+        )
         _upsert_dataframe(df, _OPS_SCHEMA, "semantic_cache", ["cache_key"])
     except Exception as exc:
         logger.debug(f"[ModelGateway] cache write failed: {exc}")
@@ -129,22 +138,27 @@ def _write_cost_ledger(
     try:
         import pandas as pd
         from utils.databricks_writer import _upsert_dataframe
-        df = pd.DataFrame([{
-            "ledger_id": uuid.uuid4().hex,
-            "event_time": datetime.now(timezone.utc),
-            "run_id": run_id,
-            "client_id": client_id,
-            "agency_id": agency_id,
-            "agent_name": agent_name,
-            "model_id": model_id,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "cache_read_tokens": cache_read_tokens,
-            "cache_write_tokens": cache_write_tokens,
-            "cost_usd_estimate": cost_usd,
-            "prompt_version": os.environ.get("GIT_PROMPT_TAG", "dev"),
-            "task_type": task_type,
-        }])
+
+        df = pd.DataFrame(
+            [
+                {
+                    "ledger_id": uuid.uuid4().hex,
+                    "event_time": datetime.now(timezone.utc),
+                    "run_id": run_id,
+                    "client_id": client_id,
+                    "agency_id": agency_id,
+                    "agent_name": agent_name,
+                    "model_id": model_id,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cache_read_tokens": cache_read_tokens,
+                    "cache_write_tokens": cache_write_tokens,
+                    "cost_usd_estimate": cost_usd,
+                    "prompt_version": os.environ.get("GIT_PROMPT_TAG", "dev"),
+                    "task_type": task_type,
+                }
+            ]
+        )
         _upsert_dataframe(df, _OPS_SCHEMA, "cost_ledger", ["ledger_id"])
     except Exception as exc:
         logger.debug(f"[ModelGateway] cost_ledger write failed: {exc}")
@@ -155,11 +169,14 @@ def _check_budget(agency_id: str, new_tokens: int) -> None:
     try:
         from config.budget_config import get_budget, send_budget_alert
         from utils.databricks_writer import _get_connection, _is_databricks, _get_spark
+
         budget = get_budget(agency_id)
 
-        first_of_month = datetime.now(timezone.utc).replace(
-            day=1, hour=0, minute=0, second=0, microsecond=0
-        ).isoformat()
+        first_of_month = (
+            datetime.now(timezone.utc)
+            .replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            .isoformat()
+        )
         query = (
             f"SELECT COALESCE(SUM(input_tokens + output_tokens), 0) "
             f"FROM {_OPS_SCHEMA}.cost_ledger "
@@ -180,7 +197,11 @@ def _check_budget(agency_id: str, new_tokens: int) -> None:
 
         total = used + new_tokens
         pct = total / budget.monthly_token_limit
-        if pct >= budget.alert_threshold_pct and (total - new_tokens) / budget.monthly_token_limit < budget.alert_threshold_pct:
+        if (
+            pct >= budget.alert_threshold_pct
+            and (total - new_tokens) / budget.monthly_token_limit
+            < budget.alert_threshold_pct
+        ):
             send_budget_alert(agency_id, pct, total, budget.monthly_token_limit)
 
         if total > budget.monthly_token_limit:
@@ -237,13 +258,17 @@ def call(
             )
 
     from config.budget_config import get_budget, DEFAULT_BUDGET
+
     budget = get_budget(agency_id) if agency_id else DEFAULT_BUDGET
 
     # Guardrails: input check
     from utils.guardrails import check_input, check_output
+
     input_check = check_input(user_message, agent_name)
     if input_check.blocked:
-        raise RuntimeError(f"[Guardrails] Input blocked for {agent_name}: {input_check.block_reason}")
+        raise RuntimeError(
+            f"[Guardrails] Input blocked for {agent_name}: {input_check.block_reason}"
+        )
     sanitized_message = input_check.sanitized_text
 
     _check_budget(agency_id or "global", max_tokens)
@@ -277,7 +302,10 @@ def call(
                 "input_schema": response_schema,
             }
         ]
-        create_kwargs["tool_choice"] = {"type": "tool", "name": "emit_structured_report"}
+        create_kwargs["tool_choice"] = {
+            "type": "tool",
+            "name": "emit_structured_report",
+        }
 
     client = anthropic.Anthropic()
     resp = client.messages.create(**create_kwargs)
@@ -289,9 +317,13 @@ def call(
         )
         text = json.dumps(tool_block.input) if tool_block is not None else ""
     else:
-        text = next(
-            (b.text for b in resp.content if getattr(b, "type", None) == "text"), ""
-        ) if resp.content else ""
+        text = (
+            next(
+                (b.text for b in resp.content if getattr(b, "type", None) == "text"), ""
+            )
+            if resp.content
+            else ""
+        )
 
     # Guardrails: output check
     output_check = check_output(text, agent_name)
@@ -310,11 +342,17 @@ def call(
     )
 
     _write_cost_ledger(
-        run_id=run_id, client_id=client_id, agency_id=agency_id,
-        agent_name=agent_name, model_id=model_id,
-        input_tokens=in_tok, output_tokens=out_tok,
-        cache_read_tokens=cache_read, cache_write_tokens=cache_write,
-        cost_usd=cost, task_type=task_type,
+        run_id=run_id,
+        client_id=client_id,
+        agency_id=agency_id,
+        agent_name=agent_name,
+        model_id=model_id,
+        input_tokens=in_tok,
+        output_tokens=out_tok,
+        cache_read_tokens=cache_read,
+        cache_write_tokens=cache_write,
+        cost_usd=cost,
+        task_type=task_type,
     )
 
     if ck:

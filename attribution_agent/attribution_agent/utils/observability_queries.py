@@ -4,6 +4,7 @@ utils/observability_queries.py
 SQL helper functions for the Observability tab in the Streamlit app.
 Each function returns a list[dict] and swallows DB errors gracefully.
 """
+
 from __future__ import annotations
 import logging
 import os
@@ -15,6 +16,7 @@ _OPS_SCHEMA = os.environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_op
 def _query(sql: str) -> list[dict]:
     try:
         from utils.databricks_writer import _get_connection, _is_databricks, _get_spark
+
         if _is_databricks():
             rows = _get_spark().sql(sql).collect()
             return [r.asDict() for r in rows]
