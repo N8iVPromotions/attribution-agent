@@ -11,6 +11,7 @@ Run standalone:
 
 Or import and call generate_insight_report(client_id) from a flow.
 """
+
 from __future__ import annotations
 
 import json
@@ -22,6 +23,7 @@ from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -31,6 +33,7 @@ try:
     _root = str(Path(__file__).parent.parent.parent)
 except NameError:
     import inspect as _inspect
+
     _root = str(Path(_inspect.getfile(_inspect.currentframe())).parent.parent.parent)
 sys.path.insert(0, _root)
 
@@ -44,43 +47,45 @@ from attribution_models import (
 
 # ─── REPORT DATACLASS ─────────────────────────────────────────
 
+
 @dataclass
 class InsightReport:
     client_id: str
     client_name: str
     report_month: str
-    narrative: str                          # Full Claude-generated narrative
+    narrative: str  # Full Claude-generated narrative
     key_findings: list[str] = field(default_factory=list)
     top_channel: str = ""
     total_pipeline: float = 0.0
     total_spend: float = 0.0
     overall_roi: float = 0.0
-    collected_revenue: float = 0.0         # Actual cash collected via Stripe
-    refund_rate: float = 0.0               # Refunds / collected revenue
-    true_roi: float = 0.0                  # collected_revenue / total_spend
+    collected_revenue: float = 0.0  # Actual cash collected via Stripe
+    refund_rate: float = 0.0  # Refunds / collected revenue
+    true_roi: float = 0.0  # collected_revenue / total_spend
     attribution_model: str = "last_touch"
     generated_at: str = ""
 
     def to_dict(self) -> dict:
         return {
-            "client_id":          self.client_id,
-            "client_name":        self.client_name,
-            "report_month":       self.report_month,
-            "narrative":          self.narrative,
-            "key_findings":       self.key_findings,
-            "top_channel":        self.top_channel,
-            "total_pipeline":     self.total_pipeline,
-            "total_spend":        self.total_spend,
-            "overall_roi":        self.overall_roi,
-            "collected_revenue":  self.collected_revenue,
-            "refund_rate":        self.refund_rate,
-            "true_roi":           self.true_roi,
-            "attribution_model":   self.attribution_model,
-            "generated_at":       self.generated_at,
+            "client_id": self.client_id,
+            "client_name": self.client_name,
+            "report_month": self.report_month,
+            "narrative": self.narrative,
+            "key_findings": self.key_findings,
+            "top_channel": self.top_channel,
+            "total_pipeline": self.total_pipeline,
+            "total_spend": self.total_spend,
+            "overall_roi": self.overall_roi,
+            "collected_revenue": self.collected_revenue,
+            "refund_rate": self.refund_rate,
+            "true_roi": self.true_roi,
+            "attribution_model": self.attribution_model,
+            "generated_at": self.generated_at,
         }
 
 
 # ─── DATA FETCHER ─────────────────────────────────────────────
+
 
 def _fetch_channel_performance(config: ClientConfig) -> list[dict]:
     """Pull channel_performance data from Databricks. Prefers v2 (payment metrics)."""
@@ -138,7 +143,10 @@ def _fetch_channel_performance(config: ClientConfig) -> list[dict]:
 
 # ─── CLAUDE NARRATIVE GENERATOR ───────────────────────────────
 
-def _build_prompt(config: ClientConfig, data: list[dict], attribution_model: str) -> str:
+
+def _build_prompt(
+    config: ClientConfig, data: list[dict], attribution_model: str
+) -> str:
     """Build the prompt for Claude."""
 
     data_str = json.dumps(data, indent=2, default=str)
@@ -146,28 +154,32 @@ def _build_prompt(config: ClientConfig, data: list[dict], attribution_model: str
     model_label = ATTRIBUTION_MODEL_LABELS[selected_model]
     model_description = ATTRIBUTION_MODEL_DESCRIPTIONS[selected_model]
 
-    total_pipeline      = sum(r.get("pipeline_value") or 0 for r in data)
-    total_spend         = sum(r.get("total_spend") or 0 for r in data)
-    total_deals         = sum(r.get("deals_count") or 0 for r in data)
-    collected_revenue   = sum(r.get("collected_revenue") or 0 for r in data)
-    top_channel         = data[0]["channel"] if data else "Unknown"
-    report_month        = data[0]["report_month"] if data else "Unknown"
-    has_payment_data    = any(r.get("collected_revenue") is not None for r in data)
+    total_pipeline = sum(r.get("pipeline_value") or 0 for r in data)
+    total_spend = sum(r.get("total_spend") or 0 for r in data)
+    total_deals = sum(r.get("deals_count") or 0 for r in data)
+    collected_revenue = sum(r.get("collected_revenue") or 0 for r in data)
+    top_channel = data[0]["channel"] if data else "Unknown"
+    report_month = data[0]["report_month"] if data else "Unknown"
+    has_payment_data = any(r.get("collected_revenue") is not None for r in data)
 
     high_refund_channels = [
-        r["channel"] for r in data
-        if (r.get("refund_rate") or 0) > 0.10
+        r["channel"] for r in data if (r.get("refund_rate") or 0) > 0.10
     ]
     refund_note = (
         f"- Channels with refund rate > 10%: {', '.join(high_refund_channels)}"
-        if high_refund_channels else ""
+        if high_refund_channels
+        else ""
     )
 
-    payment_summary = f"""
+    payment_summary = (
+        f"""
 - Collected revenue (actual cash): ${collected_revenue:,.0f}
 - Pipeline vs collected gap: ${total_pipeline - collected_revenue:,.0f}
 {refund_note}
-""" if has_payment_data else ""
+"""
+        if has_payment_data
+        else ""
+    )
 
     return f"""You are a marketing analytics consultant writing a monthly attribution report for {config.client_name}.
 
@@ -226,6 +238,7 @@ _SYSTEM_PROMPT = (
     "business language. You always return valid JSON — no markdown, no backticks, no preamble."
 )
 
+
 def _call_claude(
     prompt: str,
     client_id: str = "",
@@ -268,6 +281,7 @@ def _call_claude(
 
 # ─── TEMPLATE FALLBACK ────────────────────────────────────────
 
+
 def _build_fallback_report(
     config: ClientConfig,
     data: list[dict],
@@ -277,14 +291,14 @@ def _build_fallback_report(
     Generates a structured but non-narrative report from raw channel_performance
     data when the Claude API is unavailable. No prose — metrics only.
     """
-    total_pipeline    = sum(r.get("pipeline_value") or 0 for r in data)
-    total_spend       = sum(r.get("total_spend") or 0 for r in data)
-    total_deals       = sum(r.get("deals_count") or 0 for r in data)
+    total_pipeline = sum(r.get("pipeline_value") or 0 for r in data)
+    total_spend = sum(r.get("total_spend") or 0 for r in data)
+    total_deals = sum(r.get("deals_count") or 0 for r in data)
     collected_revenue = sum(r.get("collected_revenue") or 0 for r in data)
-    overall_roi       = round(total_pipeline / total_spend, 2) if total_spend else 0.0
-    true_roi          = round(collected_revenue / total_spend, 2) if total_spend else 0.0
-    top_channel       = data[0]["channel"] if data else "Unknown"
-    report_month      = data[0].get("report_month", "Unknown") if data else "Unknown"
+    overall_roi = round(total_pipeline / total_spend, 2) if total_spend else 0.0
+    true_roi = round(collected_revenue / total_spend, 2) if total_spend else 0.0
+    top_channel = data[0]["channel"] if data else "Unknown"
+    report_month = data[0].get("report_month", "Unknown") if data else "Unknown"
 
     channel_lines = [
         f"• {r['channel']}: {int(r.get('deals_count') or 0)} deals, "
@@ -308,23 +322,26 @@ def _build_fallback_report(
         f"Total ad spend: ${total_spend:,.0f} — ROI: {overall_roi}x",
     ]
     if collected_revenue:
-        key_findings.append(f"Collected revenue: ${collected_revenue:,.0f} — True ROI: {true_roi}x")
+        key_findings.append(
+            f"Collected revenue: ${collected_revenue:,.0f} — True ROI: {true_roi}x"
+        )
 
     return {
-        "narrative":        narrative,
-        "key_findings":     key_findings,
-        "top_channel":      top_channel,
-        "total_pipeline":   total_pipeline,
-        "total_spend":      total_spend,
-        "overall_roi":      overall_roi,
+        "narrative": narrative,
+        "key_findings": key_findings,
+        "top_channel": top_channel,
+        "total_pipeline": total_pipeline,
+        "total_spend": total_spend,
+        "overall_roi": overall_roi,
         "collected_revenue": collected_revenue,
-        "refund_rate":      0.0,
-        "true_roi":         true_roi,
+        "refund_rate": 0.0,
+        "true_roi": true_roi,
         "attribution_model": selected_model,
     }
 
 
 # ─── MAIN FUNCTION ────────────────────────────────────────────
+
 
 def generate_insight_report(
     client_id: str,
@@ -355,12 +372,15 @@ def generate_insight_report(
         )
 
     # 2. Build prompt and call Claude (two-stage via N8iV agents, fallback to single-stage)
-    logger.info("[Insight] Generating report via N8iV revenue-analyst + executive-reporting agents...")
+    logger.info(
+        "[Insight] Generating report via N8iV revenue-analyst + executive-reporting agents..."
+    )
     try:
         from agents.intelligence.n8iv_agents import (
             run_revenue_analyst_agent,
             run_executive_reporting_agent,
         )
+
         analyst_output = run_revenue_analyst_agent(
             client_id=client_id,
             client_name=config.client_name,
@@ -420,6 +440,7 @@ def generate_insight_report(
 
 if __name__ == "__main__":
     import argparse
+
     logging.basicConfig(level=logging.INFO)
 
     parser = argparse.ArgumentParser()
@@ -432,9 +453,9 @@ if __name__ == "__main__":
         attribution_model=args.attribution_model,
     )
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print(f"ATTRIBUTION REPORT | {report.client_name} | {report.report_month}")
-    print("="*60)
+    print("=" * 60)
     print(report.narrative)
     print("\nKEY FINDINGS:")
     for f in report.key_findings:
@@ -443,4 +464,4 @@ if __name__ == "__main__":
     print(f"Total Pipeline:  ${report.total_pipeline:,.0f}")
     print(f"Total Spend:     ${report.total_spend:,.0f}")
     print(f"Overall ROI:     {report.overall_roi}x")
-    print("="*60)
+    print("=" * 60)

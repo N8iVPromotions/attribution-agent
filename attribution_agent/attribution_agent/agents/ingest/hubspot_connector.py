@@ -6,9 +6,9 @@ Joins them so every deal row carries its lead's original traffic source.
 
 API Docs: https://developers.hubspot.com/docs/api/crm/deals
 """
+
 from __future__ import annotations
 
-import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -39,13 +39,13 @@ CONTACT_PROPERTIES = [
     "firstname",
     "lastname",
     "email",
-    "hs_analytics_source",              # First touch source (e.g. PAID_SOCIAL)
-    "hs_analytics_source_data_1",       # Source detail 1 (e.g. facebook)
-    "hs_analytics_source_data_2",       # Source detail 2 (e.g. campaign name)
+    "hs_analytics_source",  # First touch source (e.g. PAID_SOCIAL)
+    "hs_analytics_source_data_1",  # Source detail 1 (e.g. facebook)
+    "hs_analytics_source_data_2",  # Source detail 2 (e.g. campaign name)
     "hs_analytics_first_url",
     "hs_analytics_last_url",
     "hs_analytics_num_visits",
-    "utm_campaign",                     # Only present if you've set up custom props
+    "utm_campaign",  # Only present if you've set up custom props
     "utm_source",
     "utm_medium",
     "utm_content",
@@ -55,19 +55,20 @@ CONTACT_PROPERTIES = [
 
 # Map HubSpot source values to readable labels
 SOURCE_MAP = {
-    "PAID_SOCIAL":      "Paid Social",
-    "PAID_SEARCH":      "Paid Search",
-    "ORGANIC_SEARCH":   "Organic Search",
-    "EMAIL_MARKETING":  "Email",
-    "SOCIAL_MEDIA":     "Organic Social",
-    "REFERRALS":        "Referral",
-    "DIRECT_TRAFFIC":   "Direct",
-    "OTHER_CAMPAIGNS":  "Other",
-    "OFFLINE":          "Offline",
+    "PAID_SOCIAL": "Paid Social",
+    "PAID_SEARCH": "Paid Search",
+    "ORGANIC_SEARCH": "Organic Search",
+    "EMAIL_MARKETING": "Email",
+    "SOCIAL_MEDIA": "Organic Social",
+    "REFERRALS": "Referral",
+    "DIRECT_TRAFFIC": "Direct",
+    "OTHER_CAMPAIGNS": "Other",
+    "OFFLINE": "Offline",
 }
 
 
 # ─── CONNECTOR ────────────────────────────────────────────────────────────────
+
 
 class HubSpotConnector:
     """
@@ -81,10 +82,12 @@ class HubSpotConnector:
     def __init__(self, access_token: str = "") -> None:
         self.access_token = access_token
         self.session = requests.Session()
-        self.session.headers.update({
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json",
-        })
+        self.session.headers.update(
+            {
+                "Authorization": f"Bearer {self.access_token}",
+                "Content-Type": "application/json",
+            }
+        )
 
     @retry(
         stop=stop_after_attempt(3),
@@ -124,11 +127,13 @@ class HubSpotConnector:
             }
         ]
         if pipeline_id:
-            filters.append({
-                "propertyName": "pipeline",
-                "operator": "EQ",
-                "value": pipeline_id,
-            })
+            filters.append(
+                {
+                    "propertyName": "pipeline",
+                    "operator": "EQ",
+                    "value": pipeline_id,
+                }
+            )
 
         deals = []
         after_cursor = None
@@ -139,7 +144,9 @@ class HubSpotConnector:
                 "properties": DEAL_PROPERTIES,
                 "associations": ["contacts"],
                 "limit": 100,
-                "sorts": [{"propertyName": "hs_lastmodifieddate", "direction": "DESCENDING"}],
+                "sorts": [
+                    {"propertyName": "hs_lastmodifieddate", "direction": "DESCENDING"}
+                ],
             }
             if after_cursor:
                 payload["after"] = after_cursor
@@ -233,32 +240,32 @@ class HubSpotConnector:
             raw_source = contact_props.get("hs_analytics_source", "")
             row = {
                 # Deal fields
-                "deal_id":          deal["id"],
-                "deal_name":        props.get("dealname"),
-                "deal_stage":       props.get("dealstage"),
-                "pipeline":         props.get("pipeline"),
-                "amount":           _safe_float(props.get("amount")),
-                "close_date":       _safe_date(props.get("closedate")),
-                "create_date":      _safe_date(props.get("createdate")),
-                "stage_probability":_safe_float(props.get("hs_deal_stage_probability")),
-
+                "deal_id": deal["id"],
+                "deal_name": props.get("dealname"),
+                "deal_stage": props.get("dealstage"),
+                "pipeline": props.get("pipeline"),
+                "amount": _safe_float(props.get("amount")),
+                "close_date": _safe_date(props.get("closedate")),
+                "create_date": _safe_date(props.get("createdate")),
+                "stage_probability": _safe_float(
+                    props.get("hs_deal_stage_probability")
+                ),
                 # Contact / Attribution fields
-                "contact_id":       contact_id,
-                "contact_email":    contact_props.get("email"),
-                "hs_source":        raw_source,
-                "hs_source_label":  SOURCE_MAP.get(raw_source, raw_source),
+                "contact_id": contact_id,
+                "contact_email": contact_props.get("email"),
+                "hs_source": raw_source,
+                "hs_source_label": SOURCE_MAP.get(raw_source, raw_source),
                 "hs_source_detail_1": contact_props.get("hs_analytics_source_data_1"),
                 "hs_source_detail_2": contact_props.get("hs_analytics_source_data_2"),
-                "utm_campaign":     contact_props.get("utm_campaign"),
-                "utm_source":       contact_props.get("utm_source"),
-                "utm_medium":       contact_props.get("utm_medium"),
-                "utm_content":      contact_props.get("utm_content"),
-                "first_page_url":   contact_props.get("hs_analytics_first_url"),
-                "lifecycle_stage":  contact_props.get("lifecyclestage"),
+                "utm_campaign": contact_props.get("utm_campaign"),
+                "utm_source": contact_props.get("utm_source"),
+                "utm_medium": contact_props.get("utm_medium"),
+                "utm_content": contact_props.get("utm_content"),
+                "first_page_url": contact_props.get("hs_analytics_first_url"),
+                "lifecycle_stage": contact_props.get("lifecyclestage"),
                 "lead_create_date": _safe_date(contact_props.get("createdate")),
-
                 # Meta
-                "source":           "hubspot",
+                "source": "hubspot",
             }
             rows.append(row)
 
@@ -268,8 +275,12 @@ class HubSpotConnector:
         if "lead_create_date" in df.columns and "create_date" in df.columns:
             try:
                 df["create_date"] = pd.to_datetime(df["create_date"], errors="coerce")
-                df["lead_create_date"] = pd.to_datetime(df["lead_create_date"], errors="coerce")
-                df["days_to_deal"] = (df["create_date"] - df["lead_create_date"]).dt.days
+                df["lead_create_date"] = pd.to_datetime(
+                    df["lead_create_date"], errors="coerce"
+                )
+                df["days_to_deal"] = (
+                    df["create_date"] - df["lead_create_date"]
+                ).dt.days
             except Exception:
                 df["days_to_deal"] = None
 
@@ -278,6 +289,7 @@ class HubSpotConnector:
 
 
 # ─── HELPERS ──────────────────────────────────────────────────────────────────
+
 
 def _safe_float(val: Any) -> float | None:
     try:
@@ -294,6 +306,7 @@ def _safe_date(val: Any) -> pd.Timestamp | None:
 
 
 # ─── CONVENIENCE FUNCTION (called by Prefect flow) ────────────────────────────
+
 
 def pull_hubspot_data(
     lookback_days: int = 30,

@@ -7,6 +7,7 @@ All destructive actions require your explicit approval via inline buttons.
 Start via app.py (auto-starts as a background thread) or standalone:
     python agents/control/arie_bot.py
 """
+
 import json
 import logging
 import os
@@ -22,7 +23,7 @@ _TELEGRAM_BASE = "https://api.telegram.org/bot{token}/{method}"
 
 # ── Approval queue ─────────────────────────────────────────────
 _lock = threading.Lock()
-_pending: dict[str, dict] = {}   # action_id → {description, callback}
+_pending: dict[str, dict] = {}  # action_id → {description, callback}
 
 # ── Bot singleton state ────────────────────────────────────────
 _bot_token: str = ""
@@ -70,10 +71,12 @@ def notify(text: str) -> None:
 
 def _load_credentials() -> tuple[str, str]:
     """Read TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID from secrets or env."""
+
     def _get(key: str) -> str:
         try:
             import base64
             from databricks.sdk import WorkspaceClient
+
             resp = WorkspaceClient().secrets.get_secret(scope="attribution", key=key)
             val = resp.value or ""
             try:
@@ -93,20 +96,27 @@ def _write_approval_queue(action_id: str, description: str, action_type: str) ->
         import pandas as pd
         from datetime import datetime, timezone
         from utils.databricks_writer import _upsert_dataframe
-        _OPS = __import__("os").environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_ops")
-        df = pd.DataFrame([{
-            "action_id": action_id,
-            "created_at": datetime.now(timezone.utc),
-            "actor": "arie_bot",
-            "description": description,
-            "action_type": action_type,
-            "payload_json": "{}",
-            "status": "pending",
-            "resolved_at": None,
-            "resolved_by": "",
-            "resolution_note": "",
-            "channel": "telegram",
-        }])
+
+        _OPS = __import__("os").environ.get(
+            "ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_ops"
+        )
+        df = pd.DataFrame(
+            [
+                {
+                    "action_id": action_id,
+                    "created_at": datetime.now(timezone.utc),
+                    "actor": "arie_bot",
+                    "description": description,
+                    "action_type": action_type,
+                    "payload_json": "{}",
+                    "status": "pending",
+                    "resolved_at": None,
+                    "resolved_by": "",
+                    "resolution_note": "",
+                    "channel": "telegram",
+                }
+            ]
+        )
         _upsert_dataframe(df, _OPS, "approval_queue", ["action_id"])
     except Exception as exc:
         logger.debug(f"[ARIE] approval_queue write failed: {exc}")
@@ -117,7 +127,10 @@ def _update_approval_queue(action_id: str, status: str) -> None:
     try:
         from datetime import datetime, timezone
         from utils.databricks_writer import _run_sql
-        _OPS = __import__("os").environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_ops")
+
+        _OPS = __import__("os").environ.get(
+            "ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_ops"
+        )
         now = datetime.now(timezone.utc).isoformat()
         _run_sql(
             f"UPDATE {_OPS}.approval_queue "
@@ -137,12 +150,16 @@ def request_approval(description: str, callback, action_type: str = "generic") -
     _write_approval_queue(action_id, description, action_type)
 
     markup = {
-        "inline_keyboard": [[
-            {"text": "✅ Approve", "callback_data": f"approve:{action_id}"},
-            {"text": "❌ Reject",  "callback_data": f"reject:{action_id}"},
-        ]]
+        "inline_keyboard": [
+            [
+                {"text": "✅ Approve", "callback_data": f"approve:{action_id}"},
+                {"text": "❌ Reject", "callback_data": f"reject:{action_id}"},
+            ]
+        ]
     }
-    send_message(f"*Action pending your approval*\n\n{description}", reply_markup=markup)
+    send_message(
+        f"*Action pending your approval*\n\n{description}", reply_markup=markup
+    )
     return action_id
 
 
@@ -202,7 +219,7 @@ Return exactly:
 # ── Callback query handler (inline button presses) ─────────────
 def _handle_callback_query(query: dict) -> None:
     data = query.get("data", "")
-    qid  = query["id"]
+    qid = query["id"]
 
     if ":" not in data:
         return
@@ -233,20 +250,21 @@ def _handle_callback_query(query: dict) -> None:
 
 # ── Message handler ────────────────────────────────────────────
 def _handle_message(message: dict) -> None:
-    text  = message.get("text", "") or ""
+    text = message.get("text", "") or ""
     voice = message.get("voice")
 
     # Transcribe voice if present
     if voice and not text:
         from agents.control.voice_handler import transcribe_voice
+
         text = transcribe_voice(voice["file_id"], _bot_token) or ""
         if text:
-            send_message(f"🎙️ _Heard: \"{text}\"_")
+            send_message(f'🎙️ _Heard: "{text}"_')
         else:
             send_message(
                 "⚠️ Voice transcription not configured.\n"
                 "Add `OPENAI_API_KEY` to your `.env` to enable voice commands.\n"
-                "Text commands work now — say *\"help\"* to get started."
+                'Text commands work now — say *"help"* to get started.'
             )
             return
 
@@ -262,6 +280,7 @@ def _handle_message(message: dict) -> None:
     if intent == "check_status":
         from config.client_config import CLIENT_REGISTRY
         from agents.outreach.outreach_agent import PROSPECTS
+
         send_message(
             f"*ARIE Status* 🟢 Online\n\n"
             f"📊 *Clients:* {', '.join(CLIENT_REGISTRY.keys())}\n"
@@ -272,26 +291,30 @@ def _handle_message(message: dict) -> None:
     # ── LIST PROSPECTS ──────────────────────────────────────────
     elif intent == "list_prospects":
         from agents.outreach.outreach_agent import PROSPECTS
+
         lines = [f"{p['id']}. *{p['name']}* — {p['industry']}" for p in PROSPECTS]
         send_message("*Outreach Prospects*\n\n" + "\n".join(lines))
 
     # ── LIST CLIENTS ────────────────────────────────────────────
     elif intent == "list_clients":
         from config.client_config import CLIENT_REGISTRY
+
         lines = [f"• `{cid}`" for cid in CLIENT_REGISTRY]
         send_message("*Attribution Clients*\n\n" + "\n".join(lines))
 
     # ── GENERATE OUTREACH ───────────────────────────────────────
     elif intent == "generate_outreach":
         from agents.outreach.outreach_agent import PROSPECTS, generate_email_sequence
-        name    = (params.get("prospect_name") or "").lower()
+
+        name = (params.get("prospect_name") or "").lower()
         matches = [p for p in PROSPECTS if name in p["name"].lower()] if name else []
 
         if not matches:
             lines = [f"{p['id']}. {p['name']}" for p in PROSPECTS]
             send_message(
-                "Which prospect?\n\n" + "\n".join(lines) +
-                "\n\nSay _\"generate emails for [business name]\"_"
+                "Which prospect?\n\n"
+                + "\n".join(lines)
+                + '\n\nSay _"generate emails for [business name]"_'
             )
             return
 
@@ -300,7 +323,7 @@ def _handle_message(message: dict) -> None:
         def do_generate():
             seq = generate_email_sequence(prospect)
             subjects = "\n".join(
-                f"  {i+1}. _{seq[f'email{i+1}']['subject']}_" for i in range(3)
+                f"  {i + 1}. _{seq[f'email{i + 1}']['subject']}_" for i in range(3)
             )
             return f"3 emails ready for *{prospect['name']}*\n\n{subjects}"
 
@@ -312,9 +335,13 @@ def _handle_message(message: dict) -> None:
     # ── RUN PIPELINE ────────────────────────────────────────────
     elif intent == "run_pipeline":
         client_id = params.get("client_id") or "n8iv_promotions"
-        dry_run   = bool(params.get("dry_run", True))
-        label     = "dry run" if dry_run else "live run"
-        warning   = "_Dry run — no emails will be sent._" if dry_run else "⚠️ _Live run — reports will be emailed to clients._"
+        dry_run = bool(params.get("dry_run", True))
+        label = "dry run" if dry_run else "live run"
+        warning = (
+            "_Dry run — no emails will be sent._"
+            if dry_run
+            else "⚠️ _Live run — reports will be emailed to clients._"
+        )
 
         def do_run():
             import threading
@@ -332,6 +359,7 @@ def _handle_message(message: dict) -> None:
 
             def _poll():
                 import time
+
                 terminal = {
                     RunLifeCycleState.TERMINATED,
                     RunLifeCycleState.SKIPPED,
@@ -349,7 +377,9 @@ def _handle_message(message: dict) -> None:
                                     f"Client: `{client_id}` · Run: `{run_id}`"
                                 )
                             else:
-                                state_val = result_state.value if result_state else "unknown"
+                                state_val = (
+                                    result_state.value if result_state else "unknown"
+                                )
                                 send_message(
                                     f"❌ *Pipeline {label} failed* — `{state_val}`\n"
                                     f"Run: `{run_id}`"
@@ -359,11 +389,10 @@ def _handle_message(message: dict) -> None:
                         send_message(f"⚠️ Could not poll run status: `{exc}`")
                         break
 
-            threading.Thread(target=_poll, daemon=True, name=f"arie-poll-{run_id}").start()
-            return (
-                f"Submitted · Run ID: `{run_id}`\n"
-                f"I'll message you when it's done."
-            )
+            threading.Thread(
+                target=_poll, daemon=True, name=f"arie-poll-{run_id}"
+            ).start()
+            return f"Submitted · Run ID: `{run_id}`\nI'll message you when it's done."
 
         request_approval(
             f"Run attribution pipeline (*{label}*) for `{client_id}`?\n\n{warning}",
@@ -376,21 +405,21 @@ def _handle_message(message: dict) -> None:
             "*ARIE — Automatic Revenue Intelligence Engine* 🤖\n\n"
             "Here's what you can tell me:\n\n"
             "📊 *Status & overview*\n"
-            "  _\"What's the status?\"_\n"
-            "  _\"List all prospects\"_\n"
-            "  _\"List active clients\"_\n\n"
+            '  _"What\'s the status?"_\n'
+            '  _"List all prospects"_\n'
+            '  _"List active clients"_\n\n'
             "✉️ *Outreach*\n"
-            "  _\"Generate emails for Alani Skin MD\"_\n"
-            "  _\"Create outreach for Dolce Medical Spa\"_\n\n"
+            '  _"Generate emails for Alani Skin MD"_\n'
+            '  _"Create outreach for Dolce Medical Spa"_\n\n'
             "⚡ *Pipeline*\n"
-            "  _\"Run pipeline for N8iV Promotions (dry run)\"_\n"
-            "  _\"Run live pipeline\"_\n\n"
+            '  _"Run pipeline for N8iV Promotions (dry run)"_\n'
+            '  _"Run live pipeline"_\n\n'
             "🎙️ Voice commands work too — just send a voice message!"
         )
 
     # ── UNKNOWN ─────────────────────────────────────────────────
     else:
-        send_message("I didn't catch that. Say *\"help\"* to see what I can do.")
+        send_message('I didn\'t catch that. Say *"help"* to see what I can do.')
 
 
 # ── Long-polling loop ──────────────────────────────────────────
@@ -400,7 +429,7 @@ def _poll_loop() -> None:
     send_message(
         "🟢 *ARIE online*\n"
         "Automatic Revenue Intelligence Engine ready.\n\n"
-        "Say *\"help\"* to see available commands."
+        'Say *"help"* to see available commands.'
     )
 
     while _running:
@@ -441,9 +470,9 @@ def start(token: str, chat_id: str) -> None:
     if _thread and _thread.is_alive():
         return
     _bot_token = token
-    _chat_id   = str(chat_id)
-    _running   = True
-    _thread    = threading.Thread(target=_poll_loop, daemon=True, name="ARIE")
+    _chat_id = str(chat_id)
+    _running = True
+    _thread = threading.Thread(target=_poll_loop, daemon=True, name="ARIE")
     _thread.start()
     logger.info("ARIE started")
 
@@ -460,8 +489,10 @@ def is_running() -> bool:
 # ── Standalone entry point ─────────────────────────────────────
 if __name__ == "__main__":
     import sys
+
     try:
         from dotenv import load_dotenv
+
         load_dotenv()
     except Exception:
         pass
@@ -473,7 +504,9 @@ if __name__ == "__main__":
         _token, _chat_id_env = _load_credentials()
 
     if not _token or not _chat_id_env:
-        print("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set in .env or Databricks Secrets")
+        print(
+            "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set in .env or Databricks Secrets"
+        )
         sys.exit(1)
 
     start(_token, _chat_id_env)

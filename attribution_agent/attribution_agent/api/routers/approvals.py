@@ -13,6 +13,7 @@ _OPS_SCHEMA = os.environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_op
 
 def _fetch_pending() -> list[dict]:
     from utils.databricks_writer import _get_connection, _is_databricks, _get_spark
+
     query = (
         f"SELECT action_id, created_at, actor, description, action_type, status, channel "
         f"FROM {_OPS_SCHEMA}.approval_queue "
@@ -34,8 +35,11 @@ def _fetch_pending() -> list[dict]:
         return []
 
 
-def _resolve_approval(action_id: str, resolution: str, resolved_by: str, note: str) -> bool:
+def _resolve_approval(
+    action_id: str, resolution: str, resolved_by: str, note: str
+) -> bool:
     from utils.databricks_writer import _run_sql
+
     now = datetime.now(timezone.utc).isoformat()
     try:
         _run_sql(
@@ -52,7 +56,9 @@ def _resolve_approval(action_id: str, resolution: str, resolved_by: str, note: s
 
 
 @router.get("", response_model=list[ApprovalItem])
-async def list_pending_approvals(role: Role = Depends(require_auth)) -> list[ApprovalItem]:
+async def list_pending_approvals(
+    role: Role = Depends(require_auth),
+) -> list[ApprovalItem]:
     require_permission(role, Permission.APPROVE_ACTIONS)
     rows = _fetch_pending()
     return [ApprovalItem(**r) for r in rows]
@@ -65,10 +71,15 @@ async def resolve_approval(
     role: Role = Depends(require_admin),
 ) -> dict:
     require_permission(role, Permission.APPROVE_ACTIONS)
-    ok = _resolve_approval(action_id, body.resolution, actor="api", note=body.resolution_note)
+    ok = _resolve_approval(
+        action_id, body.resolution, actor="api", note=body.resolution_note
+    )
     if not ok:
-        raise HTTPException(status_code=404, detail=f"Pending approval '{action_id}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Pending approval '{action_id}' not found"
+        )
     from utils.audit_logger import log_event
+
     log_event(
         "APPROVAL_RESOLVED",
         actor="api",

@@ -7,6 +7,7 @@ Parses YAML frontmatter (name, version, model, updated_at) and returns
 the body separately. The active git prompt tag is read from the
 GIT_PROMPT_TAG env var (set by deploy workflow).
 """
+
 from __future__ import annotations
 import os
 from dataclasses import dataclass

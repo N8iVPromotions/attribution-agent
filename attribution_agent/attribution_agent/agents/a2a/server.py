@@ -11,6 +11,7 @@ The dispatch endpoint runs the same `run_local` routing used in-process, so a
 remote `HttpA2ATransport` call and a local `AgentDispatcher` call are equivalent.
 Mount `router` onto an existing FastAPI app, or run this module's `app` standalone.
 """
+
 from __future__ import annotations
 
 import logging
@@ -52,7 +53,9 @@ async def dispatch(req: DispatchRequest) -> DispatchResponse:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:  # agent execution failure
         logger.exception(f"[A2A] dispatch to {req.agent_id} failed")
-        raise HTTPException(status_code=502, detail=f"Agent execution failed: {exc}") from exc
+        raise HTTPException(
+            status_code=502, detail=f"Agent execution failed: {exc}"
+        ) from exc
     return DispatchResponse(agent_id=req.agent_id, output=output)
 
 

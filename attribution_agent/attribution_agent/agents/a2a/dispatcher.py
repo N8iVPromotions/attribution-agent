@@ -9,6 +9,7 @@ call to a remote A2A endpoint over HTTP (e.g. a peer service running
 `agents/a2a/server.py`). The wire contract is shared by both ends, so a request
 behaves identically whether it is served locally or across the network.
 """
+
 from __future__ import annotations
 
 import logging
@@ -16,10 +17,16 @@ from typing import Protocol
 
 logger = logging.getLogger(__name__)
 
-AGENT_IDS = ("data-quality", "revenue-analyst", "executive-reporting", "governance-reviewer")
+AGENT_IDS = (
+    "data-quality",
+    "revenue-analyst",
+    "executive-reporting",
+    "governance-reviewer",
+)
 
 
 # ── Local routing ───────────────────────────────────────────────────────────────
+
 
 def run_local(agent_id: str, input_data: dict) -> dict | str | list:
     """Run an agent in-process. Shared by LocalTransport and the A2A server."""
@@ -31,12 +38,15 @@ def run_local(agent_id: str, input_data: dict) -> dict | str | list:
     }
     handler = handlers.get(agent_id)
     if not handler:
-        raise ValueError(f"Unknown agent_id: {agent_id}. Available: {list(handlers.keys())}")
+        raise ValueError(
+            f"Unknown agent_id: {agent_id}. Available: {list(handlers.keys())}"
+        )
     return handler(input_data)
 
 
 def _data_quality(inp: dict) -> dict:
     from agents.intelligence.n8iv_agents import run_data_quality_agent
+
     return run_data_quality_agent(
         client_id=inp.get("client_id", ""),
         validation_reports=inp.get("validation_reports", []),
@@ -46,6 +56,7 @@ def _data_quality(inp: dict) -> dict:
 
 def _revenue_analyst(inp: dict) -> str:
     from agents.intelligence.n8iv_agents import run_revenue_analyst_agent
+
     return run_revenue_analyst_agent(
         client_id=inp.get("client_id", ""),
         client_name=inp.get("client_name", ""),
@@ -56,6 +67,7 @@ def _revenue_analyst(inp: dict) -> str:
 
 def _executive_reporting(inp: dict) -> dict:
     from agents.intelligence.n8iv_agents import run_executive_reporting_agent
+
     return run_executive_reporting_agent(
         client_id=inp.get("client_id", ""),
         client_name=inp.get("client_name", ""),
@@ -67,6 +79,7 @@ def _executive_reporting(inp: dict) -> dict:
 
 def _governance_reviewer(inp: dict) -> list[str]:
     from agents.intelligence.n8iv_agents import run_governance_review
+
     return run_governance_review(
         client_id=inp.get("client_id", ""),
         client_name=inp.get("client_name", ""),
@@ -76,6 +89,7 @@ def _governance_reviewer(inp: dict) -> list[str]:
 
 
 # ── Transports ──────────────────────────────────────────────────────────────────
+
 
 class Transport(Protocol):
     def send(self, agent_id: str, input_data: dict) -> dict | str | list: ...
@@ -112,8 +126,11 @@ class HttpA2ATransport:
         import requests
         from tenacity import retry, stop_after_attempt, wait_exponential
 
-        @retry(stop=stop_after_attempt(self.retries),
-               wait=wait_exponential(min=2, max=10), reraise=True)
+        @retry(
+            stop=stop_after_attempt(self.retries),
+            wait=wait_exponential(min=2, max=10),
+            reraise=True,
+        )
         def _post() -> dict:
             resp = requests.post(
                 f"{self.base_url}/a2a/dispatch",
@@ -130,6 +147,7 @@ class HttpA2ATransport:
 
 # ── Dispatcher ──────────────────────────────────────────────────────────────────
 
+
 class AgentDispatcher:
     def __init__(self, transport: Transport | None = None) -> None:
         self.transport: Transport = transport or LocalTransport()
@@ -140,6 +158,10 @@ class AgentDispatcher:
         Routing (local or network) is determined by the configured transport.
         """
         if agent_id not in AGENT_IDS:
-            raise ValueError(f"Unknown agent_id: {agent_id}. Available: {list(AGENT_IDS)}")
-        logger.info(f"[Dispatcher] Dispatching to {agent_id} via {type(self.transport).__name__}")
+            raise ValueError(
+                f"Unknown agent_id: {agent_id}. Available: {list(AGENT_IDS)}"
+            )
+        logger.info(
+            f"[Dispatcher] Dispatching to {agent_id} via {type(self.transport).__name__}"
+        )
         return self.transport.send(agent_id, input_data)

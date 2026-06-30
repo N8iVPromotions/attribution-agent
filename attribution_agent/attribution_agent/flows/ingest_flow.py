@@ -2,6 +2,7 @@
 flows/ingest_flow.py
 Pure Python orchestrator — runs as a Databricks Job (Python script task).
 """
+
 from __future__ import annotations
 
 import concurrent.futures
@@ -12,6 +13,7 @@ import time
 from pathlib import Path
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -20,6 +22,7 @@ try:
     _root = str(Path(__file__).parent.parent)
 except NameError:
     import inspect as _inspect
+
     _root = str(Path(_inspect.getfile(_inspect.currentframe())).parent.parent)
 sys.path.insert(0, _root)
 
@@ -28,6 +31,7 @@ def _get_secret(key: str) -> str:
     """Must be called from main thread where dbutils is available."""
     try:
         from databricks.sdk.runtime import dbutils
+
         return dbutils.secrets.get(scope="attribution", key=key)
     except Exception:
         return os.environ.get(key, "")
@@ -47,11 +51,15 @@ from agents.ingest.ad_sources import (
     normalize_meta_ads,
     normalize_tiktok_ads,
 )
-from agents.ingest.validator import validate_meta, validate_hubspot, validate_stripe, ValidationReport
+from agents.ingest.validator import validate_meta, validate_hubspot, validate_stripe
 from attribution_engine import run_attribution
 from utils.databricks_writer import (
-    ensure_schema, ensure_tables,
-    write_meta_data, write_hubspot_data, write_stripe_data, write_normalized_ad_data,
+    ensure_schema,
+    ensure_tables,
+    write_meta_data,
+    write_hubspot_data,
+    write_stripe_data,
+    write_normalized_ad_data,
     write_attribution_results,
 )
 
@@ -101,7 +109,9 @@ def step_pull_meta(config: ClientConfig, meta_token: str):
             lookback_days=config.lookback_days,
             access_token=meta_token,
         ),
-        retries=3, delay=30, label="pull-meta",
+        retries=3,
+        delay=30,
+        label="pull-meta",
     )
 
 
@@ -115,7 +125,9 @@ def step_pull_hubspot(config: ClientConfig, hubspot_token: str):
             pipeline_id=config.hubspot_pipeline_id,
             access_token=hubspot_token,
         ),
-        retries=3, delay=30, label="pull-hubspot",
+        retries=3,
+        delay=30,
+        label="pull-hubspot",
     )
 
 
@@ -129,7 +141,9 @@ def step_pull_google_ads(config: ClientConfig, google_token: str):
             lookback_days=config.lookback_days,
             access_token=google_token,
         ),
-        retries=3, delay=30, label="pull-google-ads",
+        retries=3,
+        delay=30,
+        label="pull-google-ads",
     )
 
 
@@ -143,7 +157,9 @@ def step_pull_linkedin_ads(config: ClientConfig, linkedin_token: str):
             lookback_days=config.lookback_days,
             access_token=linkedin_token,
         ),
-        retries=3, delay=30, label="pull-linkedin-ads",
+        retries=3,
+        delay=30,
+        label="pull-linkedin-ads",
     )
 
 
@@ -157,7 +173,9 @@ def step_pull_tiktok_ads(config: ClientConfig, tiktok_token: str):
             lookback_days=config.lookback_days,
             access_token=tiktok_token,
         ),
-        retries=3, delay=30, label="pull-tiktok-ads",
+        retries=3,
+        delay=30,
+        label="pull-tiktok-ads",
     )
 
 
@@ -187,7 +205,9 @@ def step_write_meta(validated_result, config: ClientConfig) -> int:
         return 0
     return _with_retry(
         lambda: write_meta_data(df, schema=config.databricks_schema),
-        retries=2, delay=15, label="write-meta",
+        retries=2,
+        delay=15,
+        label="write-meta",
     )
 
 
@@ -200,7 +220,9 @@ def step_write_hubspot(validated_result, config: ClientConfig) -> int:
         return 0
     return _with_retry(
         lambda: write_hubspot_data(df, schema=config.databricks_schema),
-        retries=2, delay=15, label="write-hubspot",
+        retries=2,
+        delay=15,
+        label="write-hubspot",
     )
 
 
@@ -213,7 +235,9 @@ def step_pull_stripe(config: ClientConfig, stripe_token: str):
             lookback_days=config.lookback_days,
             access_token=stripe_token,
         ),
-        retries=3, delay=30, label="pull-stripe",
+        retries=3,
+        delay=30,
+        label="pull-stripe",
     )
 
 
@@ -232,17 +256,23 @@ def step_write_stripe(validated_result, config: ClientConfig) -> int:
         return 0
     return _with_retry(
         lambda: write_stripe_data(df, schema=config.databricks_schema),
-        retries=2, delay=15, label="write-stripe",
+        retries=2,
+        delay=15,
+        label="write-stripe",
     )
 
 
-def build_normalized_ads(meta_df, google_df, linkedin_df, tiktok_df, config: ClientConfig):
-    return combine_normalized_ads([
-        normalize_meta_ads(meta_df, config.client_id),
-        normalize_google_ads(google_df, config.client_id),
-        normalize_linkedin_ads(linkedin_df, config.client_id),
-        normalize_tiktok_ads(tiktok_df, config.client_id),
-    ])
+def build_normalized_ads(
+    meta_df, google_df, linkedin_df, tiktok_df, config: ClientConfig
+):
+    return combine_normalized_ads(
+        [
+            normalize_meta_ads(meta_df, config.client_id),
+            normalize_google_ads(google_df, config.client_id),
+            normalize_linkedin_ads(linkedin_df, config.client_id),
+            normalize_tiktok_ads(tiktok_df, config.client_id),
+        ]
+    )
 
 
 def step_write_normalized_ads(normalized, config: ClientConfig) -> int:
@@ -251,11 +281,15 @@ def step_write_normalized_ads(normalized, config: ClientConfig) -> int:
         return 0
     return _with_retry(
         lambda: write_normalized_ad_data(normalized, schema=config.databricks_schema),
-        retries=2, delay=15, label="write-normalized-ads",
+        retries=2,
+        delay=15,
+        label="write-normalized-ads",
     )
 
 
-def step_build_attribution(normalized_ads, hubspot_df, stripe_df, config: ClientConfig) -> dict:
+def step_build_attribution(
+    normalized_ads, hubspot_df, stripe_df, config: ClientConfig
+) -> dict:
     """Closed-loop join: connect ad touchpoints to closed/won revenue.
 
     Non-fatal — attribution is a downstream read model, so a failure here must
@@ -272,8 +306,12 @@ def step_build_attribution(normalized_ads, hubspot_df, stripe_df, config: Client
         )
         scorecard = result.channel_performance
         rows_written = _with_retry(
-            lambda: write_attribution_results(scorecard, schema=config.databricks_schema),
-            retries=2, delay=15, label="write-attribution-results",
+            lambda: write_attribution_results(
+                scorecard, schema=config.databricks_schema
+            ),
+            retries=2,
+            delay=15,
+            label="write-attribution-results",
         )
         logger.info(
             f"[Attribution] {config.client_id} | model={config.attribution_model} | "
@@ -292,7 +330,9 @@ def step_build_attribution(normalized_ads, hubspot_df, stripe_df, config: Client
         return {"attribution_error": repr(exc)}
 
 
-def step_alert(meta_result, hubspot_result, stripe_result, config: ClientConfig) -> None:
+def step_alert(
+    meta_result, hubspot_result, stripe_result, config: ClientConfig
+) -> None:
     all_reports = []
     if meta_result and meta_result[1]:
         all_reports.append(meta_result[1])
@@ -318,8 +358,10 @@ def step_data_quality_agent(
     """Non-blocking: run the N8iV data-quality agent and log findings."""
     try:
         from agents.intelligence.n8iv_agents import run_data_quality_agent
+
         reports = [
-            r[1] for r in (meta_result, hubspot_result, stripe_result)
+            r[1]
+            for r in (meta_result, hubspot_result, stripe_result)
             if r is not None and r[1] is not None
         ]
         findings = run_data_quality_agent(
@@ -342,44 +384,46 @@ def step_data_quality_agent(
 
 
 def ingest_flow(client_id: str) -> dict:
-    logger.info(f"{'='*50}")
+    logger.info(f"{'=' * 50}")
     logger.info(f"Ingest Flow START | client={client_id}")
-    logger.info(f"{'='*50}")
+    logger.info(f"{'=' * 50}")
 
     config = get_client(client_id)
 
-    meta_token    = _get_secret("META_ACCESS_TOKEN")
+    meta_token = _get_secret("META_ACCESS_TOKEN")
     hubspot_token = _get_secret("HUBSPOT_ACCESS_TOKEN")
-    stripe_token  = _get_secret("STRIPE_SECRET_KEY")
-    google_token  = _get_secret("GOOGLE_ADS_REFRESH_TOKEN")
+    stripe_token = _get_secret("STRIPE_SECRET_KEY")
+    google_token = _get_secret("GOOGLE_ADS_REFRESH_TOKEN")
     linkedin_token = _get_secret("LINKEDIN_ACCESS_TOKEN")
-    tiktok_token  = _get_secret("TIKTOK_ACCESS_TOKEN")
+    tiktok_token = _get_secret("TIKTOK_ACCESS_TOKEN")
 
     step_setup(config.databricks_schema)
 
     source_failures: dict = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-        meta_future    = pool.submit(step_pull_meta,    config, meta_token)
-        google_future  = pool.submit(step_pull_google_ads, config, google_token)
+        meta_future = pool.submit(step_pull_meta, config, meta_token)
+        google_future = pool.submit(step_pull_google_ads, config, google_token)
         linkedin_future = pool.submit(step_pull_linkedin_ads, config, linkedin_token)
-        tiktok_future  = pool.submit(step_pull_tiktok_ads, config, tiktok_token)
+        tiktok_future = pool.submit(step_pull_tiktok_ads, config, tiktok_token)
         hubspot_future = pool.submit(step_pull_hubspot, config, hubspot_token)
-        stripe_future  = pool.submit(step_pull_stripe,  config, stripe_token)
-        meta_df    = _collect(meta_future,    "pull-meta",         source_failures)
-        google_df  = _collect(google_future,  "pull-google-ads",   source_failures)
+        stripe_future = pool.submit(step_pull_stripe, config, stripe_token)
+        meta_df = _collect(meta_future, "pull-meta", source_failures)
+        google_df = _collect(google_future, "pull-google-ads", source_failures)
         linkedin_df = _collect(linkedin_future, "pull-linkedin-ads", source_failures)
-        tiktok_df  = _collect(tiktok_future,  "pull-tiktok-ads",   source_failures)
-        hubspot_df = _collect(hubspot_future, "pull-hubspot",      source_failures)
-        stripe_df  = _collect(stripe_future,  "pull-stripe",       source_failures)
+        tiktok_df = _collect(tiktok_future, "pull-tiktok-ads", source_failures)
+        hubspot_df = _collect(hubspot_future, "pull-hubspot", source_failures)
+        stripe_df = _collect(stripe_future, "pull-stripe", source_failures)
 
-    meta_validated    = step_validate_meta(meta_df,    config)
+    meta_validated = step_validate_meta(meta_df, config)
     hubspot_validated = step_validate_hubspot(hubspot_df, config)
-    stripe_validated  = step_validate_stripe(stripe_df,  config)
+    stripe_validated = step_validate_stripe(stripe_df, config)
 
-    meta_rows    = step_write_meta(meta_validated,    config)
+    meta_rows = step_write_meta(meta_validated, config)
     hubspot_rows = step_write_hubspot(hubspot_validated, config)
-    stripe_rows  = step_write_stripe(stripe_validated,  config)
-    normalized_ads = build_normalized_ads(meta_df, google_df, linkedin_df, tiktok_df, config)
+    stripe_rows = step_write_stripe(stripe_validated, config)
+    normalized_ads = build_normalized_ads(
+        meta_df, google_df, linkedin_df, tiktok_df, config
+    )
     normalized_ad_rows = step_write_normalized_ads(normalized_ads, config)
 
     # Closed-loop join: attribute closed/won revenue back to ad touchpoints.
@@ -388,17 +432,17 @@ def ingest_flow(client_id: str) -> dict:
     step_alert(meta_validated, hubspot_validated, stripe_validated, config)
 
     summary = {
-        "client_id":    client_id,
-        "meta_rows":    meta_rows,
-        "google_rows":  0 if google_df is None else len(google_df),
+        "client_id": client_id,
+        "meta_rows": meta_rows,
+        "google_rows": 0 if google_df is None else len(google_df),
         "linkedin_rows": 0 if linkedin_df is None else len(linkedin_df),
-        "tiktok_rows":  0 if tiktok_df is None else len(tiktok_df),
+        "tiktok_rows": 0 if tiktok_df is None else len(tiktok_df),
         "hubspot_rows": hubspot_rows,
-        "stripe_rows":  stripe_rows,
+        "stripe_rows": stripe_rows,
         "normalized_ad_rows": normalized_ad_rows,
-        "attribution":  attribution,
+        "attribution": attribution,
         "source_failures": source_failures,
-        "status":       "partial" if source_failures else "complete",
+        "status": "partial" if source_failures else "complete",
     }
     if source_failures:
         logger.error(
@@ -407,8 +451,11 @@ def ingest_flow(client_id: str) -> dict:
         )
 
     step_data_quality_agent(
-        meta_validated, hubspot_validated, stripe_validated,
-        ingest_summary=summary, config=config,
+        meta_validated,
+        hubspot_validated,
+        stripe_validated,
+        ingest_summary=summary,
+        config=config,
     )
 
     logger.info(f"Ingest Flow COMPLETE | {summary}")
@@ -426,10 +473,12 @@ def ingest_all_clients() -> list[dict]:
 if __name__ == "__main__":
     try:
         from databricks.sdk.runtime import dbutils
+
         client_id = dbutils.widgets.get("client")
         ingest_flow(client_id=client_id)
     except Exception:
         import argparse
+
         parser = argparse.ArgumentParser()
         parser.add_argument("--client", type=str, default=None)
         args, _ = parser.parse_known_args()

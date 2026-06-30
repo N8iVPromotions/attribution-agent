@@ -8,6 +8,7 @@ Hard guardrails applied to all agent inputs and outputs.
 - Validates JSON shape for JSON-contract agents
 - Flags governance critical_issues for human approval
 """
+
 from __future__ import annotations
 import logging
 import re
@@ -21,7 +22,7 @@ _INJECTION_PATTERNS = [
     re.compile(r"disregard (the |your )?(system|previous) (prompt|instructions)", re.I),
     re.compile(r"you are now (a |an )?(different|new|other)", re.I),
     re.compile(r"jailbreak|DAN mode|developer mode", re.I),
-    re.compile(r"<\|.*?\|>"),          # token-fence style
+    re.compile(r"<\|.*?\|>"),  # token-fence style
     re.compile(r"\[\[SYSTEM\]\]", re.I),
 ]
 
@@ -49,7 +50,9 @@ def check_input(message: str, agent_name: str) -> GuardrailResult:
     # Length guard
     if len(message) > _MAX_INPUT_CHARS:
         result.blocked = True
-        result.block_reason = f"Input too long: {len(message)} chars (max {_MAX_INPUT_CHARS})"
+        result.block_reason = (
+            f"Input too long: {len(message)} chars (max {_MAX_INPUT_CHARS})"
+        )
         logger.warning(f"[Guardrails] BLOCKED {agent_name}: {result.block_reason}")
         return result
 
@@ -57,7 +60,9 @@ def check_input(message: str, agent_name: str) -> GuardrailResult:
     for pattern in _INJECTION_PATTERNS:
         if pattern.search(message):
             result.blocked = True
-            result.block_reason = f"Prompt injection pattern detected: {pattern.pattern}"
+            result.block_reason = (
+                f"Prompt injection pattern detected: {pattern.pattern}"
+            )
             logger.warning(f"[Guardrails] BLOCKED {agent_name}: {result.block_reason}")
             _log_block(agent_name, result.block_reason)
             return result
@@ -65,12 +70,15 @@ def check_input(message: str, agent_name: str) -> GuardrailResult:
     # PII masking
     try:
         from utils.pii_masker import PIIMasker
+
         masked, report = PIIMasker().mask(message)
         if report.total > 0:
             result.pii_masked = True
             result.pii_count = report.total
             result.sanitized_text = masked
-            result.warnings.append(f"Masked {report.total} PII item(s) before agent call")
+            result.warnings.append(
+                f"Masked {report.total} PII item(s) before agent call"
+            )
         else:
             result.sanitized_text = message
     except Exception:
@@ -86,6 +94,7 @@ def check_output(text: str, agent_name: str) -> GuardrailResult:
     if agent_name in _JSON_CONTRACT_AGENTS:
         try:
             import json
+
             cleaned = text.strip()
             if cleaned.startswith("```"):
                 parts = cleaned.split("```")
@@ -99,6 +108,7 @@ def check_output(text: str, agent_name: str) -> GuardrailResult:
     if agent_name == "governance-reviewer":
         try:
             import json
+
             parsed = json.loads(text)
             if parsed.get("critical_issues"):
                 result.requires_approval = True
@@ -114,6 +124,7 @@ def check_output(text: str, agent_name: str) -> GuardrailResult:
 def _log_block(agent_name: str, reason: str) -> None:
     try:
         from utils.audit_logger import log_event
+
         log_event(
             "GUARDRAIL_BLOCK",
             actor="system",

@@ -2,7 +2,7 @@ from __future__ import annotations
 import os
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
-from api.auth import require_auth, require_admin
+from api.auth import require_auth
 from api.models import PipelineRunRequest, PipelineRunResponse, PipelineRunRecord
 from config.rbac_config import Role, Permission, require_permission
 
@@ -30,6 +30,7 @@ async def submit_pipeline_run(
 
     try:
         from databricks.sdk import WorkspaceClient
+
         params: list[str] = ["--agency", req.agency_id]
         if req.client_filter:
             params += ["--client-filter", req.client_filter]
@@ -59,6 +60,7 @@ async def list_pipeline_runs(
 ) -> list[PipelineRunRecord]:
     require_permission(role, Permission.VIEW_REPORTS)
     from utils.databricks_writer import fetch_recent_pipeline_runs
+
     rows = fetch_recent_pipeline_runs(limit=limit)
     return [PipelineRunRecord(**r) for r in rows]
 
@@ -70,6 +72,7 @@ async def get_pipeline_run(
 ) -> PipelineRunRecord:
     require_permission(role, Permission.VIEW_REPORTS)
     from utils.databricks_writer import fetch_recent_pipeline_runs
+
     rows = fetch_recent_pipeline_runs(limit=200)
     for r in rows:
         if r.get("run_id") == run_id:

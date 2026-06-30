@@ -3,6 +3,7 @@ api/main.py
 -----------
 FastAPI application. Exposes the attribution pipeline via REST.
 """
+
 from __future__ import annotations
 import logging
 import os
@@ -25,6 +26,7 @@ _ALLOW_ORIGINS = [o.strip() for o in os.environ.get("API_CORS_ORIGINS", "*").spl
 async def lifespan(app: FastAPI):
     try:
         from utils.databricks_writer import ensure_ops_tables
+
         ensure_ops_tables()
     except Exception as exc:
         logger.warning(f"[API] ensure_ops_tables on startup: {exc}")
@@ -56,6 +58,7 @@ async def audit_middleware(request: Request, call_next) -> Response:
 
     try:
         from utils.audit_logger import log_event
+
         log_event(
             "API_REQUEST",
             actor=request.headers.get("X-Actor", "api"),
@@ -88,6 +91,7 @@ app.include_router(a2a_router)  # A2A discovery + dispatch (well-known paths, no
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
+
 
 @app.get("/health", response_model=HealthResponse, tags=["meta"])
 async def health() -> HealthResponse:

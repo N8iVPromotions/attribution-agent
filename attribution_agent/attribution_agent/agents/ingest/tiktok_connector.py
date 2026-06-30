@@ -6,6 +6,7 @@ campaign-level metrics. Spend is returned in the ad account's currency. The
 connector normalizes nothing here — `ad_sources.normalize_tiktok_ads` maps the
 raw shape onto the shared normalized schema.
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,7 +29,9 @@ def _get(url: str, headers: dict, params: dict) -> dict:
     payload = response.json()
     # TikTok returns HTTP 200 with a non-zero `code` on API errors.
     if payload.get("code", 0) != 0:
-        raise RuntimeError(f"TikTok API error {payload.get('code')}: {payload.get('message')}")
+        raise RuntimeError(
+            f"TikTok API error {payload.get('code')}: {payload.get('message')}"
+        )
     return payload
 
 
@@ -68,22 +71,26 @@ def pull_tiktok_ads_data(
     page = 1
     while True:
         params = {**base_params, "page": page}
-        data = _get(f"{TIKTOK_BASE_URL}/report/integrated/get/", headers=headers, params=params)
+        data = _get(
+            f"{TIKTOK_BASE_URL}/report/integrated/get/", headers=headers, params=params
+        )
         body = data.get("data", {})
         elements = body.get("list", [])
         for item in elements:
             dims = item.get("dimensions", {})
             metrics = item.get("metrics", {})
-            rows.append({
-                "date": dims.get("stat_time_day", ""),
-                "advertiser_id": advertiser_id,
-                "campaign_id": dims.get("campaign_id", ""),
-                "campaign_name": metrics.get("campaign_name", ""),
-                "spend": float(metrics.get("spend") or 0),
-                "impressions": int(float(metrics.get("impressions") or 0)),
-                "clicks": int(float(metrics.get("clicks") or 0)),
-                "conversions": float(metrics.get("conversion") or 0),
-            })
+            rows.append(
+                {
+                    "date": dims.get("stat_time_day", ""),
+                    "advertiser_id": advertiser_id,
+                    "campaign_id": dims.get("campaign_id", ""),
+                    "campaign_name": metrics.get("campaign_name", ""),
+                    "spend": float(metrics.get("spend") or 0),
+                    "impressions": int(float(metrics.get("impressions") or 0)),
+                    "clicks": int(float(metrics.get("clicks") or 0)),
+                    "conversions": float(metrics.get("conversion") or 0),
+                }
+            )
         page_info = body.get("page_info", {})
         total_pages = page_info.get("total_page", 1)
         if page >= total_pages or not elements:

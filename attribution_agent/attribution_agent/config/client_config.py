@@ -4,10 +4,11 @@ config/client_config.py
 Central config for each client.  Add a new dict entry per client —
 the rest of the pipeline picks it up automatically.
 """
+
 from __future__ import annotations
 import json
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Literal
 import os
 from pathlib import Path
@@ -20,6 +21,7 @@ def _get_secret(key: str) -> str:
     """
     try:
         from databricks.sdk.runtime import dbutils
+
         return dbutils.secrets.get(scope="attribution", key=key)
     except Exception:
         return os.environ.get(key, "")
@@ -27,34 +29,34 @@ def _get_secret(key: str) -> str:
 
 @dataclass
 class ClientConfig:
-    client_id: str                          # short slug, e.g. "acme_co"
-    client_name: str                        # display name
+    client_id: str  # short slug, e.g. "acme_co"
+    client_name: str  # display name
     attribution_model: Literal[
         "last_touch", "first_touch", "linear", "time_decay", "u_shape", "w_shape"
     ] = "last_touch"
 
     # ── Meta ──────────────────────────────────────────────────────────────────
     meta_enabled: bool = False
-    meta_ad_account_id: str = ""            # format: act_123456789
+    meta_ad_account_id: str = ""  # format: act_123456789
 
     # Google Ads
     google_ads_enabled: bool = False
-    google_ads_customer_id: str = ""        # numeric customer ID, no dashes preferred
+    google_ads_customer_id: str = ""  # numeric customer ID, no dashes preferred
 
     # LinkedIn Ads
     linkedin_ads_enabled: bool = False
-    linkedin_ads_account_id: str = ""       # sponsored account ID or URN
+    linkedin_ads_account_id: str = ""  # sponsored account ID or URN
 
     # TikTok Ads
     tiktok_ads_enabled: bool = False
-    tiktok_ads_advertiser_id: str = ""      # TikTok advertiser (ad account) ID
+    tiktok_ads_advertiser_id: str = ""  # TikTok advertiser (ad account) ID
 
     # ── HubSpot ───────────────────────────────────────────────────────────────
     hubspot_enabled: bool = False
-    hubspot_pipeline_id: str = ""           # leave blank for default pipeline
+    hubspot_pipeline_id: str = ""  # leave blank for default pipeline
 
     # ── Databricks destination ─────────────────────────────────────────────────
-    databricks_schema: str = ""         # e.g. "attribution_acme_co"
+    databricks_schema: str = ""  # e.g. "attribution_acme_co"
 
     # ── Reporting window ──────────────────────────────────────────────────────
     lookback_days: int = 30
@@ -65,12 +67,12 @@ class ClientConfig:
 
     # ── Stripe ────────────────────────────────────────────────────────────────
     stripe_enabled: bool = False
-    stripe_account_id: str = ""            # Stripe account ID for reference
+    stripe_account_id: str = ""  # Stripe account ID for reference
 
     # ── Agency ────────────────────────────────────────────────────────────────
-    agency_id: str = ""                    # links client to an agency ("" = direct)
-    client_report_email: str = ""          # where this client's report gets sent
-    client_display_name: str = ""          # name shown in agency dashboard
+    agency_id: str = ""  # links client to an agency ("" = direct)
+    client_report_email: str = ""  # where this client's report gets sent
+    client_display_name: str = ""  # name shown in agency dashboard
 
     # ── Credentials (read from Databricks Secrets at runtime) ─────────────────
     @property
@@ -124,7 +126,9 @@ def default_client_schema(client_id: str) -> str:
 def _config_from_dict(data: dict) -> ClientConfig:
     payload = {k: v for k, v in data.items() if k in CLIENT_FIELDS}
     if not payload.get("client_id"):
-        payload["client_id"] = slugify_client_id(payload.get("client_name", "new_client"))
+        payload["client_id"] = slugify_client_id(
+            payload.get("client_name", "new_client")
+        )
     if not payload.get("client_name"):
         payload["client_name"] = payload["client_id"].replace("_", " ").title()
     if not payload.get("databricks_schema"):
@@ -150,8 +154,7 @@ def _write_custom_clients(clients: dict[str, ClientConfig]) -> None:
     CLIENT_REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "clients": {
-            client_id: asdict(config)
-            for client_id, config in sorted(clients.items())
+            client_id: asdict(config) for client_id, config in sorted(clients.items())
         }
     }
     CLIENT_REGISTRY_PATH.write_text(
@@ -186,9 +189,9 @@ BASE_CLIENT_REGISTRY: dict[str, ClientConfig] = {
         client_name="N8iV Promotions",
         attribution_model="last_touch",
         meta_enabled=True,
-        meta_ad_account_id="",              # ← add Meta ad account ID
+        meta_ad_account_id="",  # ← add Meta ad account ID
         hubspot_enabled=True,
-        hubspot_pipeline_id="",             # ← add HubSpot pipeline ID if not default
+        hubspot_pipeline_id="",  # ← add HubSpot pipeline ID if not default
         stripe_enabled=True,
         databricks_schema=f"{_catalog()}.attribution_n8iv_promotions",
         lookback_days=30,

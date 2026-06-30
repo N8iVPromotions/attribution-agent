@@ -26,6 +26,7 @@ diverge when a conversion carries more than one matchable touchpoint. Revenue
 that cannot be matched to any paid touchpoint is reported under the
 `unattributed` platform rather than silently dropped.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -63,6 +64,7 @@ PLATFORM_BY_UTM_SOURCE: dict[str, str] = {
 @dataclass(frozen=True)
 class Conversion:
     """A single closed/won revenue event with its captured identity."""
+
     conversion_id: str
     client_id: str
     occurred_at: datetime
@@ -105,6 +107,7 @@ def _as_datetime(value: object) -> datetime | None:
 
 # ── Conversion builders ──────────────────────────────────────────────────────
 
+
 def conversions_from_hubspot(
     df: pd.DataFrame,
     client_id: str,
@@ -122,22 +125,26 @@ def conversions_from_hubspot(
         revenue = float(row.get("amount") or 0.0)
         if revenue <= 0:
             continue
-        occurred_at = _as_datetime(row.get("close_date")) or _as_datetime(row.get("create_date"))
+        occurred_at = _as_datetime(row.get("close_date")) or _as_datetime(
+            row.get("create_date")
+        )
         if occurred_at is None:
             continue
         deal_id = str(row.get("deal_id") or "")
-        conversions.append(Conversion(
-            conversion_id=f"hubspot:{deal_id}",
-            client_id=client_id,
-            occurred_at=occurred_at,
-            revenue=revenue,
-            email=_norm(row.get("contact_email")),
-            utm_source=_norm(row.get("utm_source")),
-            utm_campaign=_norm(row.get("utm_campaign")),
-            utm_medium=_norm(row.get("utm_medium")),
-            deal_id=deal_id,
-            revenue_source="hubspot",
-        ))
+        conversions.append(
+            Conversion(
+                conversion_id=f"hubspot:{deal_id}",
+                client_id=client_id,
+                occurred_at=occurred_at,
+                revenue=revenue,
+                email=_norm(row.get("contact_email")),
+                utm_source=_norm(row.get("utm_source")),
+                utm_campaign=_norm(row.get("utm_campaign")),
+                utm_medium=_norm(row.get("utm_medium")),
+                deal_id=deal_id,
+                revenue_source="hubspot",
+            )
+        )
     return conversions
 
 
@@ -159,15 +166,17 @@ def conversions_from_stripe(df: pd.DataFrame, client_id: str) -> list[Conversion
         if occurred_at is None:
             continue
         payment_id = str(row.get("payment_id") or "")
-        conversions.append(Conversion(
-            conversion_id=f"stripe:{payment_id}",
-            client_id=client_id,
-            occurred_at=occurred_at,
-            revenue=revenue,
-            email=_norm(row.get("customer_email")),
-            deal_id=str(row.get("deal_id") or ""),
-            revenue_source="stripe",
-        ))
+        conversions.append(
+            Conversion(
+                conversion_id=f"stripe:{payment_id}",
+                client_id=client_id,
+                occurred_at=occurred_at,
+                revenue=revenue,
+                email=_norm(row.get("customer_email")),
+                deal_id=str(row.get("deal_id") or ""),
+                revenue_source="stripe",
+            )
+        )
     return conversions
 
 
@@ -213,18 +222,20 @@ def reconcile_conversions(
 
         consumed_hubspot.add(match.conversion_id)
         revenue = sc.revenue if prefer == "stripe" else match.revenue
-        reconciled.append(Conversion(
-            conversion_id=match.conversion_id,
-            client_id=match.client_id,
-            occurred_at=match.occurred_at or sc.occurred_at,
-            revenue=revenue,
-            email=match.email or sc.email,
-            utm_source=match.utm_source,
-            utm_campaign=match.utm_campaign,
-            utm_medium=match.utm_medium,
-            deal_id=match.deal_id or sc.deal_id,
-            revenue_source="stripe+hubspot" if prefer == "stripe" else "hubspot",
-        ))
+        reconciled.append(
+            Conversion(
+                conversion_id=match.conversion_id,
+                client_id=match.client_id,
+                occurred_at=match.occurred_at or sc.occurred_at,
+                revenue=revenue,
+                email=match.email or sc.email,
+                utm_source=match.utm_source,
+                utm_campaign=match.utm_campaign,
+                utm_medium=match.utm_medium,
+                deal_id=match.deal_id or sc.deal_id,
+                revenue_source="stripe+hubspot" if prefer == "stripe" else "hubspot",
+            )
+        )
 
     for hc in hubspot_convs:
         if hc.conversion_id not in consumed_hubspot:
@@ -234,6 +245,7 @@ def reconcile_conversions(
 
 
 # ── Journey construction + credit allocation ─────────────────────────────────
+
 
 def build_journey(
     conversion: Conversion,
@@ -284,13 +296,15 @@ def build_journey(
     touchpoints: list[Touchpoint] = []
     for campaign, group in matched.groupby("_campaign"):
         rep_date = group["_date"].max().to_pydatetime()
-        touchpoints.append(Touchpoint(
-            touchpoint_id=f"{platform}:{campaign}",
-            occurred_at=rep_date,
-            channel=platform,
-            campaign=campaign,
-            source_platform=platform,
-        ))
+        touchpoints.append(
+            Touchpoint(
+                touchpoint_id=f"{platform}:{campaign}",
+                occurred_at=rep_date,
+                channel=platform,
+                campaign=campaign,
+                source_platform=platform,
+            )
+        )
     return touchpoints
 
 
@@ -302,7 +316,7 @@ def _norm_series(series: pd.Series | None) -> pd.Series:
 
 @dataclass
 class AttributionResult:
-    rows: pd.DataFrame                 # per-touch attributed revenue
+    rows: pd.DataFrame  # per-touch attributed revenue
     channel_performance: pd.DataFrame  # platform scorecard with ROAS/CAC/CPA
     total_revenue: float
     attributed_revenue: float
@@ -310,9 +324,15 @@ class AttributionResult:
 
 
 ATTRIBUTED_ROW_COLUMNS = [
-    "client_id", "conversion_id", "source_platform", "campaign",
-    "attribution_model", "credit", "attributed_revenue",
-    "revenue_source", "occurred_at",
+    "client_id",
+    "conversion_id",
+    "source_platform",
+    "campaign",
+    "attribution_model",
+    "credit",
+    "attributed_revenue",
+    "revenue_source",
+    "occurred_at",
 ]
 
 
@@ -328,40 +348,50 @@ def attribute_conversions(
     for conv in conversions:
         journey = build_journey(conv, ads, lookback_days=lookback_days)
         if not journey:
-            out_rows.append({
-                "client_id": conv.client_id,
-                "conversion_id": conv.conversion_id,
-                "source_platform": UNATTRIBUTED,
-                "campaign": "",
-                "attribution_model": model,
-                "credit": 1.0,
-                "attributed_revenue": conv.revenue,
-                "revenue_source": conv.revenue_source,
-                "occurred_at": conv.occurred_at,
-            })
+            out_rows.append(
+                {
+                    "client_id": conv.client_id,
+                    "conversion_id": conv.conversion_id,
+                    "source_platform": UNATTRIBUTED,
+                    "campaign": "",
+                    "attribution_model": model,
+                    "credit": 1.0,
+                    "attributed_revenue": conv.revenue,
+                    "revenue_source": conv.revenue_source,
+                    "occurred_at": conv.occurred_at,
+                }
+            )
             continue
         for attributed in allocate_credit(journey, model):
             tp = attributed.touchpoint
-            out_rows.append({
-                "client_id": conv.client_id,
-                "conversion_id": conv.conversion_id,
-                "source_platform": tp.source_platform or tp.channel,
-                "campaign": tp.campaign,
-                "attribution_model": model,
-                "credit": attributed.credit,
-                "attributed_revenue": conv.revenue * attributed.credit,
-                "revenue_source": conv.revenue_source,
-                "occurred_at": conv.occurred_at,
-            })
+            out_rows.append(
+                {
+                    "client_id": conv.client_id,
+                    "conversion_id": conv.conversion_id,
+                    "source_platform": tp.source_platform or tp.channel,
+                    "campaign": tp.campaign,
+                    "attribution_model": model,
+                    "credit": attributed.credit,
+                    "attributed_revenue": conv.revenue * attributed.credit,
+                    "revenue_source": conv.revenue_source,
+                    "occurred_at": conv.occurred_at,
+                }
+            )
     if not out_rows:
         return pd.DataFrame(columns=ATTRIBUTED_ROW_COLUMNS)
     return pd.DataFrame(out_rows)[ATTRIBUTED_ROW_COLUMNS]
 
 
 CHANNEL_PERFORMANCE_COLUMNS = [
-    "client_id", "source_platform", "attribution_model",
-    "spend", "attributed_revenue", "attributed_conversions",
-    "roas", "cac", "cpa",
+    "client_id",
+    "source_platform",
+    "attribution_model",
+    "spend",
+    "attributed_revenue",
+    "attributed_conversions",
+    "roas",
+    "cac",
+    "cpa",
 ]
 
 
@@ -379,10 +409,10 @@ def channel_performance(
     # Spend by platform.
     if ads is not None and not ads.empty:
         spend_frame = ads.copy()
-        spend_frame["source_platform"] = _norm_series(spend_frame.get("source_platform"))
-        spend_by = (
-            spend_frame.groupby("source_platform")["spend"].sum().to_dict()
+        spend_frame["source_platform"] = _norm_series(
+            spend_frame.get("source_platform")
         )
+        spend_by = spend_frame.groupby("source_platform")["spend"].sum().to_dict()
     else:
         spend_by = {}
 
@@ -403,17 +433,19 @@ def channel_performance(
         stats = attr_by.get(platform, {})
         revenue = float(stats.get("attributed_revenue", 0.0))
         conversions = float(stats.get("attributed_conversions", 0.0))
-        out_rows.append({
-            "client_id": client_id,
-            "source_platform": platform,
-            "attribution_model": model,
-            "spend": round(spend, 2),
-            "attributed_revenue": round(revenue, 2),
-            "attributed_conversions": round(conversions, 4),
-            "roas": round(revenue / spend, 4) if spend > 0 else None,
-            "cac": round(spend / conversions, 2) if conversions > 0 else None,
-            "cpa": round(spend / conversions, 2) if conversions > 0 else None,
-        })
+        out_rows.append(
+            {
+                "client_id": client_id,
+                "source_platform": platform,
+                "attribution_model": model,
+                "spend": round(spend, 2),
+                "attributed_revenue": round(revenue, 2),
+                "attributed_conversions": round(conversions, 4),
+                "roas": round(revenue / spend, 4) if spend > 0 else None,
+                "cac": round(spend / conversions, 2) if conversions > 0 else None,
+                "cpa": round(spend / conversions, 2) if conversions > 0 else None,
+            }
+        )
     if not out_rows:
         return pd.DataFrame(columns=CHANNEL_PERFORMANCE_COLUMNS)
     return pd.DataFrame(out_rows)[CHANNEL_PERFORMANCE_COLUMNS]
@@ -445,7 +477,9 @@ def run_attribution(
         attributed = 0.0
     else:
         attributed = float(
-            rows.loc[rows["source_platform"] != UNATTRIBUTED, "attributed_revenue"].sum()
+            rows.loc[
+                rows["source_platform"] != UNATTRIBUTED, "attributed_revenue"
+            ].sum()
         )
     return AttributionResult(
         rows=rows,

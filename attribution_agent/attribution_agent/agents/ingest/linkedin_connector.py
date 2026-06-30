@@ -5,6 +5,7 @@ Uses LinkedIn Marketing API ad analytics. Account IDs may be configured either
 as a numeric ID or as an URN suffix; this connector normalizes to sponsored
 account URNs for the API call.
 """
+
 from __future__ import annotations
 
 import logging
@@ -40,7 +41,8 @@ def pull_linkedin_ads_data(
     end_date = date.today() - timedelta(days=1)
     start_date = end_date - timedelta(days=lookback_days - 1)
     account_urn = (
-        account_id if account_id.startswith("urn:li:sponsoredAccount:")
+        account_id
+        if account_id.startswith("urn:li:sponsoredAccount:")
         else f"urn:li:sponsoredAccount:{account_id}"
     )
 
@@ -49,7 +51,9 @@ def pull_linkedin_ads_data(
         "LinkedIn-Version": "202405",
         "X-Restli-Protocol-Version": "2.0.0",
     }
-    logger.info(f"[LinkedIn] Pulling analytics for {account_id} | {start_date} to {end_date}")
+    logger.info(
+        f"[LinkedIn] Pulling analytics for {account_id} | {start_date} to {end_date}"
+    )
     base_params = {
         "q": "analytics",
         "pivot": "CAMPAIGN",
@@ -75,18 +79,20 @@ def pull_linkedin_ads_data(
             start = item.get("dateRange", {}).get("start", {})
             campaign_urn = (item.get("pivotValues") or [""])[0]
             campaign_id = campaign_urn.split(":")[-1] if campaign_urn else ""
-            rows.append({
-                "date": f"{start.get('year')}-{start.get('month'):02d}-{start.get('day'):02d}",
-                "account_id": account_id,
-                "campaign_id": campaign_id,
-                "campaign_name": campaign_id,
-                "creative_id": "",
-                "creative_name": "",
-                "spend": float(item.get("costInLocalCurrency") or 0),
-                "impressions": int(item.get("impressions") or 0),
-                "clicks": int(item.get("clicks") or 0),
-                "conversions": float(item.get("externalWebsiteConversions") or 0),
-            })
+            rows.append(
+                {
+                    "date": f"{start.get('year')}-{start.get('month'):02d}-{start.get('day'):02d}",
+                    "account_id": account_id,
+                    "campaign_id": campaign_id,
+                    "campaign_name": campaign_id,
+                    "creative_id": "",
+                    "creative_name": "",
+                    "spend": float(item.get("costInLocalCurrency") or 0),
+                    "impressions": int(item.get("impressions") or 0),
+                    "clicks": int(item.get("clicks") or 0),
+                    "conversions": float(item.get("externalWebsiteConversions") or 0),
+                }
+            )
         if len(elements) < PAGE_SIZE:
             break
         start_index += PAGE_SIZE
@@ -96,4 +102,3 @@ def pull_linkedin_ads_data(
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
     return df
-

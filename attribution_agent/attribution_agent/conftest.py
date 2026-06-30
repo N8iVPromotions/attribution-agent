@@ -7,6 +7,7 @@ unless this directory is on ``sys.path``. Adding it here — in a conftest that
 pytest loads before collecting any test module — makes the imports resolve in
 both CI and local runs.
 """
+
 import os
 import sys
 

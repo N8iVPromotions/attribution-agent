@@ -6,6 +6,7 @@ Delta-backed cross-run memory for agents.
 PII is masked before write. recall_as_context() returns a formatted
 block ready to prepend to any Claude prompt.
 """
+
 from __future__ import annotations
 import logging
 import os
@@ -40,23 +41,29 @@ class MemoryStore:
         """PII-mask content, then persist to agent_memory Delta table."""
         try:
             from utils.pii_masker import PIIMasker
+
             masked_content, _ = PIIMasker().mask(content)
 
             import json
             import pandas as pd
             from utils.databricks_writer import _upsert_dataframe
+
             now = datetime.now(timezone.utc)
-            df = pd.DataFrame([{
-                "memory_id": uuid.uuid4().hex,
-                "client_id": client_id,
-                "memory_type": memory_type,
-                "content": masked_content,
-                "source_run_id": source_run_id,
-                "created_at": now,
-                "valid_until": now + timedelta(days=ttl_days),
-                "importance": importance,
-                "tags": json.dumps(tags or []),
-            }])
+            df = pd.DataFrame(
+                [
+                    {
+                        "memory_id": uuid.uuid4().hex,
+                        "client_id": client_id,
+                        "memory_type": memory_type,
+                        "content": masked_content,
+                        "source_run_id": source_run_id,
+                        "created_at": now,
+                        "valid_until": now + timedelta(days=ttl_days),
+                        "importance": importance,
+                        "tags": json.dumps(tags or []),
+                    }
+                ]
+            )
             _upsert_dataframe(df, _OPS_SCHEMA, "agent_memory", ["memory_id"])
         except Exception as exc:
             logger.debug(f"[MemoryStore] remember failed for {client_id}: {exc}")
@@ -69,13 +76,20 @@ class MemoryStore:
         lines = ["--- Prior context for this client ---"]
         for m in memories:
             date = str(m.get("created_at", ""))[:10]
-            lines.append(f"[{date}] ({m.get('memory_type', '')}) {m.get('content', '')}")
+            lines.append(
+                f"[{date}] ({m.get('memory_type', '')}) {m.get('content', '')}"
+            )
         lines.append("--- End prior context ---")
         return "\n".join(lines)
 
     def _fetch(self, client_id: str, limit: int) -> list[dict]:
         try:
-            from utils.databricks_writer import _get_connection, _is_databricks, _get_spark
+            from utils.databricks_writer import (
+                _get_connection,
+                _is_databricks,
+                _get_spark,
+            )
+
             now = datetime.now(timezone.utc).isoformat()
             query = (
                 f"SELECT memory_id, client_id, memory_type, content, created_at, importance "

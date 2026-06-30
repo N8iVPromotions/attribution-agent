@@ -6,6 +6,7 @@ Per-source failure isolation in the ingest flow, and LinkedIn pagination.
 These exercise the hardening that lets the run survive a single bad data source
 and pull every page from LinkedIn — without live credentials.
 """
+
 from __future__ import annotations
 
 import concurrent.futures
@@ -38,7 +39,9 @@ def test_collect_returns_value_on_success():
 
 def test_collect_isolates_failure():
     failures = {}
-    out = _collect(_failed(RuntimeError("token expired")), "pull-linkedin-ads", failures)
+    out = _collect(
+        _failed(RuntimeError("token expired")), "pull-linkedin-ads", failures
+    )
     assert out is None
     assert "pull-linkedin-ads" in failures
     assert "token expired" in failures["pull-linkedin-ads"]
@@ -55,6 +58,7 @@ def test_collect_one_failure_does_not_affect_others():
 
 # ── LinkedIn pagination ─────────────────────────────────────────────────────────
 
+
 def test_linkedin_paginates_until_short_page(monkeypatch):
     from agents.ingest import linkedin_connector as lc
 
@@ -62,7 +66,7 @@ def test_linkedin_paginates_until_short_page(monkeypatch):
 
     pages = [
         {"elements": [_li_elem(1), _li_elem(2)]},  # full page → keep going
-        {"elements": [_li_elem(3)]},               # short page → stop
+        {"elements": [_li_elem(3)]},  # short page → stop
     ]
     seen_starts = []
 
@@ -72,7 +76,9 @@ def test_linkedin_paginates_until_short_page(monkeypatch):
 
     monkeypatch.setattr(lc, "_get", _fake_get)
 
-    df = lc.pull_linkedin_ads_data(account_id="123", lookback_days=7, access_token="tok")
+    df = lc.pull_linkedin_ads_data(
+        account_id="123", lookback_days=7, access_token="tok"
+    )
     assert len(df) == 3
     assert seen_starts == [0, 2]  # second page requested at offset PAGE_SIZE
 

@@ -2,6 +2,7 @@
 voice_handler.py — Transcribes Telegram voice messages via OpenAI Whisper.
 Requires OPENAI_API_KEY in environment. Returns None if not configured.
 """
+
 import os
 import tempfile
 

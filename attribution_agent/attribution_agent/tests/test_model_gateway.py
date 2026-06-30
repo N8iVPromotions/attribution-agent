@@ -5,6 +5,7 @@ Covers the forced structured-output path added to model_gateway.call():
 when a response_schema is supplied, the gateway must force tool-use and return
 schema-valid JSON as text. Without a schema it returns the plain text block.
 """
+
 import json
 import sys
 import types
@@ -43,11 +44,14 @@ class _Resp:
 def _fake_client_factory(calls, tool_input):
     """Returns a fake Anthropic class whose create() records kwargs and emits a
     tool_use block when tools are present, else a plain text block."""
+
     class _Messages:
         def create(self, **kw):
             calls.append(kw)
             if "tools" in kw:
-                return _Resp([_Block("tool_use", name=kw["tools"][0]["name"], input=tool_input)])
+                return _Resp(
+                    [_Block("tool_use", name=kw["tools"][0]["name"], input=tool_input)]
+                )
             return _Resp([_Block("text", text='{"narrative": "plain"}')])
 
     class _Anthropic:
@@ -71,7 +75,9 @@ def test_response_schema_forces_tool_use_and_returns_valid_json(monkeypatch):
         "true_roi": 3.0,
         "attribution_model": "last_touch",
     }
-    monkeypatch.setattr(gw.anthropic, "Anthropic", _fake_client_factory(calls, tool_input))
+    monkeypatch.setattr(
+        gw.anthropic, "Anthropic", _fake_client_factory(calls, tool_input)
+    )
 
     resp = gw.call(
         agent_name="executive-reporting",

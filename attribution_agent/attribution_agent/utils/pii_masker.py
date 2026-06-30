@@ -9,6 +9,7 @@ mask() call, preserving referential integrity for downstream joins
 
 No external dependencies beyond the standard library and pandas.
 """
+
 from __future__ import annotations
 
 import re
@@ -20,15 +21,16 @@ if TYPE_CHECKING:
 
 # ── Patterns ──────────────────────────────────────────────────────────────────
 
-_EMAIL_RE    = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", re.I)
-_PHONE_RE    = re.compile(
+_EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", re.I)
+_PHONE_RE = re.compile(
     r"(?<!\d)"
     r"(\+?1[\s.\-]?)?"
     r"\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}"
     r"(?!\d)"
 )
-_SSN_RE      = re.compile(r"\b\d{3}[-\s]\d{2}[-\s]\d{4}\b")
-_CC_RE       = re.compile(r"\b(?:\d[ \-]?){13,16}\b")
+_SSN_RE = re.compile(r"\b\d{3}[-\s]\d{2}[-\s]\d{4}\b")
+_CC_RE = re.compile(r"\b(?:\d[ \-]?){13,16}\b")
+
 
 # Luhn check to reduce false positives on CC pattern
 def _luhn(s: str) -> bool:
@@ -50,19 +52,27 @@ class MaskingReport:
 
     @property
     def total(self) -> int:
-        return self.emails_masked + self.phones_masked + self.ssns_masked + self.credit_cards_masked
+        return (
+            self.emails_masked
+            + self.phones_masked
+            + self.ssns_masked
+            + self.credit_cards_masked
+        )
 
 
 @dataclass
 class _MaskingState:
     """Tracks seen values → placeholder within a single mask() call."""
+
     seen_emails: dict[str, str] = field(default_factory=dict)
     seen_phones: dict[str, str] = field(default_factory=dict)
-    seen_ssns:   dict[str, str] = field(default_factory=dict)
-    seen_cards:  dict[str, str] = field(default_factory=dict)
+    seen_ssns: dict[str, str] = field(default_factory=dict)
+    seen_cards: dict[str, str] = field(default_factory=dict)
     report: MaskingReport = field(default_factory=MaskingReport)
 
-    def _replace(self, registry: dict, value: str, prefix: str, counter_attr: str) -> str:
+    def _replace(
+        self, registry: dict, value: str, prefix: str, counter_attr: str
+    ) -> str:
         key = value.lower().strip()
         if key not in registry:
             n = len(registry) + 1

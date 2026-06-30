@@ -1,4 +1,5 @@
 """tests/test_pii_masker.py"""
+
 import pandas as pd
 import pytest
 from utils.pii_masker import PIIMasker
@@ -10,6 +11,7 @@ def masker():
 
 
 # ── Email ─────────────────────────────────────────────────────────────────────
+
 
 def test_email_in_plain_text(masker):
     text, report = masker.mask("Contact us at hello@example.com for support.")
@@ -57,6 +59,7 @@ def test_email_in_dataframe(masker):
 
 # ── Phone ─────────────────────────────────────────────────────────────────────
 
+
 def test_us_phone_dashes(masker):
     text, report = masker.mask("Call 212-555-1234 now.")
     assert "212-555-1234" not in text
@@ -77,6 +80,7 @@ def test_us_phone_parentheses(masker):
 
 # ── SSN ───────────────────────────────────────────────────────────────────────
 
+
 def test_ssn_with_dashes(masker):
     text, report = masker.mask("SSN: 123-45-6789")
     assert "123-45-6789" not in text
@@ -91,6 +95,7 @@ def test_ssn_with_spaces(masker):
 
 
 # ── Credit Card ───────────────────────────────────────────────────────────────
+
 
 def test_valid_luhn_card(masker):
     # Visa test card number — passes Luhn
@@ -107,6 +112,7 @@ def test_invalid_luhn_not_masked(masker):
 
 
 # ── No false positives ────────────────────────────────────────────────────────
+
 
 def test_dollar_amount_not_masked(masker):
     text, report = masker.mask("Total pipeline: $16,000.00")
@@ -134,6 +140,7 @@ def test_date_not_masked(masker):
 
 # ── Idempotency ───────────────────────────────────────────────────────────────
 
+
 def test_masking_already_masked_text_is_noop(masker):
     original = "Contact: user@example.com, phone 555-867-5309"
     masked, r1 = masker.mask(original)
@@ -143,6 +150,7 @@ def test_masking_already_masked_text_is_noop(masker):
 
 
 # ── Edge cases ────────────────────────────────────────────────────────────────
+
 
 def test_empty_string(masker):
     result, report = masker.mask("")

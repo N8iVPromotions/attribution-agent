@@ -11,6 +11,7 @@ Usage:
     from utils.audit_logger import log_event
     log_event("PIPELINE_START", actor="system", client_id="demo_client", ...)
 """
+
 from __future__ import annotations
 
 import json
@@ -78,6 +79,7 @@ def _ensure_table() -> None:
             return
         try:
             from utils.databricks_writer import _run_sql
+
             _run_sql(AUDIT_LOG_DDL)
             _table_ensured = True
         except Exception as exc:
@@ -89,6 +91,7 @@ def _write_event(row: dict) -> None:
         _ensure_table()
         import pandas as pd
         from utils.databricks_writer import _upsert_dataframe, _OPS_SCHEMA as ops_schema
+
         df = pd.DataFrame([row])
         _upsert_dataframe(df, ops_schema, "audit_log", ["event_id"])
     except Exception as exc:
@@ -119,24 +122,28 @@ def log_event(
     detail_json = ""
     if detail is not None:
         try:
-            detail_json = json.dumps(detail, default=str) if isinstance(detail, dict) else str(detail)
+            detail_json = (
+                json.dumps(detail, default=str)
+                if isinstance(detail, dict)
+                else str(detail)
+            )
         except Exception:
             detail_json = str(detail)
 
     row = {
-        "event_id":    str(uuid.uuid4()),
-        "event_time":  datetime.now(timezone.utc),
-        "event_type":  event_type,
-        "actor":       actor or "system",
-        "client_id":   client_id or "",
-        "agency_id":   agency_id or "",
-        "resource":    resource or "",
-        "action":      action or "",
-        "outcome":     outcome or "success",
+        "event_id": str(uuid.uuid4()),
+        "event_time": datetime.now(timezone.utc),
+        "event_type": event_type,
+        "actor": actor or "system",
+        "client_id": client_id or "",
+        "agency_id": agency_id or "",
+        "resource": resource or "",
+        "action": action or "",
+        "outcome": outcome or "success",
         "detail_json": detail_json,
-        "run_id":      run_id or "",
-        "ip_address":  ip_address or "",
-        "session_id":  session_id or "",
+        "run_id": run_id or "",
+        "ip_address": ip_address or "",
+        "session_id": session_id or "",
     }
 
     t = threading.Thread(target=_write_event, args=(row,), daemon=True)

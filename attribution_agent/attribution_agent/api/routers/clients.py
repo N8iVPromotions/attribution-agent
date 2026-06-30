@@ -1,5 +1,4 @@
 from __future__ import annotations
-from dataclasses import asdict
 from fastapi import APIRouter, Depends, HTTPException
 from api.auth import require_auth, require_admin
 from api.models import ClientConfigRequest, ClientConfigResponse
@@ -26,17 +25,23 @@ def _to_response(cfg) -> ClientConfigResponse:
 
 
 @router.get("", response_model=list[ClientConfigResponse])
-async def list_clients(role: Role = Depends(require_auth)) -> list[ClientConfigResponse]:
+async def list_clients(
+    role: Role = Depends(require_auth),
+) -> list[ClientConfigResponse]:
     require_permission(role, Permission.VIEW_REPORTS)
     from config.client_config import CLIENT_REGISTRY, reload_client_registry
+
     reload_client_registry()
     return [_to_response(c) for c in CLIENT_REGISTRY.values()]
 
 
 @router.get("/{client_id}", response_model=ClientConfigResponse)
-async def get_client(client_id: str, role: Role = Depends(require_auth)) -> ClientConfigResponse:
+async def get_client(
+    client_id: str, role: Role = Depends(require_auth)
+) -> ClientConfigResponse:
     require_permission(role, Permission.VIEW_REPORTS)
     from config.client_config import CLIENT_REGISTRY, reload_client_registry
+
     reload_client_registry()
     cfg = CLIENT_REGISTRY.get(client_id)
     if not cfg:
@@ -51,8 +56,12 @@ async def create_client(
 ) -> ClientConfigResponse:
     require_permission(role, Permission.MANAGE_CLIENTS)
     from config.client_config import (
-        ClientConfig, save_client_config, slugify_client_id, default_client_schema,
+        ClientConfig,
+        save_client_config,
+        slugify_client_id,
+        default_client_schema,
     )
+
     client_id = slugify_client_id(req.client_name)
     cfg = ClientConfig(
         client_id=client_id,
@@ -85,12 +94,18 @@ async def update_client(
     role: Role = Depends(require_admin),
 ) -> ClientConfigResponse:
     require_permission(role, Permission.MANAGE_CLIENTS)
-    from config.client_config import CLIENT_REGISTRY, reload_client_registry, save_client_config
+    from config.client_config import (
+        CLIENT_REGISTRY,
+        reload_client_registry,
+        save_client_config,
+    )
+
     reload_client_registry()
     existing = CLIENT_REGISTRY.get(client_id)
     if not existing:
         raise HTTPException(status_code=404, detail=f"Client '{client_id}' not found")
     from dataclasses import replace
+
     updated = replace(
         existing,
         client_name=req.client_name,
@@ -120,7 +135,13 @@ async def delete_client(
     role: Role = Depends(require_admin),
 ) -> None:
     require_permission(role, Permission.MANAGE_CLIENTS)
-    from config.client_config import CLIENT_REGISTRY, reload_client_registry, delete_client_config, is_custom_client
+    from config.client_config import (
+        CLIENT_REGISTRY,
+        reload_client_registry,
+        delete_client_config,
+        is_custom_client,
+    )
+
     reload_client_registry()
     if client_id not in CLIENT_REGISTRY:
         raise HTTPException(status_code=404, detail=f"Client '{client_id}' not found")

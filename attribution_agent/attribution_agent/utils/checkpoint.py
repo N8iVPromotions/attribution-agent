@@ -6,6 +6,7 @@ Delta-backed pipeline checkpointing.
 Tracks which steps have completed for a given (run_id, client_id).
 On resume, completed steps are skipped.
 """
+
 from __future__ import annotations
 import logging
 import os
@@ -18,7 +19,9 @@ _OPS_SCHEMA = os.environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_op
 
 
 class Checkpointer:
-    def start_step(self, run_id: str, agency_id: str, client_id: str, step_name: str) -> str:
+    def start_step(
+        self, run_id: str, agency_id: str, client_id: str, step_name: str
+    ) -> str:
         """Record step start. Returns checkpoint_id."""
         checkpoint_id = uuid.uuid4().hex[:16]
         self._write(checkpoint_id, run_id, agency_id, client_id, step_name, "started")
@@ -33,8 +36,14 @@ class Checkpointer:
         result: dict | None = None,
     ) -> None:
         import json
-        self._upsert_step(run_id, client_id, step_name, "completed",
-                          result_json=json.dumps(result or {}, default=str))
+
+        self._upsert_step(
+            run_id,
+            client_id,
+            step_name,
+            "completed",
+            result_json=json.dumps(result or {}, default=str),
+        )
 
     def fail_step(
         self,
@@ -49,7 +58,12 @@ class Checkpointer:
     def get_completed_steps(self, run_id: str, client_id: str) -> set[str]:
         """Return names of steps that completed successfully for this run+client."""
         try:
-            from utils.databricks_writer import _get_connection, _is_databricks, _get_spark
+            from utils.databricks_writer import (
+                _get_connection,
+                _is_databricks,
+                _get_spark,
+            )
+
             query = (
                 f"SELECT step_name FROM {_OPS_SCHEMA}.pipeline_checkpoints "
                 f"WHERE run_id = '{run_id}' AND client_id = '{client_id}' "
@@ -83,20 +97,29 @@ class Checkpointer:
         try:
             import pandas as pd
             from utils.databricks_writer import _upsert_dataframe
+
             now = datetime.now(timezone.utc)
-            df = pd.DataFrame([{
-                "checkpoint_id": checkpoint_id,
-                "run_id": run_id,
-                "agency_id": agency_id,
-                "client_id": client_id,
-                "step_name": step_name,
-                "status": status,
-                "started_at": now,
-                "completed_at": now if status in ("completed", "failed") else None,
-                "result_json": result_json,
-                "error_detail": error_detail,
-            }])
-            _upsert_dataframe(df, _OPS_SCHEMA, "pipeline_checkpoints", ["checkpoint_id"])
+            df = pd.DataFrame(
+                [
+                    {
+                        "checkpoint_id": checkpoint_id,
+                        "run_id": run_id,
+                        "agency_id": agency_id,
+                        "client_id": client_id,
+                        "step_name": step_name,
+                        "status": status,
+                        "started_at": now,
+                        "completed_at": now
+                        if status in ("completed", "failed")
+                        else None,
+                        "result_json": result_json,
+                        "error_detail": error_detail,
+                    }
+                ]
+            )
+            _upsert_dataframe(
+                df, _OPS_SCHEMA, "pipeline_checkpoints", ["checkpoint_id"]
+            )
         except Exception as exc:
             logger.debug(f"[Checkpoint] write failed for {step_name}: {exc}")
 
@@ -111,6 +134,7 @@ class Checkpointer:
     ) -> None:
         try:
             from utils.databricks_writer import _run_sql
+
             now = datetime.now(timezone.utc).isoformat()
             _run_sql(
                 f"UPDATE {_OPS_SCHEMA}.pipeline_checkpoints "

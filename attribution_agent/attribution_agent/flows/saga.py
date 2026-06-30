@@ -11,6 +11,7 @@ Usage:
 On any unhandled exception, registered compensations execute in LIFO
 order. Failures are logged to audit_log as SAGA_COMPENSATION_FAILED.
 """
+
 from __future__ import annotations
 import logging
 
@@ -47,6 +48,7 @@ class PipelineSaga:
                 logger.error(f"[Saga] Compensation '{name}' FAILED: {comp_exc}")
                 try:
                     from utils.audit_logger import log_event
+
                     log_event(
                         "SAGA_COMPENSATION_FAILED",
                         actor="system",

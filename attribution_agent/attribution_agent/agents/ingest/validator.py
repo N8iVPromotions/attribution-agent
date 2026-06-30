@@ -8,16 +8,17 @@ Two outputs:
   1. A validated (possibly filtered) DataFrame ready to write
   2. A ValidationReport with any issues flagged for alerting
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
 
 import pandas as pd
 from loguru import logger
 
 
 # ─── REPORT ───────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class ValidationReport:
@@ -48,8 +49,16 @@ class ValidationReport:
 
 # ─── META VALIDATOR ───────────────────────────────────────────────────────────
 
+
 class MetaValidator:
-    REQUIRED_COLUMNS = {"ad_account_id", "campaign_id", "date", "spend", "impressions", "clicks"}
+    REQUIRED_COLUMNS = {
+        "ad_account_id",
+        "campaign_id",
+        "date",
+        "spend",
+        "impressions",
+        "clicks",
+    }
 
     def __init__(
         self,
@@ -113,15 +122,14 @@ class MetaValidator:
         # ── 7. Null campaign IDs ──────────────────────────────────────────────
         null_campaign_pct = df["campaign_id"].isna().mean()
         if null_campaign_pct > 0.05:
-            report.add_warning(
-                f"{null_campaign_pct:.0%} of rows have null campaign_id"
-            )
+            report.add_warning(f"{null_campaign_pct:.0%} of rows have null campaign_id")
 
         logger.info(report.summary())
         return df, report
 
 
 # ─── HUBSPOT VALIDATOR ────────────────────────────────────────────────────────
+
 
 class HubSpotValidator:
     REQUIRED_COLUMNS = {"deal_id", "deal_stage", "amount", "create_date"}
@@ -179,6 +187,7 @@ class HubSpotValidator:
 
 # ─── CONVENIENCE FUNCTIONS (called by Prefect flow) ───────────────────────────
 
+
 def validate_meta(
     df: pd.DataFrame,
     client_id: str,
@@ -200,6 +209,7 @@ def validate_hubspot(
 
 
 # ─── STRIPE VALIDATOR ─────────────────────────────────────────────────────────
+
 
 class StripeValidator:
     REQUIRED_COLUMNS = {"payment_id", "customer_email", "amount_paid", "status"}

@@ -10,6 +10,7 @@ Usage:
 Exits with code 1 if any agent scores below 0.80 (regression).
 In CI mode, also exits 1 if score is worse than the most recent prior run.
 """
+
 from __future__ import annotations
 import argparse
 import json
@@ -29,12 +30,18 @@ if _root not in sys.path:
 
 _OPS_SCHEMA = os.environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_ops")
 
-_ALL_AGENTS = ["data-quality", "revenue-analyst", "executive-reporting", "governance-reviewer"]
+_ALL_AGENTS = [
+    "data-quality",
+    "revenue-analyst",
+    "executive-reporting",
+    "governance-reviewer",
+]
 
 
 def _get_last_score(agent_name: str) -> float | None:
     try:
         from utils.databricks_writer import _get_connection, _is_databricks, _get_spark
+
         query = (
             f"SELECT score FROM {_OPS_SCHEMA}.eval_results "
             f"WHERE agent_name = '{agent_name}' "
@@ -55,25 +62,35 @@ def _get_last_score(agent_name: str) -> float | None:
 
 
 def _write_result(
-    agent_name: str, sample_id: str, passed: bool, score: float,
-    field_results: dict, regression: bool, notes: str,
+    agent_name: str,
+    sample_id: str,
+    passed: bool,
+    score: float,
+    field_results: dict,
+    regression: bool,
+    notes: str,
 ) -> None:
     try:
         import pandas as pd
         from utils.databricks_writer import _upsert_dataframe
-        df = pd.DataFrame([{
-            "eval_id": uuid.uuid4().hex,
-            "run_at": datetime.now(timezone.utc),
-            "agent_name": agent_name,
-            "prompt_version": os.environ.get("GIT_PROMPT_TAG", "dev"),
-            "model_id": os.environ.get("EVAL_MODEL_ID", "claude-sonnet-4-6"),
-            "sample_id": sample_id,
-            "passed": passed,
-            "field_results": json.dumps(field_results),
-            "score": score,
-            "regression": regression,
-            "notes": notes,
-        }])
+
+        df = pd.DataFrame(
+            [
+                {
+                    "eval_id": uuid.uuid4().hex,
+                    "run_at": datetime.now(timezone.utc),
+                    "agent_name": agent_name,
+                    "prompt_version": os.environ.get("GIT_PROMPT_TAG", "dev"),
+                    "model_id": os.environ.get("EVAL_MODEL_ID", "claude-sonnet-4-6"),
+                    "sample_id": sample_id,
+                    "passed": passed,
+                    "field_results": json.dumps(field_results),
+                    "score": score,
+                    "regression": regression,
+                    "notes": notes,
+                }
+            ]
+        )
         _upsert_dataframe(df, _OPS_SCHEMA, "eval_results", ["eval_id"])
     except Exception as exc:
         logger.warning(f"[Eval] Could not write eval result: {exc}")
@@ -85,10 +102,6 @@ def run_eval_for_agent(agent_name: str, ci_mode: bool = False) -> tuple[bool, fl
     Returns (passed, avg_score). In CI mode, also checks for regression.
     """
     from evals.golden_dataset import GoldenDatasetManager
-    from agents.intelligence.n8iv_agents import (
-        run_data_quality_agent, run_revenue_analyst_agent,
-        run_executive_reporting_agent, run_governance_review,
-    )
 
     manager = GoldenDatasetManager()
     samples = manager.load_samples(agent_name)
@@ -107,7 +120,9 @@ def run_eval_for_agent(agent_name: str, ci_mode: bool = False) -> tuple[bool, fl
             eval_result = manager.evaluate(agent_name, actual, sample)
             score = eval_result["score"]
             passed = eval_result["passed"]
-            regression = ci_mode and prior_score is not None and score < prior_score - 0.05
+            regression = (
+                ci_mode and prior_score is not None and score < prior_score - 0.05
+            )
 
             if regression:
                 any_regression = True
@@ -117,9 +132,13 @@ def run_eval_for_agent(agent_name: str, ci_mode: bool = False) -> tuple[bool, fl
                 )
 
             _write_result(
-                agent_name=agent_name, sample_id=sample["sample_id"],
-                passed=passed, score=score, field_results=eval_result["field_results"],
-                regression=regression, notes="",
+                agent_name=agent_name,
+                sample_id=sample["sample_id"],
+                passed=passed,
+                score=score,
+                field_results=eval_result["field_results"],
+                regression=regression,
+                notes="",
             )
             scores.append(score)
         except Exception as exc:
@@ -128,7 +147,9 @@ def run_eval_for_agent(agent_name: str, ci_mode: bool = False) -> tuple[bool, fl
 
     avg_score = sum(scores) / len(scores) if scores else 0.0
     overall_passed = avg_score >= 0.80 and not any_regression
-    logger.info(f"[Eval] {agent_name}: avg_score={avg_score:.2f}, passed={overall_passed}")
+    logger.info(
+        f"[Eval] {agent_name}: avg_score={avg_score:.2f}, passed={overall_passed}"
+    )
     return overall_passed, avg_score
 
 
@@ -163,6 +184,7 @@ def main() -> None:
     args = parser.parse_args()
 
     from dotenv import load_dotenv
+
     load_dotenv()
 
     agents = _ALL_AGENTS if args.all_agents else ([args.agent] if args.agent else [])
