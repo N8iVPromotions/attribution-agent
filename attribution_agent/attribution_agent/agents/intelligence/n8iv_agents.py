@@ -54,6 +54,56 @@ _TASK_TYPE_MAP: dict[str, str] = {
     "governance-reviewer": "governance_review",
 }
 
+# ─── STRUCTURED-OUTPUT SCHEMAS ────────────────────────────────
+# Passed to the gateway as forced tool-use schemas so the JSON-contract agents
+# return guaranteed-valid JSON (no markdown-fence / json.loads fragility).
+
+_str_array = {"type": "array", "items": {"type": "string"}}
+
+DATA_QUALITY_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "issues": _str_array,
+        "warnings": _str_array,
+        "escalations": _str_array,
+        "passed": {"type": "boolean"},
+    },
+    "required": ["issues", "warnings", "escalations", "passed"],
+}
+
+EXEC_REPORT_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "narrative": {"type": "string"},
+        "key_findings": _str_array,
+        "top_channel": {"type": "string"},
+        "total_pipeline": {"type": "number"},
+        "total_spend": {"type": "number"},
+        "overall_roi": {"type": "number"},
+        "collected_revenue": {"type": "number"},
+        "refund_rate": {"type": "number"},
+        "true_roi": {"type": "number"},
+        "attribution_model": {"type": "string"},
+    },
+    "required": [
+        "narrative", "key_findings", "top_channel", "total_pipeline",
+        "total_spend", "overall_roi", "attribution_model",
+    ],
+}
+
+GOVERNANCE_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "decision": {
+            "type": "string",
+            "enum": ["READY FOR HUMAN REVIEW", "REVISE BEFORE HUMAN REVIEW"],
+        },
+        "warnings": _str_array,
+        "critical_issues": _str_array,
+    },
+    "required": ["decision", "warnings", "critical_issues"],
+}
+
 
 def _load_system_prompt(agent_name: str) -> str:
     """Read the agent .md file and strip the YAML frontmatter, returning only the body."""
@@ -75,8 +125,13 @@ def _call_agent(
     run_id: str = "",
     client_id: str = "",
     agency_id: str = "",
+    response_schema: dict | None = None,
 ) -> str:
-    """Route agent call through ModelGateway. Returns raw text response."""
+    """Route agent call through ModelGateway. Returns raw text response.
+
+    When response_schema is given, the gateway forces tool-use so the returned
+    text is guaranteed schema-valid JSON.
+    """
     from utils.model_gateway import call as gw_call
 
     system_prompt = _load_system_prompt(agent_name)
@@ -91,6 +146,7 @@ def _call_agent(
         client_id=client_id,
         agency_id=agency_id,
         task_type=task_type,
+        response_schema=response_schema,
     )
     logger.info(
         f"[N8iV/{agent_name}] tokens — in: {resp.input_tokens}, "
@@ -146,7 +202,10 @@ def run_data_quality_agent(
             "No markdown, no backticks."
         )
 
-        raw = _call_agent("data-quality", message, max_tokens=800)
+        raw = _call_agent(
+            "data-quality", message, max_tokens=800,
+            client_id=client_id, response_schema=DATA_QUALITY_SCHEMA,
+        )
         result = _parse_json_response(raw)
         logger.info(
             f"[DataQuality/{client_id}] findings — "
@@ -251,7 +310,10 @@ def run_executive_reporting_agent(
         "No markdown, no backticks, no preamble."
     )
 
-    raw = _call_agent("executive-reporting", message, max_tokens=1500)
+    raw = _call_agent(
+        "executive-reporting", message, max_tokens=1500,
+        client_id=client_id, response_schema=EXEC_REPORT_SCHEMA,
+    )
     return _parse_json_response(raw)
 
 
@@ -281,7 +343,10 @@ def run_governance_review(
             "No markdown, no backticks."
         )
 
-        raw = _call_agent("governance-reviewer", message, max_tokens=600)
+        raw = _call_agent(
+            "governance-reviewer", message, max_tokens=600,
+            client_id=client_id, response_schema=GOVERNANCE_SCHEMA,
+        )
         result = _parse_json_response(raw)
         warnings = result.get("warnings", []) + result.get("critical_issues", [])
         if warnings:

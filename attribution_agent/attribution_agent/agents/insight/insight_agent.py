@@ -240,6 +240,7 @@ def _call_claude(
     checks on input, cost-ledger write, budget enforcement, and prompt caching.
     """
     from utils.model_gateway import call as gw_call
+    from agents.intelligence.n8iv_agents import EXEC_REPORT_SCHEMA
 
     resp = gw_call(
         agent_name="insight-fallback",
@@ -250,6 +251,7 @@ def _call_claude(
         client_id=client_id,
         agency_id=agency_id,
         task_type="executive_reporting",  # routes to the sonnet quality model
+        response_schema=EXEC_REPORT_SCHEMA,
     )
 
     content = resp.text.strip()
