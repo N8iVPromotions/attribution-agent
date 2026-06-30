@@ -226,30 +226,33 @@ _SYSTEM_PROMPT = (
     "business language. You always return valid JSON — no markdown, no backticks, no preamble."
 )
 
-def _call_claude(prompt: str) -> dict:
-    """Call Claude API via the Anthropic SDK with prompt caching on the system prompt."""
-    import anthropic
+def _call_claude(
+    prompt: str,
+    client_id: str = "",
+    agency_id: str = "",
+    run_id: str = "",
+) -> dict:
+    """
+    Single-stage fallback narrative generator.
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY not set in .env")
+    Routes through the ModelGateway (not the raw SDK) so this fallback path keeps
+    the same governance as the primary two-stage path: PII masking + prompt-injection
+    checks on input, cost-ledger write, budget enforcement, and prompt caching.
+    """
+    from utils.model_gateway import call as gw_call
 
-    client = anthropic.Anthropic(api_key=api_key)
-
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
+    resp = gw_call(
+        agent_name="insight-fallback",
+        system_prompt=_SYSTEM_PROMPT,
+        user_message=prompt,
         max_tokens=1500,
-        system=[
-            {
-                "type": "text",
-                "text": _SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        messages=[{"role": "user", "content": prompt}],
+        run_id=run_id,
+        client_id=client_id,
+        agency_id=agency_id,
+        task_type="executive_reporting",  # routes to the sonnet quality model
     )
 
-    content = message.content[0].text.strip()
+    content = resp.text.strip()
 
     # Strip any accidental markdown fences
     if content.startswith("```"):
@@ -257,14 +260,6 @@ def _call_claude(prompt: str) -> dict:
         if content.startswith("json"):
             content = content[4:]
     content = content.strip()
-
-    usage = message.usage
-    logger.info(
-        f"[Insight] Claude usage — input: {usage.input_tokens}, "
-        f"output: {usage.output_tokens}, "
-        f"cache_read: {getattr(usage, 'cache_read_input_tokens', 0)}, "
-        f"cache_write: {getattr(usage, 'cache_creation_input_tokens', 0)}"
-    )
 
     return json.loads(content)
 
@@ -384,7 +379,11 @@ def generate_insight_report(
         )
         prompt = _build_prompt(config, data, selected_model)
         try:
-            claude_response = _call_claude(prompt)
+            claude_response = _call_claude(
+                prompt,
+                client_id=client_id,
+                agency_id=getattr(config, "agency_id", ""),
+            )
         except Exception as exc2:
             logger.warning(
                 f"[Insight] Claude API unavailable ({exc2!r}) — "

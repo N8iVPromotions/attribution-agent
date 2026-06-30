@@ -242,7 +242,18 @@ def call(
     resp = client.messages.create(
         model=model_id,
         max_tokens=max_tokens,
-        system=system_prompt,
+        # Block form with cache_control so the (stable) agent system prompt is
+        # served from Anthropic's prompt cache on repeat calls within the 5-min
+        # TTL — e.g. the same agent run across multiple clients in one pipeline.
+        # No-op (gracefully ignored) when the prompt is below the model's cache
+        # minimum; pays off once system prompts exceed it.
+        system=[
+            {
+                "type": "text",
+                "text": system_prompt,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
         messages=[{"role": "user", "content": sanitized_message}],
     )
 
