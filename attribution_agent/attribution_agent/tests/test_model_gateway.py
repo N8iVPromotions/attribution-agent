@@ -88,6 +88,20 @@ def test_response_schema_forces_tool_use_and_returns_valid_json(monkeypatch):
     assert json.loads(resp.text) == tool_input
 
 
+def test_cache_key_distinguishes_long_messages_with_shared_prefix():
+    # Cacheable-task messages share a long fixed prefix; the key must reflect the
+    # full message, not a truncated head, or distinct inputs collide.
+    prefix = "Client: acme\n\nIngest summary: " + ("x" * 400) + "\n\nFindings:\n"
+    key_a = gw._cache_key("claude-haiku", "data-quality", prefix + "- duplicate emails")
+    key_b = gw._cache_key("claude-haiku", "data-quality", prefix + "- null revenue")
+    assert key_a != key_b
+    # Stable for identical input, and still a 32-char hex digest.
+    assert gw._cache_key("claude-haiku", "data-quality", prefix) == gw._cache_key(
+        "claude-haiku", "data-quality", prefix
+    )
+    assert len(key_a) == 32
+
+
 def test_no_schema_returns_plain_text_block(monkeypatch):
     calls: list[dict] = []
     monkeypatch.setattr(gw.anthropic, "Anthropic", _fake_client_factory(calls, {}))
