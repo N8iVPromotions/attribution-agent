@@ -199,12 +199,18 @@ def call(
     client_id: str = "",
     agency_id: str = "",
     task_type: str = "",
+    response_schema: dict | None = None,
 ) -> GatewayResponse:
     """
     Route an agent call through the model gateway.
 
     Handles: model selection, semantic cache check, API call,
     cost ledger write, budget alert.
+
+    When `response_schema` is provided, the call uses forced tool-use so the
+    model MUST return JSON matching that schema (no markdown fences, no parse
+    gamble). The returned `.text` is the schema-valid JSON serialized as a
+    string, so existing json.loads() callers keep working unchanged.
     """
     model_id = select_model(task_type or agent_name)
 
@@ -238,8 +244,7 @@ def call(
 
     _check_budget(agency_id or "global", max_tokens)
 
-    client = anthropic.Anthropic()
-    resp = client.messages.create(
+    create_kwargs: dict = dict(
         model=model_id,
         max_tokens=max_tokens,
         # Block form with cache_control so the (stable) agent system prompt is
@@ -257,7 +262,32 @@ def call(
         messages=[{"role": "user", "content": sanitized_message}],
     )
 
-    text = resp.content[0].text if resp.content else ""
+    # Forced structured output: the model must call this tool, guaranteeing the
+    # response is JSON that matches the schema. Removes the markdown-fence /
+    # json.loads fragility for the client-facing report agents.
+    if response_schema is not None:
+        create_kwargs["tools"] = [
+            {
+                "name": "emit_structured_report",
+                "description": "Return the result strictly as JSON matching the schema.",
+                "input_schema": response_schema,
+            }
+        ]
+        create_kwargs["tool_choice"] = {"type": "tool", "name": "emit_structured_report"}
+
+    client = anthropic.Anthropic()
+    resp = client.messages.create(**create_kwargs)
+
+    if response_schema is not None:
+        # Pull the forced tool_use block and serialize its (schema-valid) input.
+        tool_block = next(
+            (b for b in resp.content if getattr(b, "type", None) == "tool_use"), None
+        )
+        text = json.dumps(tool_block.input) if tool_block is not None else ""
+    else:
+        text = next(
+            (b.text for b in resp.content if getattr(b, "type", None) == "text"), ""
+        ) if resp.content else ""
 
     # Guardrails: output check
     output_check = check_output(text, agent_name)
