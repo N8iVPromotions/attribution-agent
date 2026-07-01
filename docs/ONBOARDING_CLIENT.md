@@ -78,6 +78,7 @@ databricks secrets put --scope attribution --key HUBSPOT_ACCESS_TOKEN
 databricks secrets put --scope attribution --key STRIPE_SECRET_KEY
 databricks secrets put --scope attribution --key GOOGLE_ADS_REFRESH_TOKEN
 databricks secrets put --scope attribution --key LINKEDIN_ACCESS_TOKEN
+databricks secrets put --scope attribution --key TIKTOK_ACCESS_TOKEN
 databricks secrets put --scope attribution --key ANTHROPIC_API_KEY
 databricks secrets put --scope attribution --key GMAIL_SENDER
 databricks secrets put --scope attribution --key GMAIL_APP_PASSWORD

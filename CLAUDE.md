@@ -25,7 +25,7 @@ A pre-push hook blocks direct pushes to `main`.
 
 ## Project Overview
 
-Attribution pipeline for marketing agencies. Ingests Meta Ads, HubSpot, and Stripe data into Databricks, generates AI-powered insight reports via Claude, and emails white-labeled reports to clients.
+Attribution pipeline for marketing agencies. Ingests Meta, Google, LinkedIn, and TikTok Ads plus HubSpot and Stripe data into Databricks, generates AI-powered insight reports via Claude, and emails white-labeled reports to clients.
 
 **Entry point:** `attribution_agent/attribution_agent/flows/agency_flow.py`
 
@@ -66,6 +66,9 @@ databricks secrets put --scope attribution --key ANTHROPIC_API_KEY
 databricks secrets put --scope attribution --key GMAIL_SENDER
 databricks secrets put --scope attribution --key GMAIL_APP_PASSWORD
 databricks secrets put --scope attribution --key STRIPE_SECRET_KEY
+databricks secrets put --scope attribution --key GOOGLE_ADS_REFRESH_TOKEN
+databricks secrets put --scope attribution --key LINKEDIN_ACCESS_TOKEN
+databricks secrets put --scope attribution --key TIKTOK_ACCESS_TOKEN
 ```
 
 ### Deploy (run after merging to main)
