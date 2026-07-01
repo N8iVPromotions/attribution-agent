@@ -1250,10 +1250,43 @@ def _inject_secrets() -> None:
 
 _inject_secrets()
 
-# Databricks App has no outbound internet (api.telegram.org is unreachable
-# inside the workspace VPC). ARIE must run locally on the operator's machine.
-_arie_enabled = False
-_arie_status = {"ok": False, "reason": "ARIE runs locally — see README"}
+
+# ARIE is a Telegram long-polling bot and needs outbound reachability to
+# api.telegram.org. Databricks Apps historically blocked that egress, so rather
+# than hardcode ARIE off we probe Telegram at startup and start the bot only when
+# it's actually reachable — the app self-enables where egress allows and degrades
+# gracefully (grey dot + reason on hover) where it doesn't.
+# NOTE: Telegram permits only ONE getUpdates consumer per bot token. Do not run
+# ARIE locally and in-app simultaneously, or both will 409-conflict.
+@st.cache_resource
+def _start_arie() -> dict:
+    token, chat_id = arie_bot._load_credentials()
+    if not token or not chat_id:
+        return {"ok": False, "reason": "TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set"}
+    # Probe with getMe — it does not consume updates, so it won't 409 against a poller.
+    try:
+        import requests as _req
+
+        r = _req.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5)
+        if r.status_code != 200 or not r.json().get("ok"):
+            return {
+                "ok": False,
+                "reason": f"Telegram getMe returned HTTP {r.status_code}",
+            }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "reason": f"Telegram unreachable ({exc.__class__.__name__})",
+        }
+    try:
+        arie_bot.start(token, chat_id)
+        return {"ok": True, "reason": "ARIE online"}
+    except Exception as exc:
+        return {"ok": False, "reason": f"ARIE start failed: {exc}"}
+
+
+_arie_status = _start_arie()
+_arie_enabled = _arie_status["ok"]
 
 
 # ── API health probe ──────────────────────────
@@ -1279,6 +1312,7 @@ now_str = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 arie_dot_color = (
     "#3fb950" if (_arie_enabled and arie_bot.is_running()) else "rgba(255,255,255,0.15)"
 )
+_arie_reason = _arie_status.get("reason", "")
 api_dot_color = "#3fb950" if _api_healthy else "rgba(255,255,255,0.15)"
 
 st.markdown(
@@ -1301,7 +1335,7 @@ st.markdown(
     f'      <span class="status-dot" style="background:{api_dot_color};"></span>'
     f"      API"
     f"    </span>"
-    f'    <span class="status-pill">'
+    f'    <span class="status-pill" title="{_arie_reason}">'
     f'      <span class="status-dot" style="background:{arie_dot_color};"></span>'
     f"      ARIE"
     f"    </span>"
