@@ -50,7 +50,7 @@ SECRET_KEYS=(
   SENDGRID_API_KEY
   TELEGRAM_BOT_TOKEN
   TELEGRAM_CHAT_ID
-  DATABRICKS_HOST
+  DATABRICKS_SERVER_HOSTNAME
   DATABRICKS_HTTP_PATH
   DATABRICKS_TOKEN
   API_KEY_ADMIN
@@ -68,11 +68,21 @@ COMMON_ENV+=",COMMS_PROVIDER=gmail"
 # ATTRIBUTION_JOBS_API_ENABLED — these keep the old Databricks Jobs-API
 # trigger paths dark.
 
-# KEY=KEY:latest,... for --set-secrets
-SECRET_FLAGS=""
-for key in "${SECRET_KEYS[@]}"; do
-  SECRET_FLAGS+="${SECRET_FLAGS:+,}${key}=${key}:latest"
-done
+# KEY=KEY:latest,... for --set-secrets — only for secrets that actually exist
+# in Secret Manager (--set-secrets fails the deploy on a missing secret; keys
+# absent from .env, e.g. unused ad channels, just stay unset in the container).
+build_secret_flags() {
+  local existing
+  existing="$(gcloud secrets list --format 'value(name)')"
+  SECRET_FLAGS=""
+  for key in "${SECRET_KEYS[@]}"; do
+    if grep -qx "$key" <<< "$existing"; then
+      SECRET_FLAGS+="${SECRET_FLAGS:+,}${key}=${key}:latest"
+    else
+      echo "WARN: secret $key not in Secret Manager — env var will be unset"
+    fi
+  done
+}
 
 # ── One-time: seed Secret Manager from local .env ────────────────────────────
 seed_secrets() {
@@ -131,6 +141,8 @@ for key in "${SECRET_KEYS[@]}"; do
     --role roles/secretmanager.secretAccessor --quiet >/dev/null \
     || echo "WARN: could not bind $key (run --seed-secrets first?)"
 done
+
+build_secret_flags
 
 # Client-registry bucket (objectAdmin: the admin portal writes clients.json)
 gcloud storage buckets describe "gs://${REGISTRY_BUCKET}" >/dev/null 2>&1 \
