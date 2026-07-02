@@ -36,66 +36,57 @@ python flows/agency_flow.py --agency demo_agency
 python flows/agency_flow.py --agency demo_agency --dry-run   # skip email
 ```
 
-## Databricks Deployment
+## GCP Cloud Run Deployment
 
-The pipeline runs as a Databricks Job and the UI is hosted as a Databricks App.
-Both are defined in `databricks.yml` (Databricks Asset Bundle).
+One container image (repo-root `Dockerfile`, `python:3.11-slim`) serves both workloads:
+- **Cloud Run Job** `attribution-pipeline` — `python flows/agency_flow.py`, triggered nightly by Cloud Scheduler (`attribution-nightly`)
+- **Cloud Run Service** `attribution-ui` — Streamlit on port 8080 (default CMD)
+
+The **data layer stays on Databricks**: Delta writes go through
+`utils/databricks_writer.py` via `databricks-sql-connector` to the SQL
+warehouse over public HTTPS (`DATABRICKS_HOST` / `DATABRICKS_HTTP_PATH` /
+`DATABRICKS_TOKEN`). Compute moved off Databricks because its Serverless
+Egress Gateway blocks DNS to api.stripe.com / graph.facebook.com /
+api.hubapi.com.
 
 ### Secrets — never paste tokens in chat or code
 All credentials live in `attribution_agent/attribution_agent/.env` (gitignored).
 Copy `.env.example` → `.env` and fill in real values before running anything locally.
-For CI / cloud sessions, export them as environment variables:
+In the cloud, secrets live in GCP Secret Manager and Cloud Run injects them as
+env vars (`--set-secrets`). Code reads them from `os.environ` only
+(`utils/secrets.py`).
+
 ```bash
-export DATABRICKS_HOST=https://8259555645755006.6.gcp.databricks.com
-export DATABRICKS_TOKEN=<from .env>
-```
-
-### First-time secret setup (run once)
-```bash
-# Install the Databricks CLI v2 (Asset Bundles)
-curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-
-# Configure auth — reads DATABRICKS_HOST + DATABRICKS_TOKEN from env, or prompts interactively
-databricks auth login
-
-# Push all secrets into the "attribution" scope
-databricks secrets create-scope attribution
-databricks secrets put --scope attribution --key META_ACCESS_TOKEN
-databricks secrets put --scope attribution --key HUBSPOT_ACCESS_TOKEN
-databricks secrets put --scope attribution --key ANTHROPIC_API_KEY
-databricks secrets put --scope attribution --key GMAIL_SENDER
-databricks secrets put --scope attribution --key GMAIL_APP_PASSWORD
-databricks secrets put --scope attribution --key STRIPE_SECRET_KEY
-databricks secrets put --scope attribution --key GOOGLE_ADS_REFRESH_TOKEN
-databricks secrets put --scope attribution --key LINKEDIN_ACCESS_TOKEN
-databricks secrets put --scope attribution --key TIKTOK_ACCESS_TOKEN
+# One-time: push .env values into Secret Manager
+PROJECT_ID=<project> ./deploy.sh --seed-secrets
 ```
 
 ### Deploy (run after merging to main)
 ```bash
-# From repo root — credentials are picked up from env vars or ~/.databrickscfg
-databricks bundle deploy
-
-# Verify
-databricks bundle run attribution_pipeline --dry-run
+# From repo root, in Git Bash — builds via Cloud Build, deploys Job + UI + Scheduler
+PROJECT_ID=<project> ./deploy.sh
 ```
 
 ### Run the Job on demand
 ```bash
-databricks bundle run attribution_pipeline
+gcloud run jobs execute attribution-pipeline --region us-central1 \
+  --args "flows/agency_flow.py,--agency,demo_agency,--dry-run" --wait
 ```
 
 ### Local dev
 ```bash
 cd attribution_agent/attribution_agent
-streamlit run app.py   # runs pipeline in-process, not via Jobs API
+streamlit run app.py   # runs pipeline in-process, not via Cloud Run
 ```
 
 ## Key Config Files
 
+- `Dockerfile` + `deploy.sh` — container build and full GCP deploy (Artifact
+  Registry, Secret Manager seed, Cloud Run Job/Service, Cloud Scheduler)
 - `config/agency_config.py` — agency registry (branding, client list)
 - `config/client_config.py` — client registry (data sources, report email).
-  Custom clients added via the app's admin portal persist to the
-  `attribution_ops.client_registry` Delta table inside Databricks
-  (local JSON fallback; override via `ATTRIBUTION_CLIENT_REGISTRY_BACKEND`)
+  On Cloud Run, custom clients added via the app's admin portal persist to
+  `clients.json` on a GCS bucket mounted at `/mnt/registry`
+  (`ATTRIBUTION_CLIENT_REGISTRY_BACKEND=local`); the Delta-table backend
+  still exists behind `ATTRIBUTION_CLIENT_REGISTRY_BACKEND`
 - `.env` — secrets (GMAIL_SENDER, GMAIL_APP_PASSWORD, Databricks tokens)
