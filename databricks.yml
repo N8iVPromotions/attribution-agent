@@ -45,11 +45,17 @@ resources:
       environments:
         - environment_key: default
           spec:
-            client: "1"
+            client: "3"
             dependencies:
+              # The workspace default pip index points at a GCP Artifact Registry
+              # mirror (us-central1-python.pkg.dev) that serverless egress cannot
+              # resolve since ~2026-07-01; public PyPI IS reachable, so override.
+              - "--index-url https://pypi.org/simple"
               - "requests>=2.31.0"
               - "hubspot-api-client>=8.1.0"
-              - "pandas>=2.0.0"
+              # pandas 3 removed pd.Timestamp.utcnow(), which the writers use;
+              # client "3" is Python 3.12 where pandas>=2 would resolve to 3.x.
+              - "pandas>=2.0.0,<3.0.0"
               - "python-dotenv>=1.0.0"
               - "tenacity>=8.2.0"
               - "loguru>=0.7.0"
@@ -58,7 +64,9 @@ resources:
               - "google-ads>=24.0.0"
               - "anthropic>=0.97.0"
               - "databricks-sdk>=0.28.0"
-              - "databricks-connect>=15.0.0"
+              # databricks-connect intentionally NOT listed: serverless preinstalls
+              # the version matched to the environment; installing a newer one
+              # over it breaks environment resolution.
 
       email_notifications:
         on_failure:

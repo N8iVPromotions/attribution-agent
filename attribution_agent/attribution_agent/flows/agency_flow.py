@@ -95,7 +95,8 @@ def run_agency_benchmark_sql(agency: AgencyConfig) -> None:
     """Run the agency_benchmark and agency_dashboard SQL transforms."""
     try:
         union_all_clause = _build_union_all(agency)
-        sql_dir = Path(__file__).parent.parent / "transforms"
+        # _root, not __file__: serverless runs this script without __file__ set
+        sql_dir = Path(_root) / "transforms"
 
         for sql_file in ("agency_dashboard.sql", "agency_benchmark.sql"):
             path = sql_dir / sql_file
@@ -119,9 +120,7 @@ def run_agency_benchmark_sql(agency: AgencyConfig) -> None:
 def run_client_attribution_sql(client_id: str, attribution_model: str) -> None:
     """Refresh model-specific closed-revenue attribution tables for a client."""
     config = get_client(client_id)
-    sql_path = (
-        Path(__file__).parent.parent / "transforms" / "closed_revenue_attribution.sql"
-    )
+    sql_path = Path(_root) / "transforms" / "closed_revenue_attribution.sql"
     sql = sql_path.read_text()
     for stmt in sql.format(
         schema=config.databricks_schema,
