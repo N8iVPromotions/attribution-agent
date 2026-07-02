@@ -705,7 +705,8 @@ def _render_comparison_chart(selected_model: str) -> None:
         .configure_view(strokeWidth=0, fill="transparent")
     )
 
-    st.altair_chart(chart, width="stretch")
+    # width="stretch" needs streamlit>=1.50; the pinned 1.49 uses the old kwarg
+    st.altair_chart(chart, use_container_width=True)
     st.caption(
         "Sample 5-touch journey: Paid Social → Paid Search → Email → Paid Social → Direct"
     )
