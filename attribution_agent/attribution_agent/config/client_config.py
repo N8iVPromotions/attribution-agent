@@ -19,16 +19,8 @@ logger = logging.getLogger(__name__)
 
 
 def _get_secret(key: str) -> str:
-    """
-    Reads a secret from Databricks Secrets when running inside Databricks.
-    Falls back to environment variables for local testing.
-    """
-    try:
-        from databricks.sdk.runtime import dbutils
-
-        return dbutils.secrets.get(scope="attribution", key=key)
-    except Exception:
-        return os.environ.get(key, "")
+    """Secrets arrive as env vars (Cloud Run --set-secrets, or .env locally)."""
+    return os.environ.get(key, "")
 
 
 @dataclass

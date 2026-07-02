@@ -8,9 +8,9 @@ Local dev:
     cd attribution_agent/attribution_agent
     streamlit run app.py
 
-Databricks App:
-    Deployed via `databricks bundle deploy`. Triggers the
-    "[Attribution] Monthly Pipeline" Job via the Databricks Jobs API.
+Cloud Run:
+    Deployed via `deploy.sh` as the `attribution-ui` service (container CMD
+    runs streamlit directly). Pipeline runs execute in-process.
 """
 
 import logging
@@ -1198,65 +1198,8 @@ def _render_client_manager() -> None:
 
 
 # ── Start ARIE (once per process) ─────────────
-def _get_secret(key: str) -> str:
-    """
-    Read a secret — tries three methods in order:
-    1. Databricks SDK WorkspaceClient (works in Databricks Apps)
-    2. dbutils.secrets (works in notebooks/jobs)
-    3. os.environ (works locally via .env)
-    """
-    # 1. WorkspaceClient — primary path for Databricks Apps
-    try:
-        import base64
-        from databricks.sdk import WorkspaceClient
-
-        resp = WorkspaceClient().secrets.get_secret(scope="attribution", key=key)
-        val = resp.value or ""
-        try:
-            return base64.b64decode(val).decode("utf-8")
-        except Exception:
-            return val
-    except Exception:
-        pass
-    # 2. dbutils — notebooks / jobs
-    try:
-        from databricks.sdk.runtime import dbutils
-
-        return dbutils.secrets.get(scope="attribution", key=key)
-    except Exception:
-        pass
-    # 3. Local .env
-    return os.environ.get(key, "")
-
-
-@st.cache_resource
-def _inject_secrets() -> None:
-    """Pull Databricks secrets into os.environ so downstream modules find them."""
-    for key in (
-        "ANTHROPIC_API_KEY",
-        "GMAIL_SENDER",
-        "GMAIL_APP_PASSWORD",
-        "TELEGRAM_BOT_TOKEN",
-        "TELEGRAM_CHAT_ID",
-        "OPENAI_API_KEY",
-        "META_ACCESS_TOKEN",
-        "HUBSPOT_ACCESS_TOKEN",
-        "STRIPE_SECRET_KEY",
-        "GOOGLE_ADS_DEVELOPER_TOKEN",
-        "GOOGLE_ADS_CLIENT_ID",
-        "GOOGLE_ADS_CLIENT_SECRET",
-        "GOOGLE_ADS_REFRESH_TOKEN",
-        "LINKEDIN_ACCESS_TOKEN",
-        "DATABRICKS_TOKEN",
-        "DATABRICKS_HTTP_PATH",
-    ):
-        if not os.environ.get(key):
-            val = _get_secret(key)
-            if val:
-                os.environ[key] = val
-
-
-_inject_secrets()
+# Secrets arrive as environment variables (Cloud Run --set-secrets, or .env
+# locally via load_dotenv above) — no injection step needed.
 
 
 # ARIE is a Telegram long-polling bot and needs outbound reachability to

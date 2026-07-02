@@ -1,0 +1,28 @@
+# Secrets — never bake into the image
+**/.env
+
+# VCS / local state
+.git/
+.databricks/
+.claude/
+.idea/
+.vscode/
+
+# Python caches
+**/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/
+**/*.pyc
+
+# Not needed at runtime
+docs/
+attribution_agent/attribution_agent/tests/
+attribution_agent/attribution_agent/evals/
+attribution_agent/attribution_agent/conftest.py
+
+# Local ARIE runner artifacts
+arie*.log
+arie.pid
+arie_start.ps1
+arie_stop.ps1
+~$CLAUDE.md

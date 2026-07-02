@@ -1,0 +1,2 @@
+# Keep the Cloud Build upload free of secrets and local state.
+#!include:.dockerignore

@@ -7,68 +7,88 @@ platform. For day-to-day development see the repo root `CLAUDE.md`.
 
 | Component | What it is | Where defined |
 |-----------|------------|---------------|
-| `attribution_pipeline` | Databricks Job — runs the ingest → insight → report flow | `databricks.yml` |
-| `attribution-pipeline-ui` | Databricks App — Streamlit UI | `databricks.yml` |
+| `attribution-pipeline` | Cloud Run **Job** — runs the ingest → insight → report flow | `Dockerfile` + `deploy.sh` |
+| `attribution-ui` | Cloud Run **Service** — Streamlit UI | `Dockerfile` + `deploy.sh` |
+| `attribution-nightly` | Cloud Scheduler trigger for the Job | `deploy.sh` |
 | REST API | FastAPI (`api/main.py`) — pipeline, clients, reports, approvals, A2A | `api/` |
 | A2A node | Agent-to-agent HTTP surface (discovery + dispatch) | `agents/a2a/server.py` |
 | MCP server | FastMCP stdio server, 7 tools | `mcp_server/server.py` |
 
-Workspace: `https://8259555645755006.6.gcp.databricks.com` (GCP).
+Both workloads run the **same image** from Artifact Registry
+(`$REGION-docker.pkg.dev/$PROJECT_ID/attribution/attribution-agent`); the Job
+overrides the container command to `python flows/agency_flow.py`.
 
-## CLI auth profiles
+**Data layer**: still Databricks. Delta reads/writes go through
+`utils/databricks_writer.py` via `databricks-sql-connector` to the SQL
+warehouse (`https://8259555645755006.6.gcp.databricks.com`) over public HTTPS.
+Compute was migrated off Databricks because its Serverless Egress Gateway
+blocks DNS to `api.stripe.com` / `graph.facebook.com` / `api.hubapi.com`.
 
-The **DEFAULT** profile is a PAT. Some operations (notably `apps logs`) require
-**OAuth** — the PAT returns `OAuth Token not supported for current auth type pat`.
-Create a separate OAuth profile once:
+## Secrets
+
+Stored in GCP Secret Manager, injected into both workloads as env vars via
+`--set-secrets` (see the `SECRET_KEYS` list in `deploy.sh`). Code reads
+`os.environ` only.
 
 ```bash
-databricks auth login --host https://8259555645755006.6.gcp.databricks.com --profile oauth
-# Complete the browser flow, then verify:
-databricks auth profiles                 # expect an `oauth` row
+# Seed/rotate from local .env (updates create new secret versions)
+PROJECT_ID=<project> ./deploy.sh --seed-secrets
 ```
 
-With both profiles present, **every CLI call must pass `--profile`** or it errors
-with "multiple profiles matched".
+Rotation note: workloads reference `:latest`. The Job picks up new values on
+its next execution; the **UI needs a redeploy** (or instance recycle) to see
+rotated secrets.
 
 ## Deploy
 
 ```bash
-# 1. Bundle (Job + App definitions)
-databricks bundle deploy --target production
-
-# 2. App code (Streamlit) — point at the bundled source
-databricks apps deploy attribution-pipeline-ui --profile DEFAULT \
-  --source-code-path "/Workspace/Users/zajen@n8ivpromotions.com/.bundle/attribution-agent/production/files/attribution_agent/attribution_agent"
+# From repo root, in Git Bash. Builds via Cloud Build (no local Docker needed),
+# then deploys Job + UI + Scheduler. Idempotent — safe to re-run.
+PROJECT_ID=<project> ./deploy.sh
 ```
 
-> ⚠️ **A failed app deploy takes the running app DOWN — there is no auto-rollback.**
-> `databricks apps deploy` makes the new deployment active even if its build
-> fails, replacing the last-good one (the app goes `UNAVAILABLE`). Never redeploy
-> a healthy app without a reason. If a deploy fails you must get a *successful*
-> build to recover — see Rollback below.
+Rollback: images are tagged with the git SHA. Redeploy a known-good one:
+
+```bash
+gcloud run jobs deploy attribution-pipeline --region us-central1 --image "<IMAGE>:<old-sha>"
+gcloud run deploy attribution-ui --region us-central1 --image "<IMAGE>:<old-sha>"
+# Or roll the service back without rebuilding:
+gcloud run services update-traffic attribution-ui --region us-central1 --to-revisions <revision>=100
+```
 
 ## Run the pipeline
 
 ```bash
-# On demand via Jobs
-databricks bundle run attribution_pipeline
+# On demand (execute-time --args override the deployed ones)
+gcloud run jobs execute attribution-pipeline --region us-central1 \
+  --args "flows/agency_flow.py,--agency,demo_agency,--dry-run" --wait
 
-# Locally (runs in-process, not via Jobs API)
+# Nightly schedule — test-fire it (⚠️ runs the deployed args: all agencies, LIVE)
+gcloud scheduler jobs run attribution-nightly --location us-central1
+
+# Locally (runs in-process, not via Cloud Run)
 cd attribution_agent/attribution_agent
 python flows/agency_flow.py --agency demo_agency
 python flows/agency_flow.py --agency demo_agency --dry-run    # skip email
 python flows/agency_flow.py --agency demo_agency --resume-run-id <id>   # resume from checkpoint
 ```
 
-## Health checks
+## Health checks & logs
 
 ```bash
-# REST API
+# UI
+gcloud run services describe attribution-ui --region us-central1 --format 'value(status.url)'
+
+# Job executions
+gcloud run jobs executions list --job attribution-pipeline --region us-central1
+
+# Logs
+gcloud logging read 'resource.type=cloud_run_job AND resource.labels.job_name=attribution-pipeline' --limit 50
+gcloud logging read 'resource.type=cloud_run_revision AND resource.labels.service_name=attribution-ui' --limit 50
+
+# REST API (if deployed)
 curl https://<api-host>/health                         # {"status":"ok", ...}
 curl https://<api-host>/.well-known/agent-cards        # A2A discovery
-
-# App logs (OAuth profile required)
-databricks apps logs attribution-pipeline-ui --profile oauth
 ```
 
 A partial ingest is reported in the run summary as `"status": "partial"` with a
@@ -76,26 +96,18 @@ A partial ingest is reported in the run summary as `"status": "partial"` with a
 run still completes with the sources that succeeded — investigate the named
 source's credentials/quota rather than re-running everything.
 
-## Rollback (during a build-plane / PyPI outage)
+## Client registry
 
-The app build installs `requirements.txt` from PyPI and needs egress to
-`pypi.org` + `files.pythonhosted.org`. The build plane fails transiently with
-`pypi.org [Errno 101] Network is unreachable` even when egress policy is
-`FULL_ACCESS` — a Databricks Apps build-plane issue; retry later.
-
-When fresh source uploads keep failing on this, redeploy from a previous
-SUCCEEDED deployment's immutable artifact snapshot (Databricks reuses that
-build's cached env — no PyPI download):
+Custom clients live in `clients.json` on the GCS bucket
+(`gs://$PROJECT_ID-attribution-registry`), FUSE-mounted at `/mnt/registry` in
+both workloads (`ATTRIBUTION_CLIENT_REGISTRY_BACKEND=local`).
 
 ```bash
-# Find a known-good deployment's artifact path
-databricks apps get-deployment attribution-pipeline-ui <deployment-id> --profile DEFAULT
-#   → .deployment_artifacts.source_code_path
-
-# Redeploy from it
-databricks apps deploy attribution-pipeline-ui --profile DEFAULT \
-  --source-code-path /Workspace/Users/<uid>/src/<old-deployment-id>
+gcloud storage cat gs://<project>-attribution-registry/clients.json
 ```
+
+GCS FUSE has no concurrent-writer safety — fine at one UI instance plus the
+nightly Job, but don't add more writers.
 
 ## Dependency pinning (known-good build set)
 
@@ -104,13 +116,16 @@ Pinned in `attribution_agent/attribution_agent/requirements.txt`. Unbounded
 databricks-sql-connector 4.x and broke. Keep these bounds:
 
 - `google-ads==31.0.0`
-- `protobuf>=4.25.0,<6`  (mlflow-skinny in the base image needs protobuf<6)
-- `websockets>=10,<13`   (gradio-client needs <13)
+- `protobuf>=4.25.0,<6`
+- `websockets>=10,<13`
 
-## Egress note
+## Databricks decommission (post-migration)
 
-The app's serverless egress is restrictive. Data-source APIs
-(`graph.facebook.com`, `api.hubapi.com`, `api.stripe.com`, `api.telegram.org`)
-show as DROP in the egress audit — the pipeline code assumes no outbound
-internet from the app and runs analysis locally. Live ingestion runs in the
-Databricks **Job**, not the App.
+After Cloud Run verification passes, pause/delete the old resources so nothing
+fires them accidentally (ARIE's remote trigger is env-gated off via
+`ATTRIBUTION_JOBS_API_ENABLED`, but the job itself should not stay live):
+
+- Databricks Job `500226442246561` (`[Attribution] Monthly Pipeline`)
+- Databricks App `attribution-pipeline-ui`
+
+Keep the SQL warehouse — it is still the data layer.

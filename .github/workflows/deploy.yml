@@ -26,21 +26,16 @@ jobs:
           DATABRICKS_TOKEN: mock
           ANTHROPIC_API_KEY: mock
 
-      - name: Install Databricks CLI
-        run: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-
-      - name: Deploy bundle
-        run: databricks bundle deploy --target production
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      # TODO: Cloud Run CD — authenticate via Workload Identity Federation,
+      # then `gcloud builds submit` + `gcloud run jobs deploy` + `gcloud run
+      # deploy` (see deploy.sh). Until then, deploys run manually: ./deploy.sh
 
       - name: Notify success
         if: success()
         run: |
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -d text="✅ *Attribution Agent deployed* to production%0ASha: \`${{ github.sha }}\`" \
+            -d text="✅ *Attribution Agent main is green* — deploy with ./deploy.sh%0ASha: \`${{ github.sha }}\`" \
             -d parse_mode=Markdown
 
       - name: Notify failure

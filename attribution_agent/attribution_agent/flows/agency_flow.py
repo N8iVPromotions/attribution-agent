@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -95,7 +96,8 @@ def run_agency_benchmark_sql(agency: AgencyConfig) -> None:
     """Run the agency_benchmark and agency_dashboard SQL transforms."""
     try:
         union_all_clause = _build_union_all(agency)
-        sql_dir = Path(__file__).parent.parent / "transforms"
+        # _root, not __file__: serverless runs this script without __file__ set
+        sql_dir = Path(_root) / "transforms"
 
         for sql_file in ("agency_dashboard.sql", "agency_benchmark.sql"):
             path = sql_dir / sql_file
@@ -119,9 +121,7 @@ def run_agency_benchmark_sql(agency: AgencyConfig) -> None:
 def run_client_attribution_sql(client_id: str, attribution_model: str) -> None:
     """Refresh model-specific closed-revenue attribution tables for a client."""
     config = get_client(client_id)
-    sql_path = (
-        Path(__file__).parent.parent / "transforms" / "closed_revenue_attribution.sql"
-    )
+    sql_path = Path(_root) / "transforms" / "closed_revenue_attribution.sql"
     sql = sql_path.read_text()
     for stmt in sql.format(
         schema=config.databricks_schema,
@@ -411,12 +411,15 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO)
 
-    # --- Databricks Job widget parameters (set via job parameters in databricks.yml)
+    # --- Parameter source: Databricks widgets ONLY on real Databricks compute.
+    # Off-Databricks the SDK is still installed and DATABRICKS_HOST/TOKEN are set
+    # (SQL-warehouse writes), so a bare try/except around dbutils could succeed
+    # remotely and silently swallow CLI args — gate on the runtime marker instead.
     _agency = None
     _dry_run = False
     _attribution_model = "last_touch"
     _run_mode = "agency"
-    try:
+    if os.environ.get("DATABRICKS_RUNTIME_VERSION"):
         from databricks.sdk.runtime import dbutils as _dbutils
 
         _agency = _dbutils.widgets.get("agency") or None
@@ -427,8 +430,7 @@ if __name__ == "__main__":
         logger.info(
             f"[Job] Running with Databricks widget params: agency={_agency}, dry_run={_dry_run}, model={_attribution_model}"
         )
-    except Exception:
-        # Not inside a Databricks Job — fall through to argparse
+    else:
         parser = argparse.ArgumentParser(
             description="Run attribution pipeline for an agency"
         )
