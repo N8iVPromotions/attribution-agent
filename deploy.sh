@@ -15,6 +15,10 @@
 #     --args "flows/agency_flow.py,--agency,demo_agency,--dry-run" --wait
 set -euo pipefail
 
+# Git Bash (MSYS) rewrites unix-looking args (/mnt/... -> C:/...); that mangles
+# gcloud flags like mount-path=/mnt/registry. Disable conversion entirely.
+export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
+
 # ── Configuration ────────────────────────────────────────────────────────────
 PROJECT_ID="${PROJECT_ID:?set PROJECT_ID, e.g. PROJECT_ID=my-project ./deploy.sh}"
 REGION="${REGION:-us-central1}"
