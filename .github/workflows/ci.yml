@@ -1,8 +1,10 @@
 name: CI
 
+# push is limited to main so PR commits run CI once (via pull_request), not
+# twice — the ~57-min test job doubled the Actions bill on every PR push.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
     branches: [main]
 
