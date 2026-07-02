@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -410,12 +411,15 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO)
 
-    # --- Databricks Job widget parameters (set via job parameters in databricks.yml)
+    # --- Parameter source: Databricks widgets ONLY on real Databricks compute.
+    # Off-Databricks the SDK is still installed and DATABRICKS_HOST/TOKEN are set
+    # (SQL-warehouse writes), so a bare try/except around dbutils could succeed
+    # remotely and silently swallow CLI args — gate on the runtime marker instead.
     _agency = None
     _dry_run = False
     _attribution_model = "last_touch"
     _run_mode = "agency"
-    try:
+    if os.environ.get("DATABRICKS_RUNTIME_VERSION"):
         from databricks.sdk.runtime import dbutils as _dbutils
 
         _agency = _dbutils.widgets.get("agency") or None
@@ -426,8 +430,7 @@ if __name__ == "__main__":
         logger.info(
             f"[Job] Running with Databricks widget params: agency={_agency}, dry_run={_dry_run}, model={_attribution_model}"
         )
-    except Exception:
-        # Not inside a Databricks Job — fall through to argparse
+    else:
         parser = argparse.ArgumentParser(
             description="Run attribution pipeline for an agency"
         )

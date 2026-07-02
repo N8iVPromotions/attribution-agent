@@ -28,13 +28,8 @@ sys.path.insert(0, _root)
 
 
 def _get_secret(key: str) -> str:
-    """Must be called from main thread where dbutils is available."""
-    try:
-        from databricks.sdk.runtime import dbutils
-
-        return dbutils.secrets.get(scope="attribution", key=key)
-    except Exception:
-        return os.environ.get(key, "")
+    """Secrets arrive as env vars (Cloud Run --set-secrets, or .env locally)."""
+    return os.environ.get(key, "")
 
 
 from config.client_config import ClientConfig, get_client, list_clients
@@ -471,12 +466,13 @@ def ingest_all_clients() -> list[dict]:
 
 
 if __name__ == "__main__":
-    try:
+    # Widgets only on real Databricks compute — see agency_flow.py __main__.
+    if os.environ.get("DATABRICKS_RUNTIME_VERSION"):
         from databricks.sdk.runtime import dbutils
 
         client_id = dbutils.widgets.get("client")
         ingest_flow(client_id=client_id)
-    except Exception:
+    else:
         import argparse
 
         parser = argparse.ArgumentParser()

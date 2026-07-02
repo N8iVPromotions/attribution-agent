@@ -3,9 +3,8 @@ api/auth.py
 -----------
 API key authentication dependency for FastAPI.
 
-Key lookup order:
-  1. env var  API_KEY_ADMIN / API_KEY_{UPPER_CLIENT_ID}
-  2. Databricks Secrets scope "attribution": api_key_admin / api_key_{client_id}
+Key lookup: env var  API_KEY_ADMIN / API_KEY_{UPPER_CLIENT_ID}
+(Cloud Run injects these from Secret Manager via --set-secrets.)
 
 Header: X-API-Key: <key>
 """
@@ -19,40 +18,21 @@ from config.rbac_config import Role
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
-def _get_secret(key: str) -> str:
-    try:
-        import base64
-        from databricks.sdk import WorkspaceClient
-
-        resp = WorkspaceClient().secrets.get_secret(scope="attribution", key=key)
-        val = resp.value or ""
-        try:
-            return base64.b64decode(val).decode("utf-8")
-        except Exception:
-            return val
-    except Exception:
-        return ""
-
-
 def _resolve_key(api_key: str) -> Role | None:
     """Return the Role for an API key, or None if unrecognized."""
 
-    def _matches(secret_name: str, env_name: str) -> bool:
+    def _matches(env_name: str) -> bool:
         env_val = os.environ.get(env_name, "")
-        if env_val and api_key == env_val:
-            return True
-        db_val = _get_secret(secret_name)
-        return bool(db_val and api_key == db_val)
+        return bool(env_val and api_key == env_val)
 
-    if _matches("api_key_admin", "API_KEY_ADMIN"):
+    if _matches("API_KEY_ADMIN"):
         return Role.ADMIN
 
     from config.client_config import CLIENT_REGISTRY
 
     for client_id in CLIENT_REGISTRY:
-        secret_name = f"api_key_{client_id}"
         env_name = f"API_KEY_{client_id.upper()}"
-        if _matches(secret_name, env_name):
+        if _matches(env_name):
             return Role.ANALYST
 
     return None

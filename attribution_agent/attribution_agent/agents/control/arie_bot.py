@@ -70,24 +70,10 @@ def notify(text: str) -> None:
 
 
 def _load_credentials() -> tuple[str, str]:
-    """Read TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID from secrets or env."""
-
-    def _get(key: str) -> str:
-        try:
-            import base64
-            from databricks.sdk import WorkspaceClient
-
-            resp = WorkspaceClient().secrets.get_secret(scope="attribution", key=key)
-            val = resp.value or ""
-            try:
-                return base64.b64decode(val).decode("utf-8")
-            except Exception:
-                return val
-        except Exception:
-            pass
-        return os.environ.get(key, "")
-
-    return _get("TELEGRAM_BOT_TOKEN"), _get("TELEGRAM_CHAT_ID")
+    """Read TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID from the environment."""
+    return os.environ.get("TELEGRAM_BOT_TOKEN", ""), os.environ.get(
+        "TELEGRAM_CHAT_ID", ""
+    )
 
 
 def _write_approval_queue(action_id: str, description: str, action_type: str) -> None:
@@ -344,6 +330,15 @@ def _handle_message(message: dict) -> None:
         )
 
         def do_run():
+            # Remote Jobs-API trigger is Databricks-only. Off-Databricks the SDK
+            # would still authenticate (DATABRICKS_HOST/TOKEN power the SQL
+            # connector) and fire the old job — require an explicit opt-in.
+            if not os.environ.get("ATTRIBUTION_JOBS_API_ENABLED"):
+                return (
+                    "Remote pipeline trigger is not available in this deployment — "
+                    "use the dashboard's Run button."
+                )
+
             import threading
             from databricks.sdk import WorkspaceClient
             from databricks.sdk.service.jobs import RunLifeCycleState
@@ -497,16 +492,10 @@ if __name__ == "__main__":
     except Exception:
         pass
 
-    # Credentials injected as env vars by startup.py; fall back to _load_credentials
-    _token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    _chat_id_env = os.environ.get("TELEGRAM_CHAT_ID", "")
-    if not _token or not _chat_id_env:
-        _token, _chat_id_env = _load_credentials()
+    _token, _chat_id_env = _load_credentials()
 
     if not _token or not _chat_id_env:
-        print(
-            "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set in .env or Databricks Secrets"
-        )
+        print("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set in the environment")
         sys.exit(1)
 
     start(_token, _chat_id_env)

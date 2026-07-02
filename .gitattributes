@@ -1,2 +1,4 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+# Shell scripts must stay LF (deploy.sh runs in Git Bash / Cloud Build)
+*.sh text eol=lf
