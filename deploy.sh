@@ -128,6 +128,14 @@ gcloud artifacts repositories describe "$REPO" --location "$REGION" >/dev/null 2
        --repository-format=docker --location "$REGION" \
        --description "Attribution agent images"
 
+# Cloud Build runs as the compute default SA and needs push + log rights.
+PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format 'value(projectNumber)')"
+BUILD_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+gcloud artifacts repositories add-iam-policy-binding "$REPO" --location "$REGION" \
+  --member "serviceAccount:${BUILD_SA}" --role roles/artifactregistry.writer >/dev/null
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member "serviceAccount:${BUILD_SA}" --role roles/logging.logWriter --quiet >/dev/null
+
 # ── 3. Service accounts + IAM ────────────────────────────────────────────────
 gcloud iam service-accounts describe "$RUNTIME_SA" >/dev/null 2>&1 \
   || gcloud iam service-accounts create "$SA_RUNTIME_NAME" --display-name "Attribution runtime"
