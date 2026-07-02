@@ -94,5 +94,8 @@ streamlit run app.py   # runs pipeline in-process, not via Jobs API
 ## Key Config Files
 
 - `config/agency_config.py` — agency registry (branding, client list)
-- `config/client_config.py` — client registry (data sources, report email)
+- `config/client_config.py` — client registry (data sources, report email).
+  Custom clients added via the app's admin portal persist to the
+  `attribution_ops.client_registry` Delta table inside Databricks
+  (local JSON fallback; override via `ATTRIBUTION_CLIENT_REGISTRY_BACKEND`)
 - `.env` — secrets (GMAIL_SENDER, GMAIL_APP_PASSWORD, Databricks tokens)

@@ -458,6 +458,16 @@ CREATE TABLE IF NOT EXISTS {ops_schema}.ab_assignments (
 USING DELTA
 """
 
+CLIENT_REGISTRY_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.client_registry (
+    client_id       STRING,
+    config_json     STRING,
+    is_active       BOOLEAN,
+    updated_at      TIMESTAMP
+)
+USING DELTA
+"""
+
 _RAW_TABLES = [
     "meta_ads_raw",
     "hubspot_deals_raw",
@@ -567,6 +577,59 @@ def ensure_ops_tables() -> None:
     _run_sql(f"CREATE SCHEMA IF NOT EXISTS {_OPS_SCHEMA}")
     _run_sql(RUN_HISTORY_TABLE_DDL.format(ops_schema=_OPS_SCHEMA))
     logger.info(f"[Databricks] Ops tables ready: {_OPS_SCHEMA}")
+
+
+_client_registry_table_ready = False
+
+
+def ensure_client_registry_table() -> None:
+    global _client_registry_table_ready
+    if _client_registry_table_ready:
+        return
+    _run_sql(f"CREATE SCHEMA IF NOT EXISTS {_OPS_SCHEMA}")
+    _run_sql(CLIENT_REGISTRY_TABLE_DDL.format(ops_schema=_OPS_SCHEMA))
+    _client_registry_table_ready = True
+    logger.debug(f"[Databricks] client_registry ready: {_OPS_SCHEMA}.client_registry")
+
+
+def fetch_client_registry_rows() -> list[dict]:
+    """Return active client registry rows as [{client_id, config_json}, ...]."""
+    ensure_client_registry_table()
+    query = (
+        f"SELECT client_id, config_json FROM {_OPS_SCHEMA}.client_registry "
+        "WHERE is_active = TRUE"
+    )
+    if _is_databricks():
+        return [row.asDict() for row in _get_spark().sql(query).collect()]
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute(query)
+    columns = [desc[0] for desc in cursor.description]
+    rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+    cursor.close()
+    conn.close()
+    return rows
+
+
+def upsert_client_registry_entry(
+    client_id: str, config_json: str, is_active: bool = True
+) -> None:
+    """Insert or update one client registry row (is_active=False soft-deletes)."""
+    ensure_client_registry_table()
+    df = pd.DataFrame(
+        [
+            {
+                "client_id": client_id,
+                "config_json": config_json,
+                "is_active": bool(is_active),
+                "updated_at": pd.Timestamp.utcnow(),
+            }
+        ]
+    )
+    _upsert_dataframe(df, _OPS_SCHEMA, "client_registry", ["client_id"])
+    logger.info(
+        f"[Databricks] client_registry upsert: {client_id} (active={is_active})"
+    )
 
 
 def _upsert_dataframe(
