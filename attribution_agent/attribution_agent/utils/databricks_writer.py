@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
+import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -632,6 +633,17 @@ def upsert_client_registry_entry(
     )
 
 
+def _sql_param(v):
+    """Coerce a DataFrame scalar to a type the SQL connector can bind."""
+    if v is None or (pd.api.types.is_scalar(v) and pd.isna(v)):
+        return None
+    if isinstance(v, pd.Timestamp):
+        return v.to_pydatetime()
+    if isinstance(v, np.generic):
+        return v.item()
+    return v
+
+
 def _upsert_dataframe(
     df: pd.DataFrame,
     schema: str,
@@ -670,7 +682,12 @@ def _upsert_dataframe(
         columns = list(df.columns)
         col_str = ", ".join(columns)
         ph = ", ".join(["?" for _ in columns])
-        rows = [tuple(r) for r in df.itertuples(index=False, name=None)]
+        # The SQL connector can't infer pandas/numpy scalar types as parameters
+        # (e.g. pd.Timestamp -> "Could not infer parameter type"); bind natives.
+        rows = [
+            tuple(_sql_param(v) for v in r)
+            for r in df.itertuples(index=False, name=None)
+        ]
         for i in range(0, len(rows), 1000):
             cursor.executemany(
                 f"INSERT INTO {staging_table} ({col_str}) VALUES ({ph})",
