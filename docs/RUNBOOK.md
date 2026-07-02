@@ -9,7 +9,7 @@ platform. For day-to-day development see the repo root `CLAUDE.md`.
 |-----------|------------|---------------|
 | `attribution-pipeline` | Cloud Run **Job** — runs the ingest → insight → report flow | `Dockerfile` + `deploy.sh` |
 | `attribution-ui` | Cloud Run **Service** — Streamlit UI | `Dockerfile` + `deploy.sh` |
-| `attribution-nightly` | Cloud Scheduler trigger for the Job | `deploy.sh` |
+| `attribution-monthly` | Cloud Scheduler trigger for the Job (9am ET on the 1st) | `deploy.sh` |
 | REST API | FastAPI (`api/main.py`) — pipeline, clients, reports, approvals, A2A | `api/` |
 | A2A node | Agent-to-agent HTTP surface (discovery + dispatch) | `agents/a2a/server.py` |
 | MCP server | FastMCP stdio server, 7 tools | `mcp_server/server.py` |
@@ -63,8 +63,8 @@ gcloud run services update-traffic attribution-ui --region us-central1 --to-revi
 gcloud run jobs execute attribution-pipeline --region us-central1 \
   --args "flows/agency_flow.py,--agency,demo_agency,--dry-run" --wait
 
-# Nightly schedule — test-fire it (⚠️ runs the deployed args: all agencies, LIVE)
-gcloud scheduler jobs run attribution-nightly --location us-central1
+# Monthly schedule — test-fire it (⚠️ runs the deployed args: all agencies, LIVE)
+gcloud scheduler jobs run attribution-monthly --location us-central1
 
 # Locally (runs in-process, not via Cloud Run)
 cd attribution_agent/attribution_agent
@@ -107,7 +107,7 @@ gcloud storage cat gs://<project>-attribution-registry/clients.json
 ```
 
 GCS FUSE has no concurrent-writer safety — fine at one UI instance plus the
-nightly Job, but don't add more writers.
+scheduled Job, but don't add more writers.
 
 ## Dependency pinning (known-good build set)
 
