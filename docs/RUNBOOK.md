@@ -118,6 +118,7 @@ databricks-sql-connector 4.x and broke. Keep these bounds:
 - `google-ads==31.0.0`
 - `protobuf>=4.25.0,<6`
 - `websockets>=10,<13`
+- `stripe>=7.0.0,<15`  (v15 dropped dict subclassing on StripeObject → connector's `.get()` access raises `AttributeError('get')`)
 
 ## Databricks decommission (post-migration)
 
