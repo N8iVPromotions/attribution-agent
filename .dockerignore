@@ -4,7 +4,8 @@
 # VCS / local state
 .git/
 .databricks/
-.claude/
+.claude/*
+!.claude/agents
 .idea/
 .vscode/
 

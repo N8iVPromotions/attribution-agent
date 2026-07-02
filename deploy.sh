@@ -15,6 +15,11 @@
 #     --args "flows/agency_flow.py,--agency,demo_agency,--dry-run" --wait
 set -euo pipefail
 
+# Git Bash (MSYS) rewrites unix-looking args (/mnt/... -> C:/...), mangling
+# gcloud flag values like mount-path=/mnt/registry. Exclude ONLY those args by
+# prefix — a blanket MSYS_NO_PATHCONV breaks gcloud's own /c/... wrapper path.
+export MSYS2_ARG_CONV_EXCL='volume=;ATTRIBUTION_'
+
 # ── Configuration ────────────────────────────────────────────────────────────
 PROJECT_ID="${PROJECT_ID:?set PROJECT_ID, e.g. PROJECT_ID=my-project ./deploy.sh}"
 REGION="${REGION:-us-central1}"
@@ -50,7 +55,7 @@ SECRET_KEYS=(
   SENDGRID_API_KEY
   TELEGRAM_BOT_TOKEN
   TELEGRAM_CHAT_ID
-  DATABRICKS_HOST
+  DATABRICKS_SERVER_HOSTNAME
   DATABRICKS_HTTP_PATH
   DATABRICKS_TOKEN
   API_KEY_ADMIN
@@ -68,11 +73,21 @@ COMMON_ENV+=",COMMS_PROVIDER=gmail"
 # ATTRIBUTION_JOBS_API_ENABLED — these keep the old Databricks Jobs-API
 # trigger paths dark.
 
-# KEY=KEY:latest,... for --set-secrets
-SECRET_FLAGS=""
-for key in "${SECRET_KEYS[@]}"; do
-  SECRET_FLAGS+="${SECRET_FLAGS:+,}${key}=${key}:latest"
-done
+# KEY=KEY:latest,... for --set-secrets — only for secrets that actually exist
+# in Secret Manager (--set-secrets fails the deploy on a missing secret; keys
+# absent from .env, e.g. unused ad channels, just stay unset in the container).
+build_secret_flags() {
+  local existing
+  existing="$(gcloud secrets list --format 'value(name)')"
+  SECRET_FLAGS=""
+  for key in "${SECRET_KEYS[@]}"; do
+    if grep -qx "$key" <<< "$existing"; then
+      SECRET_FLAGS+="${SECRET_FLAGS:+,}${key}=${key}:latest"
+    else
+      echo "WARN: secret $key not in Secret Manager — env var will be unset"
+    fi
+  done
+}
 
 # ── One-time: seed Secret Manager from local .env ────────────────────────────
 seed_secrets() {
@@ -118,6 +133,14 @@ gcloud artifacts repositories describe "$REPO" --location "$REGION" >/dev/null 2
        --repository-format=docker --location "$REGION" \
        --description "Attribution agent images"
 
+# Cloud Build runs as the compute default SA and needs push + log rights.
+PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format 'value(projectNumber)')"
+BUILD_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+gcloud artifacts repositories add-iam-policy-binding "$REPO" --location "$REGION" \
+  --member "serviceAccount:${BUILD_SA}" --role roles/artifactregistry.writer >/dev/null
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member "serviceAccount:${BUILD_SA}" --role roles/logging.logWriter --quiet >/dev/null
+
 # ── 3. Service accounts + IAM ────────────────────────────────────────────────
 gcloud iam service-accounts describe "$RUNTIME_SA" >/dev/null 2>&1 \
   || gcloud iam service-accounts create "$SA_RUNTIME_NAME" --display-name "Attribution runtime"
@@ -131,6 +154,8 @@ for key in "${SECRET_KEYS[@]}"; do
     --role roles/secretmanager.secretAccessor --quiet >/dev/null \
     || echo "WARN: could not bind $key (run --seed-secrets first?)"
 done
+
+build_secret_flags
 
 # Client-registry bucket (objectAdmin: the admin portal writes clients.json)
 gcloud storage buckets describe "gs://${REGISTRY_BUCKET}" >/dev/null 2>&1 \
