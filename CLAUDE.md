@@ -39,7 +39,7 @@ python flows/agency_flow.py --agency demo_agency --dry-run   # skip email
 ## GCP Cloud Run Deployment
 
 One container image (repo-root `Dockerfile`, `python:3.11-slim`) serves both workloads:
-- **Cloud Run Job** `attribution-pipeline` — `python flows/agency_flow.py`, triggered nightly by Cloud Scheduler (`attribution-nightly`)
+- **Cloud Run Job** `attribution-pipeline` — `python flows/agency_flow.py`, triggered monthly (9am ET on the 1st) by Cloud Scheduler (`attribution-monthly`)
 - **Cloud Run Service** `attribution-ui` — Streamlit on port 8080 (default CMD)
 
 The **data layer stays on Databricks**: Delta writes go through

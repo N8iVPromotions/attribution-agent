@@ -22,7 +22,7 @@ REPO="${REPO:-attribution}"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/attribution-agent"
 SERVICE_UI="attribution-ui"
 JOB_PIPELINE="attribution-pipeline"
-SCHEDULER_JOB="attribution-nightly"
+SCHEDULER_JOB="attribution-monthly"
 REGISTRY_BUCKET="${REGISTRY_BUCKET:-${PROJECT_ID}-attribution-registry}"
 SA_RUNTIME_NAME="attribution-runtime"
 SA_SCHEDULER_NAME="attribution-scheduler"
@@ -199,11 +199,9 @@ fi
 # ── 8. Cloud Scheduler → Cloud Run Job ───────────────────────────────────────
 # OAuth (not OIDC): the target is *.googleapis.com. The :run call returns
 # immediately; the job's own --task-timeout governs the pipeline.
-# ⚠️ Schedule: the old Databricks job was MONTHLY ("0 9 1 * *" = 9am on the
-# 1st). Nightly at 2am was requested for the migration — nightly means nightly
-# client report emails unless the pipeline de-dupes sends. Adjust before the
-# first live run if that's not intended.
-SCHEDULE="${SCHEDULE:-0 2 * * *}"
+# MONTHLY, matching the old Databricks job (9am ET on the 1st) — client
+# reports go out once a month. Override with SCHEDULE="0 2 * * *" for nightly.
+SCHEDULE="${SCHEDULE:-0 9 1 * *}"
 if gcloud scheduler jobs describe "$SCHEDULER_JOB" --location "$REGION" >/dev/null 2>&1; then
   SCHED_VERB="update"
 else
