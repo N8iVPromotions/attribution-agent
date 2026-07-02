@@ -7,10 +7,18 @@ All config lives in `attribution_agent/attribution_agent/config/`.
 
 Two ways to register a client:
 
+- **Admin portal (preferred):** use the client manager in the Databricks App
+  (Clients → Add client). Saves persist to the
+  `attribution_ops.client_registry` Delta table, so they survive app
+  redeploys and are visible to the pipeline Job. The REST API
+  (`POST /clients`, admin key required) writes to the same table.
 - **Code (base clients):** add a `ClientConfig` entry to `BASE_CLIENT_REGISTRY`
   in `config/client_config.py`.
-- **Runtime (custom clients):** call `save_client_config(...)` (used by the UI),
-  which persists to the custom-client JSON registry and reloads.
+
+Storage backend is auto-detected: the Delta table inside Databricks (App or
+Job), a local JSON file (`client_registry.local.json`) elsewhere. Override with
+`ATTRIBUTION_CLIENT_REGISTRY_BACKEND=delta|local` — e.g. export `delta` locally
+to run the pipeline against clients created in the portal.
 
 Minimal `ClientConfig` for a Meta + HubSpot + Stripe client:
 

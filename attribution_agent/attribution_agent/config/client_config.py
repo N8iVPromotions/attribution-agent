@@ -7,11 +7,15 @@ the rest of the pipeline picks it up automatically.
 
 from __future__ import annotations
 import json
+import logging
 import re
+import time
 from dataclasses import asdict, dataclass
 from typing import Literal
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def _get_secret(key: str) -> str:
@@ -136,7 +140,38 @@ def _config_from_dict(data: dict) -> ClientConfig:
     return ClientConfig(**payload)
 
 
-def _load_custom_clients() -> dict[str, ClientConfig]:
+def _registry_backend() -> str:
+    """Where custom clients persist: "delta" (Databricks table) or "local" (JSON).
+
+    Defaults to auto-detection: the Delta backend when running inside Databricks
+    (App or Job), local JSON otherwise. Override with
+    ATTRIBUTION_CLIENT_REGISTRY_BACKEND=delta|local (e.g. delta locally to share
+    the production registry).
+    """
+    mode = os.environ.get("ATTRIBUTION_CLIENT_REGISTRY_BACKEND", "auto").lower()
+    if mode in ("delta", "local"):
+        return mode
+    in_databricks = bool(
+        os.environ.get("DATABRICKS_RUNTIME_VERSION")  # notebooks / jobs
+        or os.environ.get("DATABRICKS_APP_PORT")  # Databricks Apps
+        or os.environ.get("DATABRICKS_CLIENT_ID")  # app service principal
+    )
+    return "delta" if in_databricks else "local"
+
+
+# Streamlit reruns call into the registry on every interaction — cache Delta
+# reads briefly so the warehouse isn't hit each time. Writes invalidate.
+_REGISTRY_CACHE_TTL_SECONDS = 60.0
+_registry_cache: dict[str, ClientConfig] | None = None
+_registry_cache_at: float = 0.0
+
+
+def _invalidate_registry_cache() -> None:
+    global _registry_cache
+    _registry_cache = None
+
+
+def _load_local_clients() -> dict[str, ClientConfig]:
     if not CLIENT_REGISTRY_PATH.exists():
         return {}
     data = json.loads(CLIENT_REGISTRY_PATH.read_text(encoding="utf-8"))
@@ -147,6 +182,47 @@ def _load_custom_clients() -> dict[str, ClientConfig]:
             continue
         config = _config_from_dict({"client_id": client_id, **raw})
         clients[config.client_id] = config
+    return clients
+
+
+def _load_delta_clients() -> dict[str, ClientConfig]:
+    from utils.databricks_writer import fetch_client_registry_rows
+
+    clients: dict[str, ClientConfig] = {}
+    for row in fetch_client_registry_rows():
+        try:
+            raw = json.loads(row.get("config_json") or "{}")
+        except json.JSONDecodeError:
+            logger.warning(
+                f"[ClientRegistry] Skipping malformed config_json for "
+                f"'{row.get('client_id')}'"
+            )
+            continue
+        config = _config_from_dict({**raw, "client_id": row["client_id"]})
+        clients[config.client_id] = config
+    return clients
+
+
+def _load_custom_clients() -> dict[str, ClientConfig]:
+    global _registry_cache, _registry_cache_at
+    if _registry_backend() == "local":
+        return _load_local_clients()
+    now = time.monotonic()
+    if (
+        _registry_cache is not None
+        and now - _registry_cache_at < _REGISTRY_CACHE_TTL_SECONDS
+    ):
+        return dict(_registry_cache)
+    try:
+        clients = _load_delta_clients()
+    except Exception as exc:
+        logger.warning(
+            f"[ClientRegistry] Delta registry unavailable, falling back to "
+            f"local JSON: {exc!r}"
+        )
+        return _load_local_clients()
+    _registry_cache = dict(clients)
+    _registry_cache_at = now
     return clients
 
 
@@ -212,15 +288,37 @@ def reload_client_registry() -> dict[str, ClientConfig]:
 
 
 def save_client_config(config: ClientConfig) -> ClientConfig:
-    custom_clients = _load_custom_clients()
-    custom_clients[config.client_id] = config
-    _write_custom_clients(custom_clients)
+    if _registry_backend() == "delta":
+        # No JSON fallback on write: a failed save must surface to the admin
+        # rather than land on the app's ephemeral local disk.
+        from utils.databricks_writer import upsert_client_registry_entry
+
+        upsert_client_registry_entry(
+            config.client_id,
+            json.dumps(asdict(config), sort_keys=True),
+            is_active=True,
+        )
+        _invalidate_registry_cache()
+    else:
+        custom_clients = _load_local_clients()
+        custom_clients[config.client_id] = config
+        _write_custom_clients(custom_clients)
     reload_client_registry()
     return config
 
 
 def delete_client_config(client_id: str) -> None:
-    custom_clients = _load_custom_clients()
+    if _registry_backend() == "delta":
+        if client_id not in _load_custom_clients():
+            return
+        from utils.databricks_writer import upsert_client_registry_entry
+
+        # Soft delete — keeps the row (and its history) for audit.
+        upsert_client_registry_entry(client_id, "{}", is_active=False)
+        _invalidate_registry_cache()
+        reload_client_registry()
+        return
+    custom_clients = _load_local_clients()
     if client_id in custom_clients:
         del custom_clients[client_id]
         _write_custom_clients(custom_clients)

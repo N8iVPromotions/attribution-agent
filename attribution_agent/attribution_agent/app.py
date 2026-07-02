@@ -1168,7 +1168,11 @@ def _render_client_manager() -> None:
             client_report_email=report_email.strip(),
             client_display_name=display_name.strip(),
         )
-        save_client_config(config)
+        try:
+            save_client_config(config)
+        except Exception as exc:
+            st.error(f"Save failed — client was not persisted: {exc}")
+            return
         st.success(f"Saved — {config.client_name}")
         st.rerun()
 
@@ -1179,7 +1183,11 @@ def _render_client_manager() -> None:
     ):
         st.markdown('<hr class="ruled">', unsafe_allow_html=True)
         if st.button("Delete client", type="secondary"):
-            delete_client_config(selected_client_id)
+            try:
+                delete_client_config(selected_client_id)
+            except Exception as exc:
+                st.error(f"Delete failed — client was not removed: {exc}")
+                return
             st.success("Client deleted.")
             st.rerun()
 
