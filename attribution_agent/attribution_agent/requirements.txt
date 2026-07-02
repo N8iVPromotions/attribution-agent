@@ -12,7 +12,9 @@ python-dotenv>=1.0.0,<2
 pydantic>=2.5.0,<3
 tenacity>=8.2.0,<10
 loguru>=0.7.0,<0.8
-stripe>=7.0.0,<16
+# stripe 15 removed dict subclassing from StripeObject; the connector's
+# .get()-style access breaks with AttributeError('get') on every response.
+stripe>=7.0.0,<15
 google-ads==31.0.0
 streamlit>=1.35.0,<1.50
 databricks-sdk>=0.28.0,<1.0
