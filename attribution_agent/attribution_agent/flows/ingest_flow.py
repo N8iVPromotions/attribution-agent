@@ -48,6 +48,7 @@ from agents.ingest.ad_sources import (
 )
 from agents.ingest.validator import validate_meta, validate_hubspot, validate_stripe
 from attribution_engine import run_attribution
+from utils.secrets import redact_secrets
 from utils.databricks_writer import (
     ensure_schema,
     ensure_tables,
@@ -66,7 +67,10 @@ def _with_retry(fn, retries: int = 3, delay: int = 15, label: str = ""):
             return fn()
         except Exception as exc:
             last_exc = exc
-            logger.warning(f"[{label}] Attempt {attempt}/{retries} failed: {exc}")
+            logger.warning(
+                f"[{label}] Attempt {attempt}/{retries} failed: "
+                + redact_secrets(str(exc))
+            )
             if attempt < retries:
                 time.sleep(delay)
     raise last_exc
@@ -83,8 +87,9 @@ def _collect(future, label: str, failures: dict):
     try:
         return future.result()
     except Exception as exc:
-        logger.error(f"[{label}] source failed after retries — skipping: {exc!r}")
-        failures[label] = repr(exc)
+        err = redact_secrets(repr(exc))
+        logger.error(f"[{label}] source failed after retries — skipping: {err}")
+        failures[label] = err
         return None
 
 

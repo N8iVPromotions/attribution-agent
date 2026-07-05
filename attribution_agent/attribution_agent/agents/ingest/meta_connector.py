@@ -6,6 +6,8 @@ import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
 import logging
 
+from utils.secrets import redact_secrets
+
 logger = logging.getLogger(__name__)
 
 META_API_VERSION = "v19.0"
@@ -46,9 +48,16 @@ class MetaConnector:
         stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10), reraise=True
     )
     def _get(self, url: str, params: dict) -> dict:
+        # The token rides in the URL (query param on the first request, baked
+        # into Meta's paging.next URLs after that), and requests copies the
+        # full URL into exception messages — re-raise with it scrubbed so it
+        # never reaches logs or the source_failures ops record.
         params["access_token"] = self.access_token
-        response = self.session.get(url, params=params, timeout=30)
-        response.raise_for_status()
+        try:
+            response = self.session.get(url, params=params, timeout=30)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise type(exc)(redact_secrets(str(exc))) from None
         return response.json()
 
     def pull_campaign_insights(
