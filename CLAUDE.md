@@ -38,6 +38,7 @@ emails white-labeled reports to clients.
 
 ## Documentation
 
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — flowcharts of the full system: triggers, pipeline, ingest, AI layer, interfaces, deploy
 - [`docs/RUNBOOK.md`](docs/RUNBOOK.md) — deploy, rollback, health checks, log access, common failures
 - [`docs/ONBOARDING_CLIENT.md`](docs/ONBOARDING_CLIENT.md) — add a new client/agency and provision secrets
 - [`docs/A2A.md`](docs/A2A.md) — agent-to-agent local & network dispatch
