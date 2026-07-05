@@ -11,20 +11,18 @@ emails white-labeled reports to clients.
 - **Data layer:** Databricks SQL warehouse (Delta tables, `databricks-sql-connector` over public HTTPS)
 - **Entry point:** `attribution_agent/attribution_agent/flows/agency_flow.py`
 
-## Current State (as of 2026-07-05)
+## Current State (as of 2026-07-05, post PRs #60–#63)
 
 - **Deployed & verified on Cloud Run 2026-07-02.** Dry-run execution green
   (`clients_failed=0`, Delta writes + governance review working). Databricks
   *compute* (Jobs + App) is decommissioned; only the SQL warehouse remains.
-- **⚠️ CI is BLOCKED on GitHub Actions billing.** Every job fails in ~3s with
-  "recent account payments have failed or your spending limit needs to be
-  increased" — fix in the N8iVPromotions org's Billing & plans settings, then
-  re-run checks (`gh run rerun <run-id>`). Root cause of the overage: CI ran
-  the ~57-min test suite twice per PR push (`push` + `pull_request` triggers).
-- **Open PRs (both waiting on the billing fix):**
-  - #60 `chore/ci-single-run` — limits CI `push` trigger to `main` so PRs run once
-  - #61 `fix/redact-meta-token-in-errors` — scrubs the Meta access token from
-    exception messages, logs, and `source_failures`
+- **CI is healthy.** The 2026-07-02→05 GitHub Actions billing block is
+  resolved, and CI now runs **once** per PR (PR #60 limited the `push`
+  trigger to `main` — the double ~57-min test run that caused the billing
+  overage is gone).
+- **⚠️ Production runs the pre-#61 image until the next `./deploy.sh`.**
+  PR #61 (credential redaction: Meta token scrubbed from exception messages,
+  logs, and `source_failures`) is on main but deploys are manual.
 - **Manual follow-up:** rotate the Meta access token — before PR #61, failing
   Meta pulls wrote the full request URL (token included) to Cloud Logging.
 - **Deploys are manual.** `deploy.yml` only runs tests + a Telegram notify;
