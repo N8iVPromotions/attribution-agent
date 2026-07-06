@@ -13,6 +13,7 @@ select = ["E4", "E7", "E9", "F"]
 # packages (entry points / Streamlit app), which trips E402. The import order is
 # deliberate, so E402 is ignored for these files only.
 "attribution_agent/attribution_agent/app.py" = ["E402"]
+"attribution_agent/attribution_agent/demo/demo_app.py" = ["E402"]
 "attribution_agent/attribution_agent/flows/agency_flow.py" = ["E402"]
 "attribution_agent/attribution_agent/flows/ingest_flow.py" = ["E402"]
 "attribution_agent/attribution_agent/agents/comms/comms_agent.py" = ["E402"]
