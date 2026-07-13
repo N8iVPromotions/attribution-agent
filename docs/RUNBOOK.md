@@ -1,7 +1,8 @@
-# Operator Runbook
+# ARIE Operator Runbook
 
 Operational reference for running, deploying, and recovering the attribution
-platform. For day-to-day development see the repo root `CLAUDE.md`.
+platform. ARIE stands for Automatic Revenue Intelligence Engine. For day-to-day
+development see the repo root `CLAUDE.md`.
 
 ## Components
 
@@ -26,26 +27,35 @@ blocks DNS to `api.stripe.com` / `graph.facebook.com` / `api.hubapi.com`.
 
 ## Secrets
 
-Stored in GCP Secret Manager, injected into both workloads as env vars via
-`--set-secrets` (see the `SECRET_KEYS` list in `deploy.sh`). Code reads
-`os.environ` only.
+Global platform secrets are stored in GCP Secret Manager and injected into both
+workloads as env vars via `--set-secrets` (see the `SECRET_KEYS` list in
+`deploy.sh`). Per-client source credentials are created by the command center
+or `POST /clients`; the client registry stores only Secret Manager IDs.
 
 ```bash
 # Seed/rotate from local .env (updates create new secret versions)
 PROJECT_ID=<project> ./deploy.sh --seed-secrets
 ```
 
-Rotation note: workloads reference `:latest`. The Job picks up new values on
-its next execution; the **UI needs a redeploy** (or instance recycle) to see
-rotated secrets.
+Rotation note: deploy-time env secrets reference `:latest`. The Job picks up
+new values on its next execution; the **UI needs a redeploy** (or instance
+recycle) to see rotated env-injected secrets. Per-client source credentials are
+read from Secret Manager by ID at runtime, so a newly added version is used on
+the next run.
 
 ## Deploy
 
-```bash
-# From repo root, in Git Bash. Builds via Cloud Build (no local Docker needed),
-# then deploys Job + UI + Scheduler. Idempotent — safe to re-run.
-PROJECT_ID=<project> ./deploy.sh
+```powershell
+# From repo root. Builds via Cloud Build (no local Docker needed),
+# then deploys Job + UI + Scheduler. Idempotent - safe to re-run.
+.\scripts\arie_deploy_cloud_run.ps1 `
+  -ProjectId <project> `
+  -OperatorPrincipal user:you@example.com
 ```
+
+`attribution-ui` is private by default. Set
+`-AllowUnauthenticatedUi` only for a temporary demo environment with no real
+client credentials.
 
 Rollback: images are tagged with the git SHA. Redeploy a known-good one:
 
@@ -57,6 +67,12 @@ gcloud run services update-traffic attribution-ui --region us-central1 --to-revi
 ```
 
 ## Run the pipeline
+
+Preferred operator path:
+
+- Open ARIE Command Center (`attribution-ui`).
+- Choose agency or business scope, selected clients, attribution model, and dry-run/live mode.
+- Click Run. ARIE submits the `attribution-pipeline` Cloud Run Job and shows the equivalent `gcloud run jobs execute` command.
 
 ```bash
 # On demand (execute-time --args override the deployed ones)
@@ -71,6 +87,62 @@ cd attribution_agent/attribution_agent
 python flows/agency_flow.py --agency demo_agency
 python flows/agency_flow.py --agency demo_agency --dry-run    # skip email
 python flows/agency_flow.py --agency demo_agency --resume-run-id <id>   # resume from checkpoint
+```
+
+## Pilot launch sequence
+
+Use this path for the first paid pilot.
+
+```powershell
+# 1. Confirm local GCP tooling, APIs, and required secrets.
+.\scripts\arie_pilot_preflight.ps1 -ProjectId <project>
+
+# 2. Seed global platform secrets from attribution_agent/attribution_agent/.env.
+.\scripts\arie_seed_secrets.ps1 -ProjectId <project>
+
+# 3. Deploy private UI, pipeline Job, scheduler, service accounts, and registry bucket.
+.\scripts\arie_deploy_cloud_run.ps1 `
+  -ProjectId <project> `
+  -OperatorPrincipal user:you@example.com
+
+# 4. Confirm deployed resources.
+.\scripts\arie_pilot_preflight.ps1 -ProjectId <project> -AfterDeploy
+
+# 5. Open the private operator UI locally.
+gcloud run services proxy attribution-ui --project <project> --region us-central1 --port 8080
+```
+
+Then open `http://127.0.0.1:8080`, add the pilot client in ARIE, enter source
+credentials, and save. ARIE writes per-client credential values to GCP Secret
+Manager and stores only secret IDs in the registry.
+
+Run the first Cloud Run dry run:
+
+```powershell
+.\scripts\arie_cloud_run_dry_run.ps1 `
+  -ProjectId <project> `
+  -AgencyId <agency_id> `
+  -AttributionModel w_shape `
+  -ClientIds <client_id>
+```
+
+Before sending a live report, verify:
+
+- Cloud Run execution succeeded.
+- `ops.pipeline_runs` has row counts, selected model, warnings, and email state.
+- Client schema has refreshed raw, normalized, and attribution tables.
+- HubSpot closed-won revenue is present and aligned with the report period.
+- Report preview language explains the selected attribution model.
+- `source_failures` is empty or understood.
+
+Live-send command after dry-run approval:
+
+```bash
+gcloud run jobs execute attribution-pipeline \
+  --project <project> \
+  --region us-central1 \
+  --args "flows/agency_flow.py,--agency,<agency_id>,--client-filter,<client_id>,--attribution-model,w_shape,--run-mode,agency" \
+  --wait
 ```
 
 ## Health checks & logs
@@ -126,7 +198,7 @@ After Cloud Run verification passes, pause/delete the old resources so nothing
 fires them accidentally (ARIE's remote trigger is env-gated off via
 `ATTRIBUTION_JOBS_API_ENABLED`, but the job itself should not stay live):
 
-- Databricks Job `500226442246561` (`[Attribution] Monthly Pipeline`)
-- Databricks App `attribution-pipeline-ui`
+- Databricks Job `500226442246561` (`[Attribution] Monthly Pipeline`), if still active
+- Databricks App `attribution-pipeline-ui`, if still active
 
 Keep the SQL warehouse — it is still the data layer.

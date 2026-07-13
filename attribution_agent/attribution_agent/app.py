@@ -1,5 +1,5 @@
 """
-app.py — Attribution Command Center
+app.py — ARIE Command Center
 -------------------------------------
 Internal command center for running the attribution pipeline across
 agencies and individual business accounts.
@@ -10,7 +10,8 @@ Local dev:
 
 Cloud Run:
     Deployed via `deploy.sh` as the `attribution-ui` service (container CMD
-    runs streamlit directly). Pipeline runs execute in-process.
+    runs streamlit directly). Pipeline runs submit the `attribution-pipeline`
+    Cloud Run Job when configured.
 """
 
 import logging
@@ -35,6 +36,7 @@ from config.agency_config import get_agency, list_agencies, AGENCY_REGISTRY
 from config.client_config import (
     CLIENT_REGISTRY,
     ClientConfig,
+    attach_client_secret_values,
     default_client_schema,
     delete_client_config,
     get_client,
@@ -43,14 +45,24 @@ from config.client_config import (
     save_client_config,
     slugify_client_id,
 )
+from utils.secrets import redact_secrets
+from utils.cloud_run import (
+    build_gcloud_command,
+    build_pipeline_args,
+    cloud_run_settings,
+    is_cloud_run_configured,
+    submit_cloud_run_job,
+)
 
+_CLOUD_RUN_SETTINGS = cloud_run_settings()
+_CLOUD_RUN_MODE = is_cloud_run_configured(_CLOUD_RUN_SETTINGS)
 _DATABRICKS_MODE = bool(os.environ.get("ATTRIBUTION_JOB_NAME"))
 _JOB_NAME = os.environ.get("ATTRIBUTION_JOB_NAME", "[Attribution] Monthly Pipeline")
 _JOB_ID = int(os.environ.get("ATTRIBUTION_JOB_ID", "0") or "0") or 500226442246561
 
 # ── Page config ───────────────────────────────────────────────
 st.set_page_config(
-    page_title="Attribution Command Center",
+    page_title="ARIE Command Center",
     page_icon="◆",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -715,6 +727,51 @@ def _render_comparison_chart(selected_model: str) -> None:
 # ── Pipeline helpers ──────────────────────────────────────────
 
 
+def _trigger_cloud_run_job(
+    agency_id: str,
+    client_filter: list,
+    dry_run: bool,
+    attribution_model: str,
+    run_mode: str,
+) -> None:
+    args = build_pipeline_args(
+        agency_id,
+        client_filter,
+        dry_run=dry_run,
+        attribution_model=attribution_model,
+        run_mode=run_mode,
+    )
+    command = build_gcloud_command(args, _CLOUD_RUN_SETTINGS, wait=True)
+
+    with st.spinner("Submitting Cloud Run Job..."):
+        try:
+            operation = submit_cloud_run_job(
+                agency_id=agency_id,
+                client_ids=client_filter,
+                dry_run=dry_run,
+                attribution_model=attribution_model,
+                run_mode=run_mode,
+                settings=_CLOUD_RUN_SETTINGS,
+            )
+        except Exception as exc:
+            st.error(f"Cloud Run submission failed: {redact_secrets(str(exc))}")
+            st.caption("Equivalent command you can run from PowerShell:")
+            st.code(command, language="powershell")
+            return
+
+    n_clients = len(client_filter) if client_filter else "all"
+    st.success("Cloud Run Job submitted.")
+    st.caption(f"Operation: {operation}")
+    st.caption("Equivalent gcloud command:")
+    st.code(command, language="powershell")
+    arie_bot.notify(
+        f"*ARIE Cloud Run job submitted*\n"
+        f"Agency: `{agency_id}` - {n_clients} client{'s' if n_clients != 1 else ''}\n"
+        f"Model: `{attribution_model}` - {'Dry run' if dry_run else 'Live'}\n"
+        f"Operation: `{operation}`"
+    )
+
+
 def _trigger_databricks_job(
     agency_id: str,
     client_filter: list,
@@ -751,9 +808,12 @@ def _trigger_databricks_job(
         job_parameters = {
             "dry_run": str(dry_run).lower(),
             "attribution_model": attribution_model,
+            "run_mode": run_mode,
         }
         if agency_id:
             job_parameters["agency"] = agency_id
+        if client_filter:
+            job_parameters["client_filter"] = ",".join(client_filter)
         run = w.jobs.run_now(job_id=job_id, job_parameters=job_parameters)
         run_id = run.run_id
 
@@ -985,6 +1045,12 @@ def _render_client_manager() -> None:
         horizontal=True,
         label_visibility="collapsed",
     )
+    saved_result = st.session_state.get("client_save_result")
+    if saved_result:
+        st.success(f"Saved {saved_result['name']} - schema {saved_result['schema']}")
+        if saved_result.get("secrets"):
+            st.caption("Secret refs: " + ", ".join(saved_result["secrets"]))
+        del st.session_state["client_save_result"]
 
     existing_clients = list_clients()
     selected_client_id = ""
@@ -1011,11 +1077,12 @@ def _render_client_manager() -> None:
         with c1:
             client_name = st.text_input("Business name", value=base.client_name)
         with c2:
-            default_id = base.client_id or slugify_client_id(
-                client_name or "new_client"
-            )
+            default_id = base.client_id or ""
             client_id = st.text_input(
-                "Client ID", value=default_id, disabled=bool(base.client_id)
+                "Client ID",
+                value=default_id,
+                placeholder=slugify_client_id(client_name or "acme_co"),
+                disabled=bool(base.client_id),
             )
         with c3:
             display_name = st.text_input(
@@ -1064,8 +1131,15 @@ def _render_client_manager() -> None:
                 step=1,
             )
         with d4:
-            schema_default = base.databricks_schema or default_client_schema(default_id)
-            databricks_schema = st.text_input("Databricks schema", value=schema_default)
+            schema_client_id = base.client_id or slugify_client_id(
+                client_id or client_name or "new_client"
+            )
+            schema_default = base.databricks_schema or ""
+            databricks_schema = st.text_input(
+                "Databricks schema",
+                value=schema_default,
+                placeholder=default_client_schema(schema_client_id),
+            )
 
         st.markdown(
             '<span class="form-section">Data Sources</span>', unsafe_allow_html=True
@@ -1079,6 +1153,14 @@ def _render_client_manager() -> None:
                 disabled=not meta_enabled,
                 key="meta_id",
             )
+            meta_access_token = st.text_input(
+                "Access token",
+                value="",
+                type="password",
+                placeholder="Configured" if base.meta_access_token_secret_name else "",
+                disabled=not meta_enabled,
+                key="meta_access_token",
+            )
         with s2:
             google_ads_enabled = st.checkbox(
                 "Google Ads", value=base.google_ads_enabled
@@ -1088,6 +1170,18 @@ def _render_client_manager() -> None:
                 value=base.google_ads_customer_id,
                 disabled=not google_ads_enabled,
                 key="google_id",
+            )
+            google_ads_refresh_token = st.text_input(
+                "Refresh token",
+                value="",
+                type="password",
+                placeholder=(
+                    "Configured"
+                    if base.google_ads_refresh_token_secret_name
+                    else ""
+                ),
+                disabled=not google_ads_enabled,
+                key="google_refresh_token",
             )
         with s3:
             linkedin_ads_enabled = st.checkbox(
@@ -1099,6 +1193,16 @@ def _render_client_manager() -> None:
                 disabled=not linkedin_ads_enabled,
                 key="li_id",
             )
+            linkedin_access_token = st.text_input(
+                "Access token",
+                value="",
+                type="password",
+                placeholder=(
+                    "Configured" if base.linkedin_access_token_secret_name else ""
+                ),
+                disabled=not linkedin_ads_enabled,
+                key="linkedin_access_token",
+            )
         with s4:
             hubspot_enabled = st.checkbox("HubSpot", value=base.hubspot_enabled)
             hubspot_pipeline_id = st.text_input(
@@ -1107,6 +1211,16 @@ def _render_client_manager() -> None:
                 disabled=not hubspot_enabled,
                 key="hs_id",
             )
+            hubspot_access_token = st.text_input(
+                "Access token",
+                value="",
+                type="password",
+                placeholder=(
+                    "Configured" if base.hubspot_access_token_secret_name else ""
+                ),
+                disabled=not hubspot_enabled,
+                key="hubspot_access_token",
+            )
         with s5:
             stripe_enabled = st.checkbox("Stripe", value=base.stripe_enabled)
             stripe_account_id = st.text_input(
@@ -1114,6 +1228,14 @@ def _render_client_manager() -> None:
                 value=base.stripe_account_id,
                 disabled=not stripe_enabled,
                 key="stripe_id",
+            )
+            stripe_secret_key = st.text_input(
+                "Secret key",
+                value="",
+                type="password",
+                placeholder="Configured" if base.stripe_secret_key_secret_name else "",
+                disabled=not stripe_enabled,
+                key="stripe_secret_key",
             )
 
         st.markdown(
@@ -1145,6 +1267,14 @@ def _render_client_manager() -> None:
         if not client_name.strip():
             st.error("Business name is required.")
             return
+        if action == "Add client" and clean_id in CLIENT_REGISTRY:
+            st.error(
+                f"Client ID '{clean_id}' already exists. Choose a unique Client ID."
+            )
+            return
+        schema_value = (databricks_schema or "").strip()
+        if not schema_value or schema_value.endswith("attribution_new_client"):
+            schema_value = default_client_schema(clean_id)
         config = ClientConfig(
             client_id=clean_id,
             client_name=client_name.strip(),
@@ -1157,9 +1287,7 @@ def _render_client_manager() -> None:
             linkedin_ads_account_id=linkedin_ads_account_id.strip(),
             hubspot_enabled=hubspot_enabled,
             hubspot_pipeline_id=hubspot_pipeline_id.strip(),
-            databricks_schema=(
-                databricks_schema or default_client_schema(clean_id)
-            ).strip(),
+            databricks_schema=schema_value,
             lookback_days=int(lookback_days),
             spend_drop_pct_alert=spend_drop_pct_alert / 100,
             zero_spend_days_allowed=int(zero_spend_days_allowed),
@@ -1168,12 +1296,48 @@ def _render_client_manager() -> None:
             agency_id=form_agency_id,
             client_report_email=report_email.strip(),
             client_display_name=display_name.strip(),
+            meta_access_token_secret_name=base.meta_access_token_secret_name,
+            google_ads_refresh_token_secret_name=(
+                base.google_ads_refresh_token_secret_name
+            ),
+            linkedin_access_token_secret_name=base.linkedin_access_token_secret_name,
+            hubspot_access_token_secret_name=base.hubspot_access_token_secret_name,
+            stripe_secret_key_secret_name=base.stripe_secret_key_secret_name,
         )
         try:
+            config = attach_client_secret_values(
+                config,
+                {
+                    "meta_access_token": meta_access_token,
+                    "google_ads_refresh_token": google_ads_refresh_token,
+                    "linkedin_access_token": linkedin_access_token,
+                    "hubspot_access_token": hubspot_access_token,
+                    "stripe_secret_key": stripe_secret_key,
+                },
+            )
             save_client_config(config)
         except Exception as exc:
-            st.error(f"Save failed — client was not persisted: {exc}")
+            st.error(
+                f"Save failed - client was not persisted: "
+                f"{redact_secrets(str(exc))}"
+            )
             return
+        secret_refs = [
+            ref
+            for ref in (
+                config.meta_access_token_secret_name,
+                config.google_ads_refresh_token_secret_name,
+                config.linkedin_access_token_secret_name,
+                config.hubspot_access_token_secret_name,
+                config.stripe_secret_key_secret_name,
+            )
+            if ref
+        ]
+        st.session_state["client_save_result"] = {
+            "name": config.client_name,
+            "schema": config.databricks_schema,
+            "secrets": secret_refs,
+        }
         st.success(f"Saved — {config.client_name}")
         st.rerun()
 
@@ -1272,7 +1436,7 @@ st.markdown(
     f'  <div class="topbar-left">'
     f'    <div class="topbar-brand">'
     f'      <div class="brand-mark">◆</div>'
-    f'      <span class="brand-name">Attribution Command Center</span>'
+    f'      <span class="brand-name">ARIE Command Center</span>'
     f"    </div>"
     f'    <div class="topbar-sep"></div>'
     f'    <span class="topbar-sub">N8iV Promotions</span>'
@@ -1438,10 +1602,26 @@ with tab_pipeline:
         and n_clients == len(_client_ids_for_agency(agency_id))
         else f"Run Selected  ({n_clients})"
     )
+    backend_label = (
+        "Cloud Run Job"
+        if _CLOUD_RUN_MODE
+        else "Databricks Job"
+        if _DATABRICKS_MODE
+        else "Local development"
+    )
+    run_mode_key = run_mode.lower()
 
     bar_l, bar_m, bar_r = st.columns([4, 1, 1])
     with bar_l:
         dry_run = st.checkbox("Dry run — generate reports, skip email delivery")
+        st.caption(
+            f"Execution backend: {backend_label}"
+            + (
+                f" - {_CLOUD_RUN_SETTINGS.project_id}/{_CLOUD_RUN_SETTINGS.region}"
+                if _CLOUD_RUN_MODE
+                else ""
+            )
+        )
     with bar_m:
         run_btn = st.button(
             btn_label,
@@ -1450,13 +1630,12 @@ with tab_pipeline:
             disabled=not client_filter,
         )
     with bar_r:
-        if _DATABRICKS_MODE:
-            if st.button("Recent runs", type="secondary", use_container_width=True):
-                st.session_state["show_runs"] = not st.session_state.get(
-                    "show_runs", False
-                )
+        if st.button("Recent runs", type="secondary", use_container_width=True):
+            st.session_state["show_runs"] = not st.session_state.get(
+                "show_runs", False
+            )
 
-    if _DATABRICKS_MODE and st.session_state.get("show_runs"):
+    if st.session_state.get("show_runs"):
         st.markdown('<hr class="ruled">', unsafe_allow_html=True)
         st.markdown(
             '<div class="panel-header">'
@@ -1479,7 +1658,16 @@ with tab_pipeline:
             unsafe_allow_html=True,
         )
         st.markdown('<hr class="ruled">', unsafe_allow_html=True)
-        _run_local(agency_id, client_filter, dry_run, selected_model, run_mode)
+        if _CLOUD_RUN_MODE:
+            _trigger_cloud_run_job(
+                agency_id, client_filter, dry_run, selected_model, run_mode_key
+            )
+        elif _DATABRICKS_MODE:
+            _trigger_databricks_job(
+                agency_id, client_filter, dry_run, selected_model, run_mode_key
+            )
+        else:
+            _run_local(agency_id, client_filter, dry_run, selected_model, run_mode_key)
 
 
 # ══════════════════════════════════════════════

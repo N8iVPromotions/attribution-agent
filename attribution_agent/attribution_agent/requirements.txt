@@ -16,6 +16,8 @@ loguru>=0.7.0,<0.8
 # .get()-style access breaks with AttributeError('get') on every response.
 stripe>=7.0.0,<15
 google-ads==31.0.0
+google-auth>=2.29.0,<3
+google-cloud-secret-manager>=2.20.0,<3
 streamlit>=1.35.0,<1.50
 databricks-sdk>=0.28.0,<1.0
 fastapi>=0.115.0,<1.0

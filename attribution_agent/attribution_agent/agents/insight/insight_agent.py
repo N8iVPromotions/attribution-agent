@@ -28,6 +28,10 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+
+def _clean_env(name: str, default: str = "") -> str:
+    return os.environ.get(name, default).strip()
+
 # ── path setup ────────────────────────────────────────────────
 try:
     _root = str(Path(__file__).parent.parent.parent)
@@ -93,11 +97,11 @@ def _fetch_channel_performance(config: ClientConfig) -> list[dict]:
 
     conn = sql.connect(
         server_hostname=(
-            os.environ.get("DATABRICKS_SERVER_HOSTNAME")
-            or os.environ.get("DATABRICKS_HOST", "").lstrip("https://").rstrip("/")
+            _clean_env("DATABRICKS_SERVER_HOSTNAME")
+            or _clean_env("DATABRICKS_HOST").lstrip("https://").rstrip("/")
         ),
-        http_path=os.environ["DATABRICKS_HTTP_PATH"],
-        access_token=os.environ["DATABRICKS_TOKEN"],
+        http_path=_clean_env("DATABRICKS_HTTP_PATH"),
+        access_token=_clean_env("DATABRICKS_TOKEN"),
     )
     cursor = conn.cursor()
 

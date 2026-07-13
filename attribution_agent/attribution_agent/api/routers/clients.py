@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from api.auth import require_auth, require_admin
 from api.models import ClientConfigRequest, ClientConfigResponse
 from config.rbac_config import Role, Permission, require_permission
+from utils.secrets import redact_secrets
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -15,13 +16,38 @@ def _to_response(cfg) -> ClientConfigResponse:
         meta_enabled=cfg.meta_enabled,
         google_ads_enabled=cfg.google_ads_enabled,
         linkedin_ads_enabled=cfg.linkedin_ads_enabled,
+        tiktok_ads_enabled=cfg.tiktok_ads_enabled,
         hubspot_enabled=cfg.hubspot_enabled,
         stripe_enabled=cfg.stripe_enabled,
+        meta_ad_account_id=cfg.meta_ad_account_id,
+        google_ads_customer_id=cfg.google_ads_customer_id,
+        linkedin_ads_account_id=cfg.linkedin_ads_account_id,
+        tiktok_ads_advertiser_id=cfg.tiktok_ads_advertiser_id,
+        hubspot_pipeline_id=cfg.hubspot_pipeline_id,
+        stripe_account_id=cfg.stripe_account_id,
+        meta_secret_configured=bool(cfg.meta_access_token_secret_name),
+        google_ads_secret_configured=bool(cfg.google_ads_refresh_token_secret_name),
+        linkedin_ads_secret_configured=bool(cfg.linkedin_access_token_secret_name),
+        tiktok_secret_configured=bool(cfg.tiktok_access_token_secret_name),
+        hubspot_secret_configured=bool(cfg.hubspot_access_token_secret_name),
+        stripe_secret_configured=bool(cfg.stripe_secret_key_secret_name),
         lookback_days=cfg.lookback_days,
         client_report_email=cfg.client_report_email,
+        client_display_name=cfg.client_display_name,
         agency_id=cfg.agency_id,
         databricks_schema=cfg.databricks_schema,
     )
+
+
+def _secret_values_from_request(req: ClientConfigRequest) -> dict[str, str]:
+    return {
+        "meta_access_token": req.meta_access_token,
+        "google_ads_refresh_token": req.google_ads_refresh_token,
+        "linkedin_access_token": req.linkedin_access_token,
+        "tiktok_access_token": req.tiktok_access_token,
+        "hubspot_access_token": req.hubspot_access_token,
+        "stripe_secret_key": req.stripe_secret_key,
+    }
 
 
 @router.get("", response_model=list[ClientConfigResponse])
@@ -57,6 +83,7 @@ async def create_client(
     require_permission(role, Permission.MANAGE_CLIENTS)
     from config.client_config import (
         ClientConfig,
+        attach_client_secret_values,
         save_client_config,
         slugify_client_id,
         default_client_schema,
@@ -73,6 +100,8 @@ async def create_client(
         google_ads_customer_id=req.google_ads_customer_id,
         linkedin_ads_enabled=req.linkedin_ads_enabled,
         linkedin_ads_account_id=req.linkedin_ads_account_id,
+        tiktok_ads_enabled=req.tiktok_ads_enabled,
+        tiktok_ads_advertiser_id=req.tiktok_ads_advertiser_id,
         hubspot_enabled=req.hubspot_enabled,
         hubspot_pipeline_id=req.hubspot_pipeline_id,
         stripe_enabled=req.stripe_enabled,
@@ -81,9 +110,16 @@ async def create_client(
         client_report_email=req.client_report_email,
         client_display_name=req.client_display_name,
         agency_id=req.agency_id,
-        databricks_schema=default_client_schema(client_id),
+        databricks_schema=(req.databricks_schema or default_client_schema(client_id)),
     )
-    save_client_config(cfg)
+    try:
+        cfg = attach_client_secret_values(cfg, _secret_values_from_request(req))
+        save_client_config(cfg)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Client save failed: {redact_secrets(str(exc))}",
+        ) from exc
     return _to_response(cfg)
 
 
@@ -96,6 +132,7 @@ async def update_client(
     require_permission(role, Permission.MANAGE_CLIENTS)
     from config.client_config import (
         CLIENT_REGISTRY,
+        attach_client_secret_values,
         reload_client_registry,
         save_client_config,
     )
@@ -116,6 +153,8 @@ async def update_client(
         google_ads_customer_id=req.google_ads_customer_id,
         linkedin_ads_enabled=req.linkedin_ads_enabled,
         linkedin_ads_account_id=req.linkedin_ads_account_id,
+        tiktok_ads_enabled=req.tiktok_ads_enabled,
+        tiktok_ads_advertiser_id=req.tiktok_ads_advertiser_id,
         hubspot_enabled=req.hubspot_enabled,
         hubspot_pipeline_id=req.hubspot_pipeline_id,
         stripe_enabled=req.stripe_enabled,
@@ -124,8 +163,16 @@ async def update_client(
         client_report_email=req.client_report_email,
         client_display_name=req.client_display_name,
         agency_id=req.agency_id,
+        databricks_schema=req.databricks_schema or existing.databricks_schema,
     )
-    save_client_config(updated)
+    try:
+        updated = attach_client_secret_values(updated, _secret_values_from_request(req))
+        save_client_config(updated)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Client save failed: {redact_secrets(str(exc))}",
+        ) from exc
     return _to_response(updated)
 
 

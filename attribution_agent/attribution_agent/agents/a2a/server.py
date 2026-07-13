@@ -60,5 +60,5 @@ async def dispatch(req: DispatchRequest) -> DispatchResponse:
 
 
 # Standalone app: `uvicorn agents.a2a.server:app`
-app = FastAPI(title="Attribution Agent — A2A Node", description="A2A network surface")
+app = FastAPI(title="ARIE A2A Node", description="A2A network surface for ARIE")
 app.include_router(router)

@@ -42,7 +42,7 @@ def _make_server():
             "and run: pip install fastmcp"
         )
 
-    mcp = FastMCP("Attribution Agent", version="2.0.0")
+    mcp = FastMCP("ARIE", version="2.0.0")
 
     @mcp.tool()
     def list_clients(agency_id: str = "") -> str:
