@@ -7,7 +7,7 @@ import pytest
 import requests
 
 from agents.ingest.meta_connector import MetaConnector
-from utils.secrets import redact_secrets
+from utils.secrets import redact_secrets, resolve_secret, secret_id_for_client
 
 
 class TestRedactSecrets:
@@ -36,6 +36,30 @@ class TestRedactSecrets:
     def test_plain_text_unchanged(self):
         assert redact_secrets("connection reset by peer") == (
             "connection reset by peer"
+        )
+
+
+class TestSecretReferences:
+    def test_secret_id_for_client_is_stable(self, monkeypatch):
+        monkeypatch.setenv("ATTRIBUTION_ENV", "pilot")
+        assert (
+            secret_id_for_client("Acme Co!", "Meta Access Token")
+            == "attr-pilot-acme-co-meta-access-token"
+        )
+
+    def test_resolve_secret_falls_back_to_env_without_gcp_project(self, monkeypatch):
+        for key in (
+            "GOOGLE_CLOUD_PROJECT",
+            "GCP_PROJECT",
+            "PROJECT_ID",
+            "CLOUDSDK_CORE_PROJECT",
+        ):
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv("META_ACCESS_TOKEN", "env-token\r\n")
+
+        assert (
+            resolve_secret("attr-prod-acme-meta-access-token", "META_ACCESS_TOKEN")
+            == "env-token"
         )
 
 

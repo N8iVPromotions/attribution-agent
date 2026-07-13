@@ -16,13 +16,16 @@ class HealthResponse(BaseModel):
 class PipelineRunRequest(BaseModel):
     agency_id: str
     client_filter: str | None = None
+    client_ids: list[str] | None = None
     dry_run: bool = True
     attribution_model: str = "last_touch"
+    run_mode: str = "agency"
 
 
 class PipelineRunResponse(BaseModel):
     run_id: str
     databricks_run_id: int | None = None
+    cloud_run_operation: str | None = None
     status: str
     message: str
 
@@ -59,18 +62,27 @@ class ClientConfigRequest(BaseModel):
     attribution_model: str = "last_touch"
     meta_enabled: bool = False
     meta_ad_account_id: str = ""
+    meta_access_token: str = Field(default="", repr=False)
     google_ads_enabled: bool = False
     google_ads_customer_id: str = ""
+    google_ads_refresh_token: str = Field(default="", repr=False)
     linkedin_ads_enabled: bool = False
     linkedin_ads_account_id: str = ""
+    linkedin_access_token: str = Field(default="", repr=False)
+    tiktok_ads_enabled: bool = False
+    tiktok_ads_advertiser_id: str = ""
+    tiktok_access_token: str = Field(default="", repr=False)
     hubspot_enabled: bool = False
     hubspot_pipeline_id: str = ""
+    hubspot_access_token: str = Field(default="", repr=False)
     stripe_enabled: bool = False
     stripe_account_id: str = ""
+    stripe_secret_key: str = Field(default="", repr=False)
     lookback_days: int = 30
     client_report_email: str = ""
     client_display_name: str = ""
     agency_id: str = ""
+    databricks_schema: str = ""
 
 
 class ClientConfigResponse(BaseModel):
@@ -80,10 +92,24 @@ class ClientConfigResponse(BaseModel):
     meta_enabled: bool
     google_ads_enabled: bool
     linkedin_ads_enabled: bool
+    tiktok_ads_enabled: bool
     hubspot_enabled: bool
     stripe_enabled: bool
+    meta_ad_account_id: str = ""
+    google_ads_customer_id: str = ""
+    linkedin_ads_account_id: str = ""
+    tiktok_ads_advertiser_id: str = ""
+    hubspot_pipeline_id: str = ""
+    stripe_account_id: str = ""
+    meta_secret_configured: bool = False
+    google_ads_secret_configured: bool = False
+    linkedin_ads_secret_configured: bool = False
+    tiktok_secret_configured: bool = False
+    hubspot_secret_configured: bool = False
+    stripe_secret_configured: bool = False
     lookback_days: int
     client_report_email: str
+    client_display_name: str = ""
     agency_id: str
     databricks_schema: str
 

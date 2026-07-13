@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 _OPS_SCHEMA = os.environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_ops")
 
 
+def _clean_env(name: str, default: str = "") -> str:
+    """Return env values without accidental Secret Manager/PowerShell newlines."""
+    return os.environ.get(name, default).strip()
+
+
 def _is_databricks() -> bool:
     """True only when a live Spark session is active (notebooks / jobs on a cluster).
 
@@ -49,22 +54,20 @@ def _get_connection():
     from databricks import sql
 
     # DATABRICKS_HOST is auto-injected by Databricks Apps; strip the scheme if present
-    host = os.environ.get("DATABRICKS_SERVER_HOSTNAME") or os.environ.get(
-        "DATABRICKS_HOST", ""
-    )
+    host = _clean_env("DATABRICKS_SERVER_HOSTNAME") or _clean_env("DATABRICKS_HOST")
     hostname = host.replace("https://", "").replace("http://", "").rstrip("/")
     if not hostname:
         raise EnvironmentError(
             "DATABRICKS_SERVER_HOSTNAME (or DATABRICKS_HOST) is not set"
         )
-    http_path = os.environ.get("DATABRICKS_HTTP_PATH")
+    http_path = _clean_env("DATABRICKS_HTTP_PATH")
     if not http_path:
         raise EnvironmentError("DATABRICKS_HTTP_PATH is not set")
 
     # Local dev authenticates with a PAT; the Databricks App has no token and
     # instead uses the OAuth (M2M) service-principal credentials it auto-injects
     # as DATABRICKS_CLIENT_ID / DATABRICKS_CLIENT_SECRET (picked up by Config()).
-    access_token = os.environ.get("DATABRICKS_TOKEN")
+    access_token = _clean_env("DATABRICKS_TOKEN")
     if access_token:
         return sql.connect(
             server_hostname=hostname,

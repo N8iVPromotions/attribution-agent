@@ -29,6 +29,8 @@ SERVICE_UI="attribution-ui"
 JOB_PIPELINE="attribution-pipeline"
 SCHEDULER_JOB="attribution-monthly"
 REGISTRY_BUCKET="${REGISTRY_BUCKET:-${PROJECT_ID}-attribution-registry}"
+ALLOW_UNAUTHENTICATED_UI="${ALLOW_UNAUTHENTICATED_UI:-false}"
+OPERATOR_PRINCIPAL="${OPERATOR_PRINCIPAL:-}"
 SA_RUNTIME_NAME="attribution-runtime"
 SA_SCHEDULER_NAME="attribution-scheduler"
 RUNTIME_SA="${SA_RUNTIME_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
@@ -69,6 +71,9 @@ COMMON_ENV+=",ATTRIBUTION_CLIENT_REGISTRY_PATH=/mnt/registry/clients.json"
 COMMON_ENV+=",ATTRIBUTION_CATALOG=workspace"
 COMMON_ENV+=",ATTRIBUTION_OPS_SCHEMA=workspace.attribution_ops"
 COMMON_ENV+=",COMMS_PROVIDER=gmail"
+COMMON_ENV+=",GOOGLE_CLOUD_PROJECT=${PROJECT_ID}"
+COMMON_ENV+=",ATTRIBUTION_CLOUD_RUN_JOB=${JOB_PIPELINE}"
+COMMON_ENV+=",ATTRIBUTION_CLOUD_RUN_REGION=${REGION}"
 # NOTE: deliberately NOT set: ATTRIBUTION_JOB_NAME / ATTRIBUTION_JOB_ID /
 # ATTRIBUTION_JOBS_API_ENABLED — these keep the old Databricks Jobs-API
 # trigger paths dark.
@@ -87,6 +92,15 @@ build_secret_flags() {
       echo "WARN: secret $key not in Secret Manager — env var will be unset"
     fi
   done
+}
+
+build_ui_auth_flag() {
+  if [ "$ALLOW_UNAUTHENTICATED_UI" = "true" ]; then
+    UI_AUTH_FLAG="--allow-unauthenticated"
+    echo "WARN: attribution-ui will be public because ALLOW_UNAUTHENTICATED_UI=true"
+  else
+    UI_AUTH_FLAG="--no-allow-unauthenticated"
+  fi
 }
 
 # ── One-time: seed Secret Manager from local .env ────────────────────────────
@@ -147,7 +161,14 @@ gcloud iam service-accounts describe "$RUNTIME_SA" >/dev/null 2>&1 \
 gcloud iam service-accounts describe "$SCHED_SA" >/dev/null 2>&1 \
   || gcloud iam service-accounts create "$SA_SCHEDULER_NAME" --display-name "Attribution scheduler"
 
-# Least privilege: per-secret accessor bindings, not project-wide
+# The command center creates per-client credential secrets at onboarding time.
+# For internal pilots this keeps onboarding fast; replace with a narrower custom
+# role before opening self-service agency access.
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member "serviceAccount:${RUNTIME_SA}" --role roles/secretmanager.admin --quiet >/dev/null
+
+# Known global secrets still bind explicitly so deployments remain compatible
+# if the runtime role is narrowed later.
 for key in "${SECRET_KEYS[@]}"; do
   gcloud secrets add-iam-policy-binding "$key" \
     --member "serviceAccount:${RUNTIME_SA}" \
@@ -156,6 +177,7 @@ for key in "${SECRET_KEYS[@]}"; do
 done
 
 build_secret_flags
+build_ui_auth_flag
 
 # Client-registry bucket (objectAdmin: the admin portal writes clients.json)
 gcloud storage buckets describe "gs://${REGISTRY_BUCKET}" >/dev/null 2>&1 \
@@ -190,6 +212,8 @@ gcloud run jobs deploy "$JOB_PIPELINE" \
 # Scheduler SA may execute the job (job-scoped, not project-wide)
 gcloud run jobs add-iam-policy-binding "$JOB_PIPELINE" --region "$REGION" \
   --member "serviceAccount:${SCHED_SA}" --role roles/run.invoker >/dev/null
+gcloud run jobs add-iam-policy-binding "$JOB_PIPELINE" --region "$REGION" \
+  --member "serviceAccount:${RUNTIME_SA}" --role roles/run.invoker >/dev/null
 
 # ── 6. Cloud Run Service (Streamlit UI) ──────────────────────────────────────
 # Streamlit needs: long request timeout (websocket), sticky single instance
@@ -202,7 +226,7 @@ gcloud run deploy "$SERVICE_UI" \
   --region "$REGION" \
   --service-account "$RUNTIME_SA" \
   --port 8080 \
-  --allow-unauthenticated \
+  "$UI_AUTH_FLAG" \
   --set-secrets "$SECRET_FLAGS" \
   --set-env-vars "$COMMON_ENV" \
   --add-volume "name=registry,type=cloud-storage,bucket=${REGISTRY_BUCKET}" \
@@ -213,6 +237,14 @@ gcloud run deploy "$SERVICE_UI" \
   --max-instances 1 \
   --no-cpu-throttling \
   --memory 2Gi --cpu 2
+
+if [ -n "$OPERATOR_PRINCIPAL" ]; then
+  gcloud run services add-iam-policy-binding "$SERVICE_UI" --region "$REGION" \
+    --member "$OPERATOR_PRINCIPAL" --role roles/run.invoker >/dev/null
+  echo "Granted $OPERATOR_PRINCIPAL access to $SERVICE_UI"
+elif [ "$ALLOW_UNAUTHENTICATED_UI" != "true" ]; then
+  echo "NOTE: attribution-ui is private. Set OPERATOR_PRINCIPAL=user:you@example.com on deploy to grant explicit access."
+fi
 
 # ── 7. Seed clients.json into the registry bucket (first deploy only) ────────
 LOCAL_REGISTRY="attribution_agent/attribution_agent/config/client_registry.local.json"

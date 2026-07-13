@@ -27,11 +27,6 @@ except NameError:
 sys.path.insert(0, _root)
 
 
-def _get_secret(key: str) -> str:
-    """Secrets arrive as env vars (Cloud Run --set-secrets, or .env locally)."""
-    return os.environ.get(key, "")
-
-
 from config.client_config import ClientConfig, get_client, list_clients
 from agents.ingest.meta_connector import pull_meta_data
 from agents.ingest.google_ads_connector import pull_google_ads_data
@@ -390,12 +385,12 @@ def ingest_flow(client_id: str) -> dict:
 
     config = get_client(client_id)
 
-    meta_token = _get_secret("META_ACCESS_TOKEN")
-    hubspot_token = _get_secret("HUBSPOT_ACCESS_TOKEN")
-    stripe_token = _get_secret("STRIPE_SECRET_KEY")
-    google_token = _get_secret("GOOGLE_ADS_REFRESH_TOKEN")
-    linkedin_token = _get_secret("LINKEDIN_ACCESS_TOKEN")
-    tiktok_token = _get_secret("TIKTOK_ACCESS_TOKEN")
+    meta_token = config.meta_access_token
+    hubspot_token = config.hubspot_access_token
+    stripe_token = config.stripe_secret_key
+    google_token = config.google_ads_refresh_token
+    linkedin_token = config.linkedin_access_token
+    tiktok_token = config.tiktok_access_token
 
     step_setup(config.databricks_schema)
 

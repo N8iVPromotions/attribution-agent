@@ -1,9 +1,10 @@
-# Architecture & Data Flow
+# ARIE Architecture & Data Flow
 
-Flowcharts of the full attribution-agent system, from triggers down to the
-individual pipeline steps. Diagrams are Mermaid — GitHub renders them inline.
+Flowcharts of ARIE, the Automatic Revenue Intelligence Engine, from triggers
+down to the individual pipeline steps. Diagrams are Mermaid — GitHub renders
+them inline.
 
-Verified against the code on 2026-07-05 (`flows/agency_flow.py`,
+Verified against the code on 2026-07-06 (`flows/agency_flow.py`,
 `flows/ingest_flow.py`, `agents/`, `api/`, `mcp_server/`, `deploy.sh`).
 
 ## 1. System context — how a run starts and where data goes
@@ -25,7 +26,7 @@ flowchart TD
     end
 
     subgraph secrets["Config & secrets"]
-        SM["GCP Secret Manager<br/>injected via --set-secrets"]
+        SM["GCP Secret Manager<br/>global env secrets + per-client credential refs"]
         GCS["GCS FUSE mount /mnt/registry<br/>clients.json (client registry)"]
     end
 
@@ -127,7 +128,7 @@ run (`--resume-run-id`) skips steps already marked complete.
 ```mermaid
 flowchart TD
     START(["ingest_flow(client_id)"])
-    START --> CFG["get_client(client_id)<br/>+ read source tokens from env<br/>(Secret Manager / .env)"]
+    START --> CFG["get_client(client_id)<br/>+ resolve per-client source tokens<br/>(Secret Manager refs / env fallback)"]
     CFG --> SETUP["step_setup — ensure_schema + ensure_tables<br/>(with retry)"]
 
     SETUP --> POOL["ThreadPoolExecutor (6 workers)<br/>each pull: 3 retries, 30s delay"]
@@ -155,8 +156,8 @@ flowchart TD
     DQ --> SUMM(["summary: row counts, attribution,<br/>source_failures,<br/>status = complete | partial"])
 ```
 
-Missing channel credentials are expected for disabled channels: the pull
-fails non-fatally, lands in `source_failures`, and the run reports
+Disabled channels are skipped. An enabled channel with a missing or expired
+credential fails non-fatally, lands in `source_failures`, and the run reports
 `status: "partial"`.
 
 ## 4. AI layer — two-stage insight generation and governance

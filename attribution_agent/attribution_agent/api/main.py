@@ -34,9 +34,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Attribution Agent API",
+    title="ARIE API",
     version=__version__,
-    description="REST API for the N8iV attribution pipeline",
+    description="REST API for ARIE, the Automatic Revenue Intelligence Engine",
     lifespan=lifespan,
 )
 

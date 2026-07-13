@@ -11,6 +11,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _clean_env(name: str, default: str = "") -> str:
+    return os.environ.get(name, default).strip()
+
+
 @dataclass
 class ClientConfig:
     """All settings for a single client's attribution pipeline."""
@@ -36,9 +40,9 @@ class DatabricksConfig:
 
 def get_databricks_config() -> DatabricksConfig:
     return DatabricksConfig(
-        host=os.environ["DATABRICKS_HOST"],  # e.g. adb-XXXXX.azuredatabricks.net
-        http_path=os.environ["DATABRICKS_HTTP_PATH"],  # /sql/1.0/warehouses/XXXXX
-        access_token=os.environ["DATABRICKS_TOKEN"],
+        host=_clean_env("DATABRICKS_HOST"),  # e.g. adb-XXXXX.azuredatabricks.net
+        http_path=_clean_env("DATABRICKS_HTTP_PATH"),  # /sql/1.0/warehouses/XXXXX
+        access_token=_clean_env("DATABRICKS_TOKEN"),
     )
 
 

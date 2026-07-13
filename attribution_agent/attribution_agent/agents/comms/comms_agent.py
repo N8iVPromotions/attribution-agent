@@ -88,7 +88,8 @@ def _build_html(
         "Questions? Reply to this email."
         if agency_config
         else f"This report was automatically generated on {report.generated_at[:10]}"
-        " by your Attribution Agent.<br>Questions? Reply to this email."
+        " by ARIE, your Automatic Revenue Intelligence Engine.<br>"
+        "Questions? Reply to this email."
     )
 
     return f"""
@@ -383,7 +384,7 @@ def send_report(
     sender_display = (
         agency_config.sender_name
         if agency_config and agency_config.sender_name
-        else "Attribution Agent"
+        else "ARIE"
     )
     reply_to = (
         agency_config.reply_to if agency_config and agency_config.reply_to else ""

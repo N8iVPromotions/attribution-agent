@@ -419,16 +419,31 @@ if __name__ == "__main__":
     _dry_run = False
     _attribution_model = "last_touch"
     _run_mode = "agency"
+    _client_filter = None
     if os.environ.get("DATABRICKS_RUNTIME_VERSION"):
         from databricks.sdk.runtime import dbutils as _dbutils
 
-        _agency = _dbutils.widgets.get("agency") or None
-        _dry_run = _dbutils.widgets.get("dry_run", "false").lower() == "true"
-        _attribution_model = (
-            _dbutils.widgets.get("attribution_model", "last_touch") or "last_touch"
-        )
+        def _widget(name: str, default: str = "") -> str:
+            try:
+                return _dbutils.widgets.get(name) or default
+            except Exception:
+                return default
+
+        _agency = _widget("agency") or None
+        _dry_run = _widget("dry_run", "false").lower() == "true"
+        _attribution_model = _widget("attribution_model", "last_touch") or "last_touch"
+        _run_mode = _widget("run_mode", "agency") or "agency"
+        _client_filter_raw = _widget("client_filter")
+        if _client_filter_raw:
+            _client_filter = [
+                value.strip()
+                for value in _client_filter_raw.replace(",", " ").split()
+                if value.strip()
+            ]
         logger.info(
-            f"[Job] Running with Databricks widget params: agency={_agency}, dry_run={_dry_run}, model={_attribution_model}"
+            f"[Job] Running with Databricks widget params: agency={_agency}, "
+            f"clients={_client_filter}, dry_run={_dry_run}, "
+            f"model={_attribution_model}, run_mode={_run_mode}"
         )
     else:
         parser = argparse.ArgumentParser(
@@ -466,10 +481,12 @@ if __name__ == "__main__":
         _dry_run = args.dry_run
         _attribution_model = args.attribution_model
         _run_mode = args.run_mode
+        _client_filter = args.client_filter
 
     if _agency:
         result = run_agency_pipeline(
             agency_id=_agency,
+            client_filter=_client_filter,
             dry_run=_dry_run,
             attribution_model=_attribution_model,
             run_mode=_run_mode,
@@ -479,6 +496,7 @@ if __name__ == "__main__":
         results = [
             run_agency_pipeline(
                 agency_id=agency_id,
+                client_filter=_client_filter,
                 dry_run=_dry_run,
                 attribution_model=_attribution_model,
                 run_mode=_run_mode,

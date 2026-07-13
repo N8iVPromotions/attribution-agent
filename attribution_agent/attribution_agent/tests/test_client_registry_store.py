@@ -105,6 +105,29 @@ def test_local_save_and_reload_round_trip():
     assert "acme_co" not in client_config.reload_client_registry()
 
 
+def test_attach_client_secret_values_writes_secret_refs(monkeypatch):
+    import utils.secrets as secrets
+
+    written: dict[str, str] = {}
+
+    def _fake_write_secret(secret_id: str, value: str) -> str:
+        written[secret_id] = value
+        return secret_id
+
+    monkeypatch.setenv("ATTRIBUTION_ENV", "pilot")
+    monkeypatch.setattr(secrets, "write_secret", _fake_write_secret)
+
+    updated = client_config.attach_client_secret_values(
+        _sample_config(),
+        {"meta_access_token": "token-123"},
+    )
+
+    assert updated.meta_access_token_secret_name == (
+        "attr-pilot-acme-co-meta-access-token"
+    )
+    assert written == {"attr-pilot-acme-co-meta-access-token": "token-123"}
+
+
 # ── Delta backend ─────────────────────────────────────────────────────────────
 
 

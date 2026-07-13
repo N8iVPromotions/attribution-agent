@@ -10,7 +10,7 @@ import json
 import logging
 import re
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Literal
 import os
 from pathlib import Path
@@ -18,9 +18,11 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-def _get_secret(key: str) -> str:
-    """Secrets arrive as env vars (Cloud Run --set-secrets, or .env locally)."""
-    return os.environ.get(key, "")
+def _get_secret(env_key: str, secret_ref: str = "") -> str:
+    """Resolve a client-specific secret ref before falling back to env vars."""
+    from utils.secrets import resolve_secret
+
+    return resolve_secret(secret_ref, env_key)
 
 
 @dataclass
@@ -70,30 +72,44 @@ class ClientConfig:
     client_report_email: str = ""  # where this client's report gets sent
     client_display_name: str = ""  # name shown in agency dashboard
 
-    # ── Credentials (read from Databricks Secrets at runtime) ─────────────────
+    # Client-specific Secret Manager IDs. Raw values are never stored here.
+    meta_access_token_secret_name: str = ""
+    google_ads_refresh_token_secret_name: str = ""
+    linkedin_access_token_secret_name: str = ""
+    tiktok_access_token_secret_name: str = ""
+    hubspot_access_token_secret_name: str = ""
+    stripe_secret_key_secret_name: str = ""
+
+    # Credentials are resolved from GCP Secret Manager first, then env vars.
     @property
     def meta_access_token(self) -> str:
-        return _get_secret("META_ACCESS_TOKEN")
+        return _get_secret("META_ACCESS_TOKEN", self.meta_access_token_secret_name)
 
     @property
     def hubspot_access_token(self) -> str:
-        return _get_secret("HUBSPOT_ACCESS_TOKEN")
+        return _get_secret(
+            "HUBSPOT_ACCESS_TOKEN", self.hubspot_access_token_secret_name
+        )
 
     @property
     def stripe_secret_key(self) -> str:
-        return _get_secret("STRIPE_SECRET_KEY")
+        return _get_secret("STRIPE_SECRET_KEY", self.stripe_secret_key_secret_name)
 
     @property
     def google_ads_refresh_token(self) -> str:
-        return _get_secret("GOOGLE_ADS_REFRESH_TOKEN")
+        return _get_secret(
+            "GOOGLE_ADS_REFRESH_TOKEN", self.google_ads_refresh_token_secret_name
+        )
 
     @property
     def linkedin_access_token(self) -> str:
-        return _get_secret("LINKEDIN_ACCESS_TOKEN")
+        return _get_secret(
+            "LINKEDIN_ACCESS_TOKEN", self.linkedin_access_token_secret_name
+        )
 
     @property
     def tiktok_access_token(self) -> str:
-        return _get_secret("TIKTOK_ACCESS_TOKEN")
+        return _get_secret("TIKTOK_ACCESS_TOKEN", self.tiktok_access_token_secret_name)
 
 
 # ─── CLIENT REGISTRY ──────────────────────────────────────────────────────────
@@ -105,6 +121,45 @@ CLIENT_REGISTRY_PATH = Path(
     )
 )
 CLIENT_FIELDS = set(ClientConfig.__dataclass_fields__.keys())
+CLIENT_SECRET_VALUE_FIELDS = {
+    "meta_access_token": ("meta_access_token_secret_name", "meta-access-token"),
+    "google_ads_refresh_token": (
+        "google_ads_refresh_token_secret_name",
+        "google-ads-refresh-token",
+    ),
+    "linkedin_access_token": (
+        "linkedin_access_token_secret_name",
+        "linkedin-access-token",
+    ),
+    "tiktok_access_token": ("tiktok_access_token_secret_name", "tiktok-access-token"),
+    "hubspot_access_token": (
+        "hubspot_access_token_secret_name",
+        "hubspot-access-token",
+    ),
+    "stripe_secret_key": ("stripe_secret_key_secret_name", "stripe-secret-key"),
+}
+
+
+def attach_client_secret_values(
+    config: ClientConfig,
+    secret_values: dict[str, str],
+) -> ClientConfig:
+    """Write supplied raw credentials and return config with secret refs set."""
+    from utils.secrets import secret_id_for_client, write_secret
+
+    updates: dict[str, str] = {}
+    for value_key, raw_value in secret_values.items():
+        if value_key not in CLIENT_SECRET_VALUE_FIELDS:
+            continue
+        secret_value = (raw_value or "").strip()
+        if not secret_value:
+            continue
+        field_name, credential_key = CLIENT_SECRET_VALUE_FIELDS[value_key]
+        secret_id = secret_id_for_client(config.client_id, credential_key)
+        updates[field_name] = write_secret(secret_id, secret_value)
+    if not updates:
+        return config
+    return replace(config, **updates)
 
 
 def slugify_client_id(name: str) -> str:
