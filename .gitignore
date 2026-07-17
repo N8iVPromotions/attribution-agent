@@ -42,3 +42,10 @@ arie.pid
 .claude/
 !.claude/agents/
 !.claude/agents/**
+
+# Command Center (Node app) — installed/built locally or by Replit, not tracked
+command_center/node_modules/
+command_center/client/node_modules/
+command_center/server/public/
+command_center-key.json
+command-center-key.json

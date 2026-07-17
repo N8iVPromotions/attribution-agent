@@ -26,11 +26,14 @@ REGION="${REGION:-us-central1}"
 REPO="${REPO:-attribution}"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/attribution-agent"
 SERVICE_UI="attribution-ui"
+SERVICE_API="attribution-api"
 JOB_PIPELINE="attribution-pipeline"
 SCHEDULER_JOB="attribution-monthly"
 REGISTRY_BUCKET="${REGISTRY_BUCKET:-${PROJECT_ID}-attribution-registry}"
 ALLOW_UNAUTHENTICATED_UI="${ALLOW_UNAUTHENTICATED_UI:-false}"
+ALLOW_UNAUTHENTICATED_API="${ALLOW_UNAUTHENTICATED_API:-false}"
 OPERATOR_PRINCIPAL="${OPERATOR_PRINCIPAL:-}"
+COMMAND_CENTER_SA="${COMMAND_CENTER_SA:-}"
 SA_RUNTIME_NAME="attribution-runtime"
 SA_SCHEDULER_NAME="attribution-scheduler"
 RUNTIME_SA="${SA_RUNTIME_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
@@ -100,6 +103,15 @@ build_ui_auth_flag() {
     echo "WARN: attribution-ui will be public because ALLOW_UNAUTHENTICATED_UI=true"
   else
     UI_AUTH_FLAG="--no-allow-unauthenticated"
+  fi
+}
+
+build_api_auth_flag() {
+  if [ "$ALLOW_UNAUTHENTICATED_API" = "true" ]; then
+    API_AUTH_FLAG="--allow-unauthenticated"
+    echo "WARN: attribution-api will be public because ALLOW_UNAUTHENTICATED_API=true (X-API-Key still required at the app layer)"
+  else
+    API_AUTH_FLAG="--no-allow-unauthenticated"
   fi
 }
 
@@ -178,6 +190,7 @@ done
 
 build_secret_flags
 build_ui_auth_flag
+build_api_auth_flag
 
 # Client-registry bucket (objectAdmin: the admin portal writes clients.json)
 gcloud storage buckets describe "gs://${REGISTRY_BUCKET}" >/dev/null 2>&1 \
@@ -246,6 +259,38 @@ elif [ "$ALLOW_UNAUTHENTICATED_UI" != "true" ]; then
   echo "NOTE: attribution-ui is private. Set OPERATOR_PRINCIPAL=user:you@example.com on deploy to grant explicit access."
 fi
 
+# ── 6b. Cloud Run Service (FastAPI REST layer) ───────────────────────────────
+# Same image, overrides CMD to run uvicorn instead of Streamlit. This is what
+# the Replit Command Center's Live mode calls (X-API-Key + a Cloud Run ID
+# token minted from a service-account key — see command_center/README.md).
+gcloud run deploy "$SERVICE_API" \
+  --image "${IMAGE}:${GIT_SHA}" \
+  --region "$REGION" \
+  --service-account "$RUNTIME_SA" \
+  --port 8080 \
+  --command uvicorn \
+  --args "api.main:app,--host,0.0.0.0,--port,8080" \
+  "$API_AUTH_FLAG" \
+  --set-secrets "$SECRET_FLAGS" \
+  --set-env-vars "$COMMON_ENV" \
+  --add-volume "name=registry,type=cloud-storage,bucket=${REGISTRY_BUCKET}" \
+  --add-volume-mount "volume=registry,mount-path=/mnt/registry" \
+  --timeout 300 \
+  --max-instances 3 \
+  --memory 1Gi --cpu 1
+
+if [ -n "$OPERATOR_PRINCIPAL" ]; then
+  gcloud run services add-iam-policy-binding "$SERVICE_API" --region "$REGION" \
+    --member "$OPERATOR_PRINCIPAL" --role roles/run.invoker >/dev/null
+fi
+if [ -n "$COMMAND_CENTER_SA" ]; then
+  gcloud run services add-iam-policy-binding "$SERVICE_API" --region "$REGION" \
+    --member "serviceAccount:${COMMAND_CENTER_SA}" --role roles/run.invoker >/dev/null
+  echo "Granted $COMMAND_CENTER_SA invoker access to $SERVICE_API"
+elif [ "$ALLOW_UNAUTHENTICATED_API" != "true" ]; then
+  echo "NOTE: attribution-api is private. Set COMMAND_CENTER_SA=name@project.iam.gserviceaccount.com on deploy to grant the Replit app access."
+fi
+
 # ── 7. Seed clients.json into the registry bucket (first deploy only) ────────
 LOCAL_REGISTRY="attribution_agent/attribution_agent/config/client_registry.local.json"
 if [ -f "$LOCAL_REGISTRY" ] \
@@ -278,5 +323,6 @@ echo ""
 echo "── Deployed ──────────────────────────────────────────────"
 echo "Image:     ${IMAGE}:${GIT_SHA}"
 echo "UI:        $(gcloud run services describe "$SERVICE_UI" --region "$REGION" --format 'value(status.url)')"
+echo "API:       $(gcloud run services describe "$SERVICE_API" --region "$REGION" --format 'value(status.url)')"
 echo "Job:       gcloud run jobs execute $JOB_PIPELINE --region $REGION --args 'flows/agency_flow.py,--agency,demo_agency,--dry-run' --wait"
 echo "Scheduler: $SCHEDULER_JOB ($SCHEDULE America/New_York)"
