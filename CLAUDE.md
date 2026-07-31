@@ -40,6 +40,7 @@ emails white-labeled reports to clients.
 - [`docs/RUNBOOK.md`](docs/RUNBOOK.md) — deploy, rollback, health checks, log access, common failures
 - [`docs/ONBOARDING_CLIENT.md`](docs/ONBOARDING_CLIENT.md) — add a new client/agency and provision secrets
 - [`docs/A2A.md`](docs/A2A.md) — agent-to-agent local & network dispatch
+- [`command_center/README.md`](command_center/README.md) — owner-facing ops console + sales demo (Replit app), setup and secrets
 
 ## Git Workflow
 
@@ -99,9 +100,10 @@ python flows/agency_flow.py --agency demo_agency --dry-run   # skip email
 
 ## GCP Cloud Run Deployment
 
-One container image (repo-root `Dockerfile`, `python:3.11-slim`) serves both workloads:
+One container image (repo-root `Dockerfile`, `python:3.11-slim`) serves three workloads:
 - **Cloud Run Job** `attribution-pipeline` — `python flows/agency_flow.py`, triggered monthly by Cloud Scheduler (`attribution-monthly`)
 - **Cloud Run Service** `attribution-ui` — Streamlit on port 8080 (default CMD)
+- **Cloud Run Service** `attribution-api` — same image, `--command uvicorn --args api.main:app,--host,0.0.0.0,--port,8080`. Private by default; grant access with `OPERATOR_PRINCIPAL` (a person) or `COMMAND_CENTER_SA` (the Replit Command Center's service account) on deploy. This is what [`command_center/`](command_center/) talks to in Live mode.
 
 The **data layer stays on Databricks**: Delta writes go through
 `utils/databricks_writer.py` via `databricks-sql-connector` to the SQL
