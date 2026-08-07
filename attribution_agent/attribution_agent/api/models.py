@@ -63,21 +63,27 @@ class ClientConfigRequest(BaseModel):
     meta_enabled: bool = False
     meta_ad_account_id: str = ""
     meta_access_token: str = Field(default="", repr=False)
+    meta_token_expires_at: str = ""
     google_ads_enabled: bool = False
     google_ads_customer_id: str = ""
     google_ads_refresh_token: str = Field(default="", repr=False)
+    google_ads_token_expires_at: str = ""
     linkedin_ads_enabled: bool = False
     linkedin_ads_account_id: str = ""
     linkedin_access_token: str = Field(default="", repr=False)
+    linkedin_token_expires_at: str = ""
     tiktok_ads_enabled: bool = False
     tiktok_ads_advertiser_id: str = ""
     tiktok_access_token: str = Field(default="", repr=False)
+    tiktok_token_expires_at: str = ""
     hubspot_enabled: bool = False
     hubspot_pipeline_id: str = ""
     hubspot_access_token: str = Field(default="", repr=False)
+    hubspot_token_expires_at: str = ""
     stripe_enabled: bool = False
     stripe_account_id: str = ""
     stripe_secret_key: str = Field(default="", repr=False)
+    stripe_token_expires_at: str = ""
     lookback_days: int = 30
     client_report_email: str = ""
     client_display_name: str = ""
@@ -96,11 +102,17 @@ class ClientConfigResponse(BaseModel):
     hubspot_enabled: bool
     stripe_enabled: bool
     meta_ad_account_id: str = ""
+    meta_token_expires_at: str = ""
     google_ads_customer_id: str = ""
+    google_ads_token_expires_at: str = ""
     linkedin_ads_account_id: str = ""
+    linkedin_token_expires_at: str = ""
     tiktok_ads_advertiser_id: str = ""
+    tiktok_token_expires_at: str = ""
     hubspot_pipeline_id: str = ""
+    hubspot_token_expires_at: str = ""
     stripe_account_id: str = ""
+    stripe_token_expires_at: str = ""
     meta_secret_configured: bool = False
     google_ads_secret_configured: bool = False
     linkedin_ads_secret_configured: bool = False

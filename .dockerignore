@@ -14,9 +14,18 @@
 **/.pytest_cache/
 **/.ruff_cache/
 **/*.pyc
+.venv/
+.venv*/
+venv/
+env/
+ENV/
 
 # Not needed at runtime
 docs/
+prototypes/
+website-work/
+reports/
+attribution-agent/
 attribution_agent/attribution_agent/tests/
 attribution_agent/attribution_agent/evals/
 attribution_agent/attribution_agent/conftest.py

@@ -43,6 +43,7 @@ from agents.insight.insight_agent import generate_insight_report
 from agents.comms.comms_agent import send_agency_report
 from attribution_models import normalize_model
 from utils.databricks_writer import _run_sql, write_pipeline_run
+from utils.operator_alerts import OperatorAlert, dispatch_alerts
 
 try:
     from agents.control import arie_bot as _arie
@@ -195,7 +196,7 @@ def run_agency_pipeline(
                 # 1. Ingest
                 if "ingest" not in completed_steps:
                     checkpointer.start_step(run_id, agency_id, client_id, "ingest")
-                    ingest_result = ingest_flow(client_id)
+                    ingest_result = ingest_flow(client_id, run_id=run_id)
                     checkpointer.complete_step(
                         run_id, agency_id, client_id, "ingest", ingest_result
                     )
@@ -243,6 +244,24 @@ def run_agency_pipeline(
                         logger.warning(
                             f"[Governance] {len(gov_warnings)} advisory item(s) for "
                             f"{client_id}: " + "; ".join(gov_warnings[:3])
+                        )
+                        dispatch_alerts(
+                            [
+                                OperatorAlert(
+                                    severity="warning",
+                                    category="report_governance",
+                                    title="Report governance warning",
+                                    message="; ".join(gov_warnings[:5]),
+                                    client_id=client_id,
+                                    agency_id=agency_id,
+                                    run_id=run_id,
+                                    action_required=(
+                                        "Review the report before sending or "
+                                        "sharing with the client."
+                                    ),
+                                    metadata={"warning_count": len(gov_warnings)},
+                                )
+                            ]
                         )
                 except Exception as gov_exc:
                     logger.warning(
@@ -345,6 +364,23 @@ def run_agency_pipeline(
                     run_id, agency_id, client_id, "pipeline_complete", str(exc)
                 )
                 _notify(f"❌ *{client_id}* failed\n`{str(exc)[:200]}`")
+                dispatch_alerts(
+                    [
+                        OperatorAlert(
+                            severity="critical",
+                            category="pipeline_failure",
+                            title="Attribution pipeline failed",
+                            message=str(exc)[:1200],
+                            client_id=client_id,
+                            agency_id=agency_id,
+                            run_id=run_id,
+                            action_required=(
+                                "Open ARIE run history, inspect the failed step, "
+                                "fix the source or configuration issue, then rerun."
+                            ),
+                        )
+                    ]
+                )
                 errors.append({"client_id": client_id, "error": str(exc)})
                 try:
                     write_pipeline_run(

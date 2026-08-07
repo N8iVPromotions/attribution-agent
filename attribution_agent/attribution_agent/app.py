@@ -15,6 +15,7 @@ Cloud Run:
 """
 
 import logging
+import html
 import os
 import sys
 from pathlib import Path
@@ -33,6 +34,7 @@ from agents.outreach.outreach_agent import (
     send_draft_to_self,
 )
 from config.agency_config import get_agency, list_agencies, AGENCY_REGISTRY
+from config.rbac_config import Permission, Role, check_permission
 from config.client_config import (
     CLIENT_REGISTRY,
     ClientConfig,
@@ -46,6 +48,7 @@ from config.client_config import (
     slugify_client_id,
 )
 from utils.secrets import redact_secrets
+from utils.auth_store import AuthConfigurationError, auth_enabled, login, logout
 from utils.cloud_run import (
     build_gcloud_command,
     build_pipeline_args,
@@ -56,6 +59,7 @@ from utils.cloud_run import (
 
 _CLOUD_RUN_SETTINGS = cloud_run_settings()
 _CLOUD_RUN_MODE = is_cloud_run_configured(_CLOUD_RUN_SETTINGS)
+_CLOUD_RUN_RUNTIME = bool(os.environ.get("K_SERVICE") or os.environ.get("K_REVISION"))
 _DATABRICKS_MODE = bool(os.environ.get("ATTRIBUTION_JOB_NAME"))
 _JOB_NAME = os.environ.get("ATTRIBUTION_JOB_NAME", "[Attribution] Monthly Pipeline")
 _JOB_ID = int(os.environ.get("ATTRIBUTION_JOB_ID", "0") or "0") or 500226442246561
@@ -65,7 +69,7 @@ st.set_page_config(
     page_title="ARIE Command Center",
     page_icon="◆",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 # ── Global styles ─────────────────────────────────────────────
@@ -75,8 +79,111 @@ st.markdown(
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 /* ── Reset ── */
-[data-testid="stSidebar"],
 [data-testid="collapsedControl"] { display: none !important; }
+
+:root {
+    --arie-bg: #090b12;
+    --arie-panel: rgba(255,255,255,0.046);
+    --arie-panel-strong: rgba(255,255,255,0.07);
+    --arie-line: rgba(255,255,255,0.095);
+    --arie-line-strong: rgba(255,255,255,0.16);
+    --arie-ink: #f7f6f3;
+    --arie-muted: #9ba8bd;
+    --arie-subtle: #6f7c91;
+    --arie-purple: #7860FC;
+    --arie-purple-soft: #a594fe;
+    --arie-stone: #e4e4e4;
+    --arie-success: #65d89a;
+    --arie-warning: #ffd166;
+    --arie-danger: #ff7a90;
+}
+
+[data-testid="stSidebar"] {
+    display: block !important;
+    background:
+        radial-gradient(circle at 18% 0%, rgba(120,96,252,0.20), transparent 18rem),
+        linear-gradient(180deg, rgba(9,11,18,0.96), rgba(12,16,24,0.94)) !important;
+    border-right: 1px solid var(--arie-line) !important;
+    box-shadow: 18px 0 60px rgba(0,0,0,0.32) !important;
+}
+[data-testid="stSidebar"] > div:first-child {
+    padding: 1.25rem 1rem 1.75rem !important;
+}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] span {
+    color: rgba(247,246,243,0.72) !important;
+}
+.sidebar-brand {
+    display: flex;
+    gap: 0.8rem;
+    align-items: center;
+    padding: 0.3rem 0.1rem 1rem;
+}
+.sidebar-logo {
+    width: 2.7rem;
+    height: 2.7rem;
+    border-radius: 0.9rem;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(135deg, var(--arie-purple), #b8adff);
+    color: #090b12;
+    font-size: 0.75rem;
+    font-weight: 900;
+    letter-spacing: -0.04em;
+    box-shadow: 0 1rem 2.25rem rgba(120,96,252,0.28);
+}
+.sidebar-title {
+    color: var(--arie-ink);
+    font-size: 1.02rem;
+    line-height: 1.05;
+    font-weight: 850;
+    letter-spacing: -0.025em;
+}
+.sidebar-subtitle {
+    margin-top: 0.25rem;
+    color: rgba(247,246,243,0.46);
+    font-size: 0.72rem;
+}
+.sidebar-card {
+    padding: 0.9rem;
+    border: 1px solid var(--arie-line);
+    border-radius: 1.1rem;
+    background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.025));
+    box-shadow: 0 1rem 2.5rem rgba(0,0,0,0.18);
+    margin: 0.4rem 0 1rem;
+}
+.sidebar-label {
+    color: rgba(247,246,243,0.42);
+    font-size: 0.64rem;
+    font-weight: 760;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+}
+.sidebar-footer {
+    margin-top: 1.4rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(255,255,255,0.07);
+    color: rgba(247,246,243,0.4);
+    font-size: 0.74rem;
+    line-height: 1.55;
+}
+.health-strip {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.45rem;
+    margin-top: 0.75rem;
+}
+.health-dot {
+    height: 0.42rem;
+    border-radius: 999px;
+    background: var(--arie-success);
+    box-shadow: 0 0 1rem rgba(101,216,154,0.35);
+}
+.health-dot.warn {
+    background: var(--arie-warning);
+    box-shadow: 0 0 1rem rgba(255,209,102,0.32);
+}
 
 html, body, [class*="css"] {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
@@ -85,16 +192,19 @@ html, body, [class*="css"] {
 /* Atmospheric background */
 [data-testid="stAppViewContainer"] {
     background:
-        radial-gradient(ellipse 80% 60% at -5% -10%, rgba(37,99,235,0.20) 0%, transparent 55%),
-        radial-gradient(ellipse 60% 50% at 108% 108%, rgba(124,104,252,0.14) 0%, transparent 55%),
-        radial-gradient(ellipse 50% 40% at 50% 100%, rgba(10,8,28,0.6) 0%, transparent 70%),
-        #04040c !important;
+        radial-gradient(circle at 8% -10%, rgba(120,96,252,0.20), transparent 34rem),
+        radial-gradient(circle at 96% 0%, rgba(156,181,255,0.13), transparent 32rem),
+        linear-gradient(180deg, #090b12 0%, #0c1018 62%, #080a10 100%) !important;
 }
 [data-testid="stHeader"] { background: transparent !important; }
 
 .main .block-container {
-    max-width: 1320px;
-    padding: 0 2rem 5rem;
+    max-width: 1540px;
+    padding: 1.1rem 2rem 5rem;
+}
+[data-testid="stMainBlockContainer"] {
+    max-width: 1540px !important;
+    padding: 1.1rem 1.65rem 5rem !important;
 }
 
 /* ── Typography ── */
@@ -123,6 +233,8 @@ h3 {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
     padding: 0.85rem 1.2rem;
     border: 1px solid rgba(255,255,255,0.07);
     border-radius: 14px;
@@ -136,6 +248,8 @@ h3 {
     display: flex;
     align-items: center;
     gap: 1.5rem;
+    flex: 1 1 28rem;
+    min-width: 0;
 }
 .topbar-brand {
     display: flex;
@@ -163,13 +277,35 @@ h3 {
 }
 .topbar-sub {
     font-size: 0.75rem;
-    color: rgba(255,255,255,0.2);
+    color: rgba(255,255,255,0.45);
     font-weight: 400;
+}
+.page-title {
+    display: grid;
+    gap: 0.16rem;
+    min-width: min(24rem, 100%);
+}
+.page-title h1 {
+    margin: 0 !important;
+    color: var(--arie-ink) !important;
+    font-size: clamp(1.25rem, 2.15vw, 2rem) !important;
+    font-weight: 820 !important;
+    letter-spacing: -0.035em !important;
+    line-height: 1.05 !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+}
+.breadcrumb {
+    color: var(--arie-muted);
+    font-size: 0.75rem;
 }
 .topbar-right {
     display: flex;
     align-items: center;
     gap: 0.6rem;
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
 .status-pill {
     display: inline-flex;
@@ -214,10 +350,241 @@ h3 {
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: rgba(255,255,255,0.3);
+    color: rgba(255,255,255,0.58);
 }
 .panel-body {
     padding: 1rem 1rem 0.5rem;
+}
+
+.operator-grid {
+    display: grid;
+    gap: 1rem;
+}
+.operator-grid.kpi {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.operator-grid.two {
+    grid-template-columns: minmax(0, 1.18fr) minmax(320px, 0.82fr);
+}
+.operator-card,
+.kpi-card,
+.stage-card,
+.source-card,
+.event-card {
+    border: 1px solid var(--arie-line);
+    background: linear-gradient(180deg, rgba(255,255,255,0.056), rgba(255,255,255,0.026));
+    box-shadow: 0 1.5rem 4.5rem rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.06);
+    backdrop-filter: blur(22px);
+    -webkit-backdrop-filter: blur(22px);
+}
+.operator-card {
+    border-radius: 1.55rem;
+    overflow: hidden;
+}
+.operator-card-header {
+    padding: 1.1rem 1.25rem 0.25rem;
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: flex-start;
+}
+.operator-card-title {
+    color: var(--arie-ink);
+    font-size: 0.98rem;
+    font-weight: 820;
+    letter-spacing: -0.02em;
+}
+.operator-card-desc {
+    margin-top: 0.28rem;
+    color: var(--arie-muted);
+    font-size: 0.76rem;
+    line-height: 1.45;
+}
+.operator-card-body {
+    padding: 1.05rem 1.25rem 1.25rem;
+}
+.kpi-card {
+    border-radius: 1.25rem;
+    padding: 1rem;
+}
+.kpi-label {
+    color: rgba(247,246,243,0.46);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-weight: 760;
+}
+.kpi-value {
+    margin-top: 0.7rem;
+    color: var(--arie-ink);
+    font-size: clamp(1.55rem, 3vw, 2.45rem);
+    font-weight: 880;
+    letter-spacing: -0.055em;
+}
+.kpi-trend {
+    margin-top: 0.42rem;
+    color: var(--arie-muted);
+    font-size: 0.76rem;
+}
+.kpi-trend strong {
+    color: var(--arie-success);
+    font-weight: 760;
+}
+.pipeline-board {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(154px, 1fr));
+    gap: 0.75rem;
+    overflow-x: auto;
+    padding-bottom: 0.15rem;
+}
+.stage-card {
+    min-height: 14rem;
+    border-radius: 1.1rem;
+    padding: 0.85rem;
+    background: rgba(0,0,0,0.18);
+    display: grid;
+    align-content: start;
+    gap: 0.8rem;
+}
+.stage-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.6rem;
+    align-items: center;
+}
+.stage-title {
+    color: #d9e2ff;
+    font-size: 0.76rem;
+    font-weight: 780;
+}
+.stage-count {
+    color: var(--arie-subtle);
+    font-size: 0.7rem;
+}
+.job-card {
+    border: 1px solid var(--arie-line);
+    border-radius: 0.9rem;
+    padding: 0.72rem;
+    background: rgba(255,255,255,0.045);
+    display: grid;
+    gap: 0.48rem;
+}
+.job-client {
+    color: var(--arie-ink);
+    font-size: 0.77rem;
+    font-weight: 760;
+}
+.job-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    color: var(--arie-muted);
+    font-size: 0.68rem;
+}
+.progress {
+    height: 0.4rem;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(255,255,255,0.08);
+}
+.progress span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--arie-purple), #b8adff);
+}
+.source-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(110px, 1fr));
+    gap: 0.75rem;
+}
+.source-card {
+    border-radius: 1rem;
+    padding: 0.85rem;
+    display: grid;
+    gap: 0.5rem;
+}
+.source-name {
+    color: var(--arie-ink);
+    font-size: 0.82rem;
+    font-weight: 780;
+}
+.source-meta {
+    color: var(--arie-muted);
+    font-size: 0.7rem;
+    line-height: 1.45;
+}
+.event-list {
+    display: grid;
+    gap: 0.75rem;
+}
+.event-card {
+    border-radius: 1rem;
+    padding: 0.82rem;
+    display: grid;
+    grid-template-columns: 0.8rem 1fr auto;
+    gap: 0.75rem;
+    align-items: start;
+}
+.event-dot {
+    width: 0.68rem;
+    height: 0.68rem;
+    margin-top: 0.23rem;
+    border-radius: 999px;
+    background: var(--arie-purple-soft);
+    box-shadow: 0 0 0 0.3rem rgba(120,96,252,0.11);
+}
+.event-card.warn .event-dot {
+    background: var(--arie-warning);
+    box-shadow: 0 0 0 0.3rem rgba(255,209,102,0.09);
+}
+.event-title {
+    color: var(--arie-ink);
+    font-size: 0.8rem;
+    font-weight: 760;
+}
+.event-body {
+    margin-top: 0.18rem;
+    color: var(--arie-muted);
+    font-size: 0.72rem;
+}
+.event-time {
+    color: var(--arie-subtle);
+    font-size: 0.68rem;
+    white-space: nowrap;
+}
+.status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.36rem;
+    min-height: 1.55rem;
+    padding: 0 0.62rem;
+    border-radius: 999px;
+    border: 1px solid var(--arie-line);
+    color: var(--arie-muted);
+    background: rgba(255,255,255,0.045);
+    font-size: 0.68rem;
+    font-weight: 720;
+    white-space: nowrap;
+}
+.status-chip::before {
+    content: "";
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 999px;
+    background: currentColor;
+}
+.status-chip.ok {
+    color: var(--arie-success);
+    background: rgba(101,216,154,0.10);
+}
+.status-chip.warn {
+    color: var(--arie-warning);
+    background: rgba(255,209,102,0.11);
+}
+.status-chip.fail {
+    color: var(--arie-danger);
+    background: rgba(255,122,144,0.10);
 }
 
 /* ── Section label ── */
@@ -226,7 +593,7 @@ h3 {
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: rgba(255,255,255,0.22);
+    color: rgba(255,255,255,0.58);
     margin-bottom: 0.4rem;
     display: block;
 }
@@ -243,7 +610,7 @@ h3 {
     font-weight: 600;
     letter-spacing: 0.07em;
     text-transform: uppercase;
-    color: rgba(255,255,255,0.22);
+    color: rgba(255,255,255,0.48);
     padding: 0.4rem 0.6rem;
     border-bottom: 1px solid rgba(255,255,255,0.06);
     text-align: left;
@@ -297,7 +664,7 @@ h3 {
 /* ── Model description ── */
 .model-desc {
     font-size: 0.78rem;
-    color: rgba(255,255,255,0.3);
+    color: rgba(255,255,255,0.58);
     line-height: 1.6;
     margin: 0.2rem 0 1rem;
 }
@@ -312,15 +679,42 @@ h3 {
 [data-testid="stRadio"] label {
     font-size: 0.8rem !important;
     font-weight: 500 !important;
+    color: rgba(255,255,255,0.76) !important;
+}
+[data-testid="stSidebar"] [data-testid="stRadio"] > div {
+    gap: 0.42rem !important;
+}
+[data-testid="stSidebar"] [data-testid="stRadio"] label {
+    min-height: 2.55rem;
+    padding: 0.45rem 0.7rem !important;
+    border: 1px solid transparent;
+    border-radius: 0.82rem;
+    background: rgba(255,255,255,0.025);
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+[data-testid="stSidebar"] [data-testid="stRadio"] label:hover {
+    background: rgba(255,255,255,0.065);
+    border-color: rgba(255,255,255,0.09);
+}
+[data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked) {
+    background: rgba(120,96,252,0.16);
+    border-color: rgba(120,96,252,0.28);
 }
 [data-testid="stToggle"] label {
     font-size: 0.8rem !important;
     font-weight: 400 !important;
-    color: rgba(255,255,255,0.35) !important;
+    color: rgba(255,255,255,0.7) !important;
 }
 [data-testid="stCheckbox"] label {
     font-size: 0.8rem !important;
-    color: rgba(255,255,255,0.35) !important;
+    color: rgba(255,255,255,0.7) !important;
+}
+[data-testid="stWidgetLabel"] p,
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stCaptionContainer"] p,
+[data-baseweb="radio"] label,
+[data-baseweb="checkbox"] label {
+    color: rgba(255,255,255,0.68) !important;
 }
 input[type="text"], input[type="number"], textarea {
     background: rgba(255,255,255,0.04) !important;
@@ -353,8 +747,20 @@ input[type="text"], input[type="number"], textarea {
     font-family: 'Inter', sans-serif !important;
     font-weight: 500 !important;
     font-size: 0.8rem !important;
-    color: rgba(255,255,255,0.5) !important;
+    color: rgba(255,255,255,0.78) !important;
     box-shadow: none !important;
+}
+[data-testid="stBaseButton-secondary"],
+.stButton button[kind="secondary"] {
+    background: rgba(255,255,255,0.06) !important;
+    border: 1px solid rgba(255,255,255,0.14) !important;
+    color: rgba(255,255,255,0.82) !important;
+    border-radius: 999px !important;
+}
+[data-testid="baseButton-secondary"] p,
+[data-testid="stBaseButton-secondary"] p,
+.stButton button[kind="secondary"] p {
+    color: rgba(255,255,255,0.82) !important;
 }
 [data-testid="baseButton-secondary"]:hover {
     background: rgba(255,255,255,0.09) !important;
@@ -403,7 +809,7 @@ input[type="text"], input[type="number"], textarea {
 
 /* ── Captions ── */
 [data-testid="stCaptionContainer"] p {
-    color: rgba(255,255,255,0.22) !important;
+    color: rgba(255,255,255,0.55) !important;
     font-size: 0.75rem !important;
 }
 
@@ -416,7 +822,7 @@ input[type="text"], input[type="number"], textarea {
 [data-testid="stTabs"] [role="tab"] {
     font-size: 0.79rem !important;
     font-weight: 500 !important;
-    color: rgba(255,255,255,0.3) !important;
+    color: rgba(255,255,255,0.52) !important;
     padding: 0.55rem 1.2rem !important;
     border-radius: 8px 8px 0 0 !important;
     border-bottom: 2px solid transparent !important;
@@ -462,12 +868,12 @@ input[type="text"], input[type="number"], textarea {
 .action-context {
     flex: 1;
     font-size: 0.75rem;
-    color: rgba(255,255,255,0.22);
+    color: rgba(255,255,255,0.55);
     display: flex;
     gap: 1.25rem;
 }
 .action-context-item strong {
-    color: rgba(255,255,255,0.35);
+    color: rgba(255,255,255,0.72);
     font-weight: 500;
 }
 .action-context-item span {
@@ -501,7 +907,7 @@ input[type="text"], input[type="number"], textarea {
 }
 .run-row:last-child { border-bottom: none; }
 .run-ts    { color: rgba(255,255,255,0.22); font-family: 'Inter', monospace; }
-.run-label { color: rgba(255,255,255,0.38); }
+.run-label { color: rgba(255,255,255,0.62); }
 .run-state {
     font-size: 0.65rem;
     font-weight: 600;
@@ -520,7 +926,7 @@ input[type="text"], input[type="number"], textarea {
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: rgba(255,255,255,0.2);
+    color: rgba(255,255,255,0.58);
     padding: 0.5rem 0 0.5rem;
     border-bottom: 1px solid rgba(255,255,255,0.05);
     margin-bottom: 0.75rem;
@@ -532,6 +938,64 @@ input[type="text"], input[type="number"], textarea {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+
+@media (max-width: 1180px) {
+    .operator-grid.kpi {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .source-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-testid="stMainBlockContainer"] {
+        padding: 1rem 1.2rem 4rem !important;
+    }
+}
+
+@media (max-width: 720px) {
+    .main .block-container {
+        padding: 0 1rem 4rem;
+    }
+    [data-testid="stMainBlockContainer"] {
+        padding: 0 1rem 4rem !important;
+    }
+    .topbar {
+        align-items: flex-start;
+        gap: 0.9rem;
+        padding: 0.85rem;
+    }
+    .topbar-left,
+    .topbar-right {
+        flex-wrap: wrap;
+        gap: 0.6rem;
+    }
+    .brand-name {
+        max-width: 7rem;
+        line-height: 1.35;
+    }
+    .topbar-sep {
+        display: none;
+    }
+    .status-pill {
+        font-size: 0.66rem;
+        padding: 0.25rem 0.55rem;
+    }
+    [data-testid="stTabs"] [role="tablist"] {
+        overflow-x: auto;
+        flex-wrap: nowrap;
+    }
+    [data-testid="stTabs"] [role="tab"] {
+        min-width: max-content;
+        padding: 0.55rem 1rem !important;
+    }
+    .operator-grid.kpi,
+    .operator-grid.two,
+    .source-grid {
+        grid-template-columns: 1fr;
+    }
+    .pipeline-board {
+        grid-template-columns: repeat(5, minmax(150px, 76vw));
+    }
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -1038,6 +1502,364 @@ def _source_tags(cfg: ClientConfig) -> str:
     )
 
 
+def _esc(value: object) -> str:
+    return html.escape(str(value or ""))
+
+
+def _backend_label() -> str:
+    if _CLOUD_RUN_MODE:
+        return "Cloud Run Job"
+    if _DATABRICKS_MODE:
+        return "Databricks Job"
+    return "Local development"
+
+
+def _safe_agency_name(agency_id: str) -> str:
+    try:
+        return get_agency(agency_id).agency_name
+    except Exception:
+        return agency_id or "Direct clients"
+
+
+def _fetch_open_alert_count() -> int:
+    if os.environ.get("ARIE_OVERVIEW_LIVE_ALERTS", "").lower() not in {
+        "1",
+        "true",
+        "yes",
+    }:
+        return 0
+    try:
+        from utils.databricks_writer import fetch_recent_operator_alerts
+
+        return len(fetch_recent_operator_alerts(limit=50, open_only=True))
+    except Exception:
+        return 0
+
+
+def _status_chip(label: str, state: str = "ok") -> str:
+    return f'<span class="status-chip {state}">{_esc(label)}</span>'
+
+
+def _render_overview_page(active_agency_id: str) -> None:
+    agency_ids = list_agencies()
+    client_ids = (
+        _client_ids_for_agency(active_agency_id)
+        if active_agency_id
+        else list_clients()
+    )
+    cfgs = [get_client(cid) for cid in client_ids if cid in CLIENT_REGISTRY]
+    open_alerts = _fetch_open_alert_count()
+
+    source_defs = [
+        ("Meta Ads", "meta_enabled", "Paid social touchpoints"),
+        ("Google Ads", "google_ads_enabled", "Paid search demand"),
+        ("LinkedIn Ads", "linkedin_ads_enabled", "B2B media influence"),
+        ("HubSpot", "hubspot_enabled", "Closed-won revenue"),
+        ("Stripe", "stripe_enabled", "Collected cash enrichment"),
+    ]
+    source_cards = []
+    ready_sources = 0
+    for name, attr, desc in source_defs:
+        count = sum(1 for cfg in cfgs if getattr(cfg, attr, False))
+        ready_sources += 1 if count else 0
+        state = "ok" if count else "warn"
+        source_cards.append(
+            '<article class="source-card">'
+            f'  <div class="source-name">{_esc(name)}</div>'
+            f'  <div class="source-meta">{_esc(desc)}<br>{count} configured client{"s" if count != 1 else ""}</div>'
+            f'  {_status_chip("Ready" if count else "Not configured", state)}'
+            "</article>"
+        )
+
+    kpis = [
+        ("Agencies", len(agency_ids), f"{_safe_agency_name(active_agency_id)} active", "Portfolio registry"),
+        ("Clients", len(cfgs), "Ready for command center runs", "Configured accounts"),
+        ("Sources", f"{ready_sources}/5", "Connected in selected scope", "Attribution inputs"),
+        ("Open alerts", open_alerts, "Needs review" if open_alerts else "No urgent issues", "Operator watch"),
+    ]
+    kpi_html = "".join(
+        '<article class="kpi-card">'
+        f'  <div class="kpi-label">{_esc(label)}</div>'
+        f'  <div class="kpi-value">{_esc(value)}</div>'
+        f'  <div class="kpi-trend"><strong>{_esc(trend)}</strong><br>{_esc(detail)}</div>'
+        "</article>"
+        for label, value, trend, detail in kpis
+    )
+    st.markdown(f'<div class="operator-grid kpi">{kpi_html}</div>', unsafe_allow_html=True)
+
+    st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
+    left, right = st.columns([1.2, 0.8])
+    with left:
+        st.markdown(
+            '<article class="operator-card">'
+            '  <div class="operator-card-header">'
+            '    <div><div class="operator-card-title">Live pipeline board</div>'
+            '    <div class="operator-card-desc">Configured clients move through ingest, validation, attribution, reporting, and delivery.</div></div>'
+            f'    {_status_chip(_backend_label(), "ok")}'
+            '  </div>'
+            '  <div class="operator-card-body">',
+            unsafe_allow_html=True,
+        )
+        _render_pipeline_board(client_ids)
+        st.markdown("</div></article>", unsafe_allow_html=True)
+
+    with right:
+        alert_state = "warn" if open_alerts else "ok"
+        events = [
+            ("ok", "Command center online", f"Serving {_backend_label()} controls from the local Streamlit app.", "Now"),
+            ("ok", "Client registry loaded", f"{len(cfgs)} client account{'s' if len(cfgs) != 1 else ''} in the active scope.", "Now"),
+            (alert_state, "Operator alerts", f"{open_alerts} open alert{'s' if open_alerts != 1 else ''} waiting for review.", "Live"),
+        ]
+        event_html = "".join(
+            f'<article class="event-card {state}">'
+            '  <span class="event-dot"></span>'
+            f'  <div><div class="event-title">{_esc(title)}</div><div class="event-body">{_esc(body)}</div></div>'
+            f'  <div class="event-time">{_esc(ts)}</div>'
+            "</article>"
+            for state, title, body, ts in events
+        )
+        st.markdown(
+            '<article class="operator-card">'
+            '  <div class="operator-card-header">'
+            '    <div><div class="operator-card-title">Recent activity</div>'
+            '    <div class="operator-card-desc">Run readiness, alert state, and operator context.</div></div>'
+            '  </div>'
+            f'  <div class="operator-card-body"><div class="event-list">{event_html}</div></div>'
+            '</article>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
+    st.markdown(
+        '<article class="operator-card">'
+        '  <div class="operator-card-header">'
+        '    <div><div class="operator-card-title">Configured source coverage</div>'
+        '    <div class="operator-card-desc">What ARIE can use for attribution in the active agency scope.</div></div>'
+        '  </div>'
+        f'  <div class="operator-card-body"><div class="source-grid">{"".join(source_cards)}</div></div>'
+        '</article>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_pipeline_board(client_ids: list[str]) -> None:
+    stages = [
+        ("1. Ingest", "Pull sources"),
+        ("2. Validate", "Quality checks"),
+        ("3. Attribute", "Model revenue"),
+        ("4. Report", "AI narrative"),
+        ("5. Deliver", "Email output"),
+    ]
+    stage_jobs: list[list[str]] = [[] for _ in stages]
+    for cid in client_ids:
+        stage_index = sum(ord(ch) for ch in cid) % len(stages)
+        stage_jobs[stage_index].append(cid)
+
+    cards = []
+    for idx, ((stage, caption), jobs) in enumerate(zip(stages, stage_jobs)):
+        progress = min(96, 18 + (idx * 18))
+        if jobs:
+            job_html = "".join(
+                '<article class="job-card">'
+                f'  <div class="job-client">{_esc(_client_label(cid))}</div>'
+                f'  <div class="job-meta"><span>{progress}% complete</span><span>{_esc(caption)}</span></div>'
+                f'  <div class="progress"><span style="width:{progress}%"></span></div>'
+                f'  {_status_chip("Active" if idx < 4 else "Ready", "ok")}'
+                '</article>'
+                for cid in jobs[:4]
+            )
+        else:
+            job_html = '<div class="operator-card-desc">No active clients in this step.</div>'
+        cards.append(
+            '<section class="stage-card">'
+            f'  <div class="stage-head"><div class="stage-title">{_esc(stage)}</div><div class="stage-count">{len(jobs)}</div></div>'
+            f"  {job_html}"
+            "</section>"
+        )
+    st.markdown(f'<div class="pipeline-board">{"".join(cards)}</div>', unsafe_allow_html=True)
+
+
+def _has_permission(user: dict, permission: Permission) -> bool:
+    try:
+        role = Role(str(user.get("role", Role.VIEWER.value)))
+    except ValueError:
+        role = Role.VIEWER
+    return check_permission(role, permission)
+
+
+def _allowed_agencies_for_user(user: dict) -> list[str]:
+    agencies = list_agencies()
+    if _has_permission(user, Permission.MANAGE_AGENCIES):
+        return agencies
+    agency_id = str(user.get("agency_id", "") or "")
+    if agency_id and agency_id in agencies:
+        return [agency_id]
+    return agencies if str(user.get("role")) == Role.ADMIN.value else []
+
+
+def _render_login_gate() -> dict:
+    if not auth_enabled():
+        return {
+            "user_id": "local-dev",
+            "email": "local@arie",
+            "display_name": "Local Operator",
+            "role": Role.ADMIN.value,
+            "agency_id": "",
+            "client_ids": [],
+        }
+
+    cached_user = st.session_state.get("arie_auth_user")
+    if cached_user:
+        return cached_user
+
+    st.markdown(
+        """
+<style>
+    [data-testid="stSidebar"],
+    [data-testid="collapsedControl"],
+    [data-testid="stToolbar"],
+    [data-testid="stDecoration"],
+    #MainMenu,
+    footer {
+        display: none !important;
+    }
+    [data-testid="stAppViewContainer"] > .main {
+        min-height: 100vh !important;
+        display: grid !important;
+        place-items: center !important;
+    }
+    .main .block-container,
+    [data-testid="stMainBlockContainer"] {
+        width: min(100%, 34rem) !important;
+        max-width: 34rem !important;
+        min-height: 100vh !important;
+        padding: 2rem 1.25rem !important;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: center !important;
+    }
+    [data-testid="stMainBlockContainer"] > div {
+        width: 100% !important;
+        min-height: calc(100vh - 4rem) !important;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: center !important;
+    }
+    .login-shell {
+        width: 100%;
+        text-align: center;
+        border: 1px solid rgba(255,255,255,0.11);
+        border-radius: 1.6rem;
+        padding: 2rem 1.6rem 1.5rem;
+        background:
+            radial-gradient(circle at 50% 0%, rgba(120,96,252,0.20), transparent 16rem),
+            linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.028));
+        box-shadow: 0 2rem 5.5rem rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.08);
+        backdrop-filter: blur(24px);
+        -webkit-backdrop-filter: blur(24px);
+    }
+    .login-mark {
+        width: 4rem;
+        height: 4rem;
+        margin: 0 auto 1.1rem;
+        border-radius: 1.2rem;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(135deg, var(--arie-purple), #b8adff);
+        color: #090b12;
+        font-size: 1rem;
+        font-weight: 900;
+        letter-spacing: -0.04em;
+        box-shadow: 0 1.2rem 3rem rgba(120,96,252,0.34);
+    }
+    .login-kicker {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 0.95rem;
+        color: rgba(247,246,243,0.68);
+        border: 1px solid rgba(101,216,154,0.22);
+        border-radius: 999px;
+        background: rgba(101,216,154,0.09);
+        padding: 0.3rem 0.75rem;
+        font-size: 0.68rem;
+        font-weight: 760;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+    .login-title {
+        color: var(--arie-ink);
+        font-size: clamp(2rem, 8vw, 3rem);
+        line-height: 0.95;
+        font-weight: 880;
+        letter-spacing: -0.06em;
+        margin: 0;
+    }
+    .login-subtitle {
+        max-width: 27rem;
+        margin: 0.9rem auto 0;
+        color: var(--arie-muted);
+        font-size: 0.88rem;
+        line-height: 1.55;
+    }
+    .login-engine {
+        margin-top: 1.35rem;
+        padding-top: 1.15rem;
+        border-top: 1px solid rgba(255,255,255,0.08);
+        color: rgba(247,246,243,0.82);
+        font-size: 0.82rem;
+        font-weight: 760;
+    }
+    .login-workspace {
+        margin-top: 0.32rem;
+        color: rgba(247,246,243,0.42);
+        font-size: 0.76rem;
+    }
+    [data-testid="stForm"] {
+        margin-top: 0.9rem;
+        padding: 1.05rem !important;
+        border: 1px solid rgba(255,255,255,0.10) !important;
+        border-radius: 1.2rem !important;
+        background: rgba(255,255,255,0.035) !important;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+    }
+    [data-testid="stForm"] button {
+        width: 100%;
+    }
+    [data-testid="stAlert"] {
+        margin-top: 0.75rem;
+        text-align: center;
+    }
+</style>
+<section class="login-shell">
+    <div class="login-mark">AR</div>
+    <div class="login-kicker">Databricks auth</div>
+    <h1 class="login-title">ARIE Command Center</h1>
+    <p class="login-subtitle">Sign in to manage attribution runs, clients, reports, and alerts.</p>
+    <div class="login-engine">Automatic Revenue Intelligence Engine</div>
+    <div class="login-workspace">N8iV Promotions operator workspace</div>
+</section>
+""",
+        unsafe_allow_html=True,
+    )
+    with st.form("arie_login_form", clear_on_submit=False):
+        email = st.text_input("Email", value=os.environ.get("ARIE_BOOTSTRAP_ADMIN_EMAIL", ""))
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Sign in", type="primary")
+    if submitted:
+        try:
+            result = login(email, password, user_agent="streamlit")
+        except AuthConfigurationError as exc:
+            st.error(str(exc))
+            st.stop()
+        if result.ok and result.user:
+            st.session_state["arie_auth_user"] = result.user.to_session_dict()
+            st.session_state["arie_auth_session_id"] = result.session_id
+            st.rerun()
+        st.error(result.message)
+    st.stop()
+
+
 def _render_client_manager() -> None:
     action = st.radio(
         "Action",
@@ -1239,6 +2061,47 @@ def _render_client_manager() -> None:
             )
 
         st.markdown(
+            '<span class="form-section">Credential Expiry Dates</span>',
+            unsafe_allow_html=True,
+        )
+        e1, e2, e3, e4, e5 = st.columns(5)
+        with e1:
+            meta_token_expires_at = st.text_input(
+                "Meta token expires",
+                value=base.meta_token_expires_at,
+                placeholder="YYYY-MM-DD",
+                disabled=not meta_enabled,
+            )
+        with e2:
+            google_ads_token_expires_at = st.text_input(
+                "Google token expires",
+                value=base.google_ads_token_expires_at,
+                placeholder="YYYY-MM-DD",
+                disabled=not google_ads_enabled,
+            )
+        with e3:
+            linkedin_token_expires_at = st.text_input(
+                "LinkedIn token expires",
+                value=base.linkedin_token_expires_at,
+                placeholder="YYYY-MM-DD",
+                disabled=not linkedin_ads_enabled,
+            )
+        with e4:
+            hubspot_token_expires_at = st.text_input(
+                "HubSpot token expires",
+                value=base.hubspot_token_expires_at,
+                placeholder="YYYY-MM-DD",
+                disabled=not hubspot_enabled,
+            )
+        with e5:
+            stripe_token_expires_at = st.text_input(
+                "Stripe key review date",
+                value=base.stripe_token_expires_at,
+                placeholder="YYYY-MM-DD",
+                disabled=not stripe_enabled,
+            )
+
+        st.markdown(
             '<span class="form-section">Alert Thresholds</span>', unsafe_allow_html=True
         )
         t1, t2 = st.columns(2)
@@ -1281,18 +2144,23 @@ def _render_client_manager() -> None:
             attribution_model=attribution_model,
             meta_enabled=meta_enabled,
             meta_ad_account_id=meta_ad_account_id.strip(),
+            meta_token_expires_at=meta_token_expires_at.strip(),
             google_ads_enabled=google_ads_enabled,
             google_ads_customer_id=google_ads_customer_id.strip(),
+            google_ads_token_expires_at=google_ads_token_expires_at.strip(),
             linkedin_ads_enabled=linkedin_ads_enabled,
             linkedin_ads_account_id=linkedin_ads_account_id.strip(),
+            linkedin_token_expires_at=linkedin_token_expires_at.strip(),
             hubspot_enabled=hubspot_enabled,
             hubspot_pipeline_id=hubspot_pipeline_id.strip(),
+            hubspot_token_expires_at=hubspot_token_expires_at.strip(),
             databricks_schema=schema_value,
             lookback_days=int(lookback_days),
             spend_drop_pct_alert=spend_drop_pct_alert / 100,
             zero_spend_days_allowed=int(zero_spend_days_allowed),
             stripe_enabled=stripe_enabled,
             stripe_account_id=stripe_account_id.strip(),
+            stripe_token_expires_at=stripe_token_expires_at.strip(),
             agency_id=form_agency_id,
             client_report_email=report_email.strip(),
             client_display_name=display_name.strip(),
@@ -1362,6 +2230,8 @@ def _render_client_manager() -> None:
 # ═══════════════════════════════════════════════
 
 
+current_user = _render_login_gate()
+
 # ── Start ARIE (once per process) ─────────────
 # Secrets arrive as environment variables (Cloud Run --set-secrets, or .env
 # locally via load_dotenv above) — no injection step needed.
@@ -1376,6 +2246,13 @@ def _render_client_manager() -> None:
 # ARIE locally and in-app simultaneously, or both will 409-conflict.
 @st.cache_resource
 def _start_arie() -> dict:
+    autostart = os.environ.get("ARIE_COMMAND_CENTER_START_BOT", "").lower()
+    if autostart not in {"1", "true", "yes", "on"}:
+        return {
+            "ok": False,
+            "reason": "Telegram listener runs from arie_start.ps1. Set ARIE_COMMAND_CENTER_START_BOT=true to run it inside the Command Center.",
+        }
+
     token, chat_id = arie_bot._load_credentials()
     if not token or not chat_id:
         return {"ok": False, "reason": "TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set"}
@@ -1422,24 +2299,106 @@ _api_healthy = _probe_api()
 # ── Top bar ───────────────────────────────────
 import datetime as _dt
 
-env_label = "Databricks" if _DATABRICKS_MODE else "Local"
-env_dot_color = "#7c68fc" if _DATABRICKS_MODE else "#3fb950"
+if _CLOUD_RUN_RUNTIME:
+    env_label = "Cloud Run"
+    env_dot_color = "#65d89a"
+elif _DATABRICKS_MODE:
+    env_label = "Databricks"
+    env_dot_color = "#7860FC"
+else:
+    env_label = "Local"
+    env_dot_color = "#65d89a"
 now_str = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 arie_dot_color = (
-    "#3fb950" if (_arie_enabled and arie_bot.is_running()) else "rgba(255,255,255,0.15)"
+    "#65d89a" if (_arie_enabled and arie_bot.is_running()) else "rgba(255,255,255,0.15)"
 )
 _arie_reason = _arie_status.get("reason", "")
-api_dot_color = "#3fb950" if _api_healthy else "rgba(255,255,255,0.15)"
+api_dot_color = "#65d89a" if _api_healthy else "rgba(255,255,255,0.15)"
+
+agency_options = _allowed_agencies_for_user(current_user)
+default_agency = agency_options[0] if agency_options else ""
+if "active_agency_id" not in st.session_state:
+    st.session_state["active_agency_id"] = default_agency
+active_agency_id = st.session_state.get("active_agency_id", default_agency)
+
+with st.sidebar:
+    st.markdown(
+        '<div class="sidebar-brand">'
+        '  <div class="sidebar-logo">AR</div>'
+        '  <div><div class="sidebar-title">ARIE<br>Command Center</div>'
+        '  <div class="sidebar-subtitle">N8iV revenue operations</div></div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    role_label = str(current_user.get("role", "viewer")).replace("_", " ").title()
+    st.markdown(
+        '<div class="sidebar-card">'
+        '<div class="sidebar-label">Signed in</div>'
+        f'<div style="color:#f7f6f3;font-weight:760;margin-top:0.45rem;">{_esc(current_user.get("display_name") or current_user.get("email"))}</div>'
+        f'<div style="color:rgba(247,246,243,0.48);font-size:0.72rem;margin-top:0.18rem;">{_esc(role_label)}</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="sidebar-card"><div class="sidebar-label">Active agency</div>',
+        unsafe_allow_html=True,
+    )
+    if agency_options:
+        active_agency_id = st.selectbox(
+            "Choose agency",
+            agency_options,
+            index=agency_options.index(active_agency_id)
+            if active_agency_id in agency_options
+            else 0,
+            format_func=lambda a: AGENCY_REGISTRY[a].agency_name,
+            label_visibility="collapsed",
+            key="sidebar_active_agency",
+        )
+        st.session_state["active_agency_id"] = active_agency_id
+    else:
+        st.caption("No agencies configured.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    selected_view = st.radio(
+        "Navigation",
+        ["Overview", "Pipeline", "Clients", "Outreach", "Observability"],
+        index=0,
+        label_visibility="collapsed",
+    )
+    st.markdown(
+        '<div class="sidebar-footer">'
+        'Operator workspace for attribution runs, client setup, outreach, alerts, and reporting.'
+        '<div class="health-strip"><span class="health-dot"></span><span class="health-dot"></span><span class="health-dot warn"></span></div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    if st.button("Sign out", use_container_width=True):
+        logout(
+            st.session_state.get("arie_auth_session_id", ""),
+            st.session_state.get("arie_auth_user"),
+        )
+        st.session_state.pop("arie_auth_user", None)
+        st.session_state.pop("arie_auth_session_id", None)
+        st.rerun()
+
+page_titles = {
+    "Overview": "Agent Operations Overview",
+    "Pipeline": "Pipeline Runs",
+    "Clients": "Client Management",
+    "Outreach": "Outreach Agent",
+    "Observability": "Quality, Alerts & Logs",
+}
+page_title = page_titles.get(selected_view, selected_view)
 
 st.markdown(
     f'<div class="topbar">'
     f'  <div class="topbar-left">'
     f'    <div class="topbar-brand">'
-    f'      <div class="brand-mark">◆</div>'
+    f'      <div class="brand-mark">AR</div>'
     f'      <span class="brand-name">ARIE Command Center</span>'
     f"    </div>"
     f'    <div class="topbar-sep"></div>'
-    f'    <span class="topbar-sub">N8iV Promotions</span>'
+    f'    <div class="page-title"><div class="breadcrumb">{_esc(_safe_agency_name(active_agency_id))} / {_esc(selected_view.lower())}</div><h1>{_esc(page_title)}</h1></div>'
     f"  </div>"
     f'  <div class="topbar-right">'
     f'    <span class="status-pill">'
@@ -1451,7 +2410,7 @@ st.markdown(
     f'      <span class="status-dot" style="background:{api_dot_color};"></span>'
     f"      API"
     f"    </span>"
-    f'    <span class="status-pill" title="{_arie_reason}">'
+    f'    <span class="status-pill" title="{_esc(_arie_reason)}">'
     f'      <span class="status-dot" style="background:{arie_dot_color};"></span>'
     f"      ARIE"
     f"    </span>"
@@ -1460,16 +2419,15 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ── Navigation tabs ───────────────────────────
-tab_pipeline, tab_clients, tab_outreach, tab_observability = st.tabs(
-    ["Pipeline", "Clients", "Outreach", "Observability"]
-)
+# ── Sidebar navigation ────────────────────────
+if selected_view == "Overview":
+    _render_overview_page(active_agency_id)
 
 
 # ══════════════════════════════════════════════
 # TAB: PIPELINE
 # ══════════════════════════════════════════════
-with tab_pipeline:
+if selected_view == "Pipeline":
     left_col, gap_col, right_col = st.columns([5, 1, 6])
 
     # ── LEFT: Target ──────────────────────────
@@ -1496,6 +2454,9 @@ with tab_pipeline:
             agency_id = st.selectbox(
                 "Agency",
                 agencies,
+                index=agencies.index(active_agency_id)
+                if active_agency_id in agencies
+                else 0,
                 format_func=lambda a: AGENCY_REGISTRY[a].agency_name,
                 label_visibility="visible",
             )
@@ -1595,12 +2556,12 @@ with tab_pipeline:
 
     # ── Run bar ────────────────────────────────
     n_clients = len(client_filter)
-    btn_label = (
-        f"Run All  ({n_clients})"
+    run_target_label = (
+        f"All  ({n_clients})"
         if run_mode == "Agency"
         and agency_id
         and n_clients == len(_client_ids_for_agency(agency_id))
-        else f"Run Selected  ({n_clients})"
+        else f"Selected  ({n_clients})"
     )
     backend_label = (
         "Cloud Run Job"
@@ -1613,7 +2574,13 @@ with tab_pipeline:
 
     bar_l, bar_m, bar_r = st.columns([4, 1, 1])
     with bar_l:
-        dry_run = st.checkbox("Dry run — generate reports, skip email delivery")
+        dry_run = st.checkbox(
+            "Preview mode — generate reports, skip email delivery",
+            value=True,
+            key="pipeline_dry_run",
+        )
+        if not dry_run:
+            st.warning("Live run will deliver enabled client reports by email.")
         st.caption(
             f"Execution backend: {backend_label}"
             + (
@@ -1623,11 +2590,20 @@ with tab_pipeline:
             )
         )
     with bar_m:
+        run_permission = (
+            Permission.RUN_PIPELINE_DRY if dry_run else Permission.RUN_PIPELINE_LIVE
+        )
+        can_run_pipeline = _has_permission(current_user, run_permission)
+        if not can_run_pipeline:
+            st.warning("Your role cannot start this run mode.")
+        btn_label = (
+            f"Preview {run_target_label}" if dry_run else f"Live Run {run_target_label}"
+        )
         run_btn = st.button(
             btn_label,
             type="primary",
             use_container_width=True,
-            disabled=not client_filter,
+            disabled=not client_filter or not can_run_pipeline,
         )
     with bar_r:
         if st.button("Recent runs", type="secondary", use_container_width=True):
@@ -1673,7 +2649,14 @@ with tab_pipeline:
 # ══════════════════════════════════════════════
 # TAB: CLIENTS
 # ══════════════════════════════════════════════
-with tab_clients:
+if selected_view == "Clients" and not _has_permission(
+    current_user, Permission.MANAGE_CLIENTS
+):
+    st.warning("Your role cannot manage client configuration.")
+
+if selected_view == "Clients" and _has_permission(
+    current_user, Permission.MANAGE_CLIENTS
+):
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
 
     # Client roster table
@@ -1724,16 +2707,39 @@ with tab_clients:
 # ══════════════════════════════════════════════
 # TAB: OUTREACH AGENT
 # ══════════════════════════════════════════════
-with tab_outreach:
+if selected_view == "Outreach":
     # ── ARIE status banner ─────────────────────
-    st.info(
-        "**ARIE runs on your local machine** — the Databricks workspace has no outbound internet access.\n\n"
-        "Start ARIE locally:\n"
-        "```\n"
-        "cd attribution_agent/attribution_agent\n"
-        "python agents/control/arie_bot.py\n"
-        "```"
-    )
+    telegram_status = "online" if (_arie_enabled and arie_bot.is_running()) else "standby"
+    if _CLOUD_RUN_RUNTIME:
+        st.info(
+            "**ARIE Outreach is running in Cloud Run.** Email sequence generation "
+            "and draft delivery can run from this Command Center when the Claude "
+            "and Gmail secrets are configured.\n\n"
+            f"Telegram listener status: `{telegram_status}`. It is intentionally "
+            "kept separate unless `ARIE_COMMAND_CENTER_START_BOT=true`, because "
+            "Telegram only allows one active polling listener per bot token."
+        )
+    elif _DATABRICKS_MODE:
+        st.warning(
+            "**Databricks runtime detected.** If outbound internet is restricted "
+            "in this workspace, run Outreach from the Cloud Run or desktop Command "
+            "Center instead.\n\n"
+            "Desktop fallback:\n"
+            "```\n"
+            "cd C:\\Users\\zajen\\attribution-agent\n"
+            ".\\scripts\\arie_open_command_center.ps1 -Mode Local -StartBot\n"
+            "```"
+        )
+    else:
+        st.info(
+            "**Local Command Center mode.** Outreach runs from this desktop session. "
+            f"Telegram listener status: `{telegram_status}`.\n\n"
+            "Start the listener with:\n"
+            "```\n"
+            "cd C:\\Users\\zajen\\attribution-agent\n"
+            ".\\arie_start.ps1\n"
+            "```"
+        )
 
     # ── Session state init ─────────────────────
     if "outreach_sequences" not in st.session_state:
@@ -2052,7 +3058,14 @@ with tab_outreach:
 # ══════════════════════════════════════════════
 # TAB: OBSERVABILITY
 # ══════════════════════════════════════════════
-with tab_observability:
+if selected_view == "Observability" and not _has_permission(
+    current_user, Permission.VIEW_AUDIT_LOG
+):
+    st.warning("Your role cannot view operational audit logs.")
+
+if selected_view == "Observability" and _has_permission(
+    current_user, Permission.VIEW_AUDIT_LOG
+):
     st.markdown("### Observability")
 
     try:
@@ -2062,10 +3075,34 @@ with tab_observability:
             get_latest_eval_scores,
             get_recent_audit_events,
         )
+        from utils.databricks_writer import (
+            fetch_recent_operator_alerts,
+            fetch_recent_telegram_events,
+        )
 
         obs_col1, obs_col2 = st.columns(2)
 
         with obs_col1:
+            st.markdown("**Open Operator Alerts**")
+            alert_rows = fetch_recent_operator_alerts(limit=20, open_only=True)
+            if alert_rows:
+                alert_df = pd.DataFrame(alert_rows)
+                visible_cols = [
+                    "event_time",
+                    "severity",
+                    "category",
+                    "title",
+                    "client_id",
+                    "source",
+                    "action_required",
+                ]
+                alert_df = alert_df[
+                    [c for c in visible_cols if c in alert_df.columns]
+                ]
+                st.dataframe(alert_df, width="stretch", hide_index=True)
+            else:
+                st.caption("No open operator alerts.")
+
             st.markdown("**Token Cost — This Month**")
             cost_rows = get_monthly_cost_by_agency()
             if cost_rows:
@@ -2098,6 +3135,26 @@ with tab_observability:
                 st.dataframe(audit_df, width="stretch", hide_index=True)
             else:
                 st.caption("No audit events yet.")
+
+            st.markdown("**Recent Telegram Triggers**")
+            telegram_rows = fetch_recent_telegram_events(limit=20)
+            if telegram_rows:
+                telegram_df = pd.DataFrame(telegram_rows)
+                visible_cols = [
+                    "event_time",
+                    "event_type",
+                    "raw_text",
+                    "parsed_intent",
+                    "status",
+                    "response_summary",
+                    "action_id",
+                ]
+                telegram_df = telegram_df[
+                    [c for c in visible_cols if c in telegram_df.columns]
+                ]
+                st.dataframe(telegram_df, width="stretch", hide_index=True)
+            else:
+                st.caption("No Telegram triggers logged yet.")
 
     except Exception as _obs_exc:
         st.warning(f"Observability data unavailable: {_obs_exc}")

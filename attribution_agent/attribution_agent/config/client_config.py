@@ -80,6 +80,14 @@ class ClientConfig:
     hubspot_access_token_secret_name: str = ""
     stripe_secret_key_secret_name: str = ""
 
+    # Optional ISO dates used for proactive operator alerts.
+    meta_token_expires_at: str = ""
+    google_ads_token_expires_at: str = ""
+    linkedin_token_expires_at: str = ""
+    tiktok_token_expires_at: str = ""
+    hubspot_token_expires_at: str = ""
+    stripe_token_expires_at: str = ""
+
     # Credentials are resolved from GCP Secret Manager first, then env vars.
     @property
     def meta_access_token(self) -> str:

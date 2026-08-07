@@ -7,6 +7,8 @@ Runs via SQL Connector when local, Spark when inside Databricks.
 from __future__ import annotations
 import logging
 import os
+import time
+import uuid
 from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
@@ -314,6 +316,102 @@ CREATE TABLE IF NOT EXISTS {ops_schema}.approval_queue (
 USING DELTA
 """
 
+TELEGRAM_EVENTS_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.telegram_events (
+    event_id            STRING,
+    event_time          TIMESTAMP,
+    update_id           BIGINT,
+    message_id          BIGINT,
+    chat_id             STRING,
+    user_id             STRING,
+    username            STRING,
+    event_type          STRING,
+    raw_text            STRING,
+    voice_file_id       STRING,
+    parsed_intent       STRING,
+    params_json         STRING,
+    action_id           STRING,
+    response_summary    STRING,
+    status              STRING,
+    error               STRING
+)
+USING DELTA
+PARTITIONED BY (event_type)
+"""
+
+OPERATOR_ALERTS_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.operator_alerts (
+    alert_id            STRING,
+    event_time          TIMESTAMP,
+    severity            STRING,
+    category            STRING,
+    title               STRING,
+    message             STRING,
+    client_id           STRING,
+    agency_id           STRING,
+    source              STRING,
+    run_id              STRING,
+    action_required     STRING,
+    metadata_json       STRING,
+    status              STRING
+)
+USING DELTA
+PARTITIONED BY (severity)
+"""
+
+AUTH_USERS_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.auth_users (
+    user_id             STRING,
+    email               STRING,
+    display_name        STRING,
+    role                STRING,
+    agency_id           STRING,
+    client_ids          STRING,
+    password_hash       STRING,
+    is_active           BOOLEAN,
+    failed_login_count  BIGINT,
+    locked_until        TIMESTAMP,
+    last_login_at       TIMESTAMP,
+    created_at          TIMESTAMP,
+    updated_at          TIMESTAMP
+)
+USING DELTA
+PARTITIONED BY (role)
+"""
+
+AUTH_SESSIONS_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.auth_sessions (
+    session_id      STRING,
+    user_id         STRING,
+    email           STRING,
+    role            STRING,
+    agency_id       STRING,
+    created_at      TIMESTAMP,
+    expires_at      TIMESTAMP,
+    revoked_at      TIMESTAMP,
+    user_agent      STRING
+)
+USING DELTA
+PARTITIONED BY (role)
+"""
+
+AUTH_EVENTS_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.auth_events (
+    event_id        STRING,
+    event_time      TIMESTAMP,
+    event_type      STRING,
+    email           STRING,
+    user_id         STRING,
+    role            STRING,
+    agency_id       STRING,
+    outcome         STRING,
+    detail_json     STRING,
+    session_id      STRING
+)
+USING DELTA
+PARTITIONED BY (event_type)
+"""
+
 IDEMPOTENCY_STORE_DDL = """
 CREATE TABLE IF NOT EXISTS {ops_schema}.idempotency_store (
     key             STRING,
@@ -484,6 +582,11 @@ _OPS_TABLES = [
     "audit_log",
     "insight_reports",
     "approval_queue",
+    "telegram_events",
+    "operator_alerts",
+    "auth_users",
+    "auth_sessions",
+    "auth_events",
     "idempotency_store",
     "pipeline_checkpoints",
     "cost_ledger",
@@ -526,6 +629,33 @@ def ensure_insight_reports_table() -> None:
 def ensure_approval_queue_table() -> None:
     _run_sql(APPROVAL_QUEUE_DDL.format(ops_schema=_OPS_SCHEMA))
     logger.debug(f"[Databricks] approval_queue ready: {_OPS_SCHEMA}.approval_queue")
+
+
+def ensure_telegram_events_table() -> None:
+    _run_sql(f"CREATE SCHEMA IF NOT EXISTS {_OPS_SCHEMA}")
+    _run_sql(TELEGRAM_EVENTS_DDL.format(ops_schema=_OPS_SCHEMA))
+    logger.debug(f"[Databricks] telegram_events ready: {_OPS_SCHEMA}.telegram_events")
+
+
+def ensure_operator_alerts_table() -> None:
+    _run_sql(f"CREATE SCHEMA IF NOT EXISTS {_OPS_SCHEMA}")
+    _run_sql(OPERATOR_ALERTS_DDL.format(ops_schema=_OPS_SCHEMA))
+    logger.debug(f"[Databricks] operator_alerts ready: {_OPS_SCHEMA}.operator_alerts")
+
+
+_auth_tables_ready = False
+
+
+def ensure_auth_tables() -> None:
+    global _auth_tables_ready
+    if _auth_tables_ready:
+        return
+    _run_sql(f"CREATE SCHEMA IF NOT EXISTS {_OPS_SCHEMA}")
+    _run_sql(AUTH_USERS_DDL.format(ops_schema=_OPS_SCHEMA))
+    _run_sql(AUTH_SESSIONS_DDL.format(ops_schema=_OPS_SCHEMA))
+    _run_sql(AUTH_EVENTS_DDL.format(ops_schema=_OPS_SCHEMA))
+    _auth_tables_ready = True
+    logger.debug(f"[Databricks] auth tables ready: {_OPS_SCHEMA}")
 
 
 def ensure_phase3_tables() -> None:
@@ -580,6 +710,11 @@ def set_table_retention_policies(schema: str) -> None:
 def ensure_ops_tables() -> None:
     _run_sql(f"CREATE SCHEMA IF NOT EXISTS {_OPS_SCHEMA}")
     _run_sql(RUN_HISTORY_TABLE_DDL.format(ops_schema=_OPS_SCHEMA))
+    _run_sql(TELEGRAM_EVENTS_DDL.format(ops_schema=_OPS_SCHEMA))
+    _run_sql(OPERATOR_ALERTS_DDL.format(ops_schema=_OPS_SCHEMA))
+    _run_sql(AUTH_USERS_DDL.format(ops_schema=_OPS_SCHEMA))
+    _run_sql(AUTH_SESSIONS_DDL.format(ops_schema=_OPS_SCHEMA))
+    _run_sql(AUTH_EVENTS_DDL.format(ops_schema=_OPS_SCHEMA))
     logger.info(f"[Databricks] Ops tables ready: {_OPS_SCHEMA}")
 
 
@@ -636,6 +771,138 @@ def upsert_client_registry_entry(
     )
 
 
+def _sql_literal(value: str) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _fetch_rows(query: str) -> list[dict]:
+    if _is_databricks():
+        return [row.asDict() for row in _get_spark().sql(query).collect()]
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute(query)
+    columns = [desc[0] for desc in cursor.description]
+    rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+    cursor.close()
+    conn.close()
+    return rows
+
+
+def count_auth_users() -> int:
+    ensure_auth_tables()
+    rows = _fetch_rows(f"SELECT COUNT(*) AS n FROM {_OPS_SCHEMA}.auth_users")
+    return int(rows[0].get("n") or 0) if rows else 0
+
+
+def fetch_auth_user_by_email(email: str) -> dict | None:
+    ensure_auth_tables()
+    normalized = str(email or "").strip().lower()
+    if not normalized:
+        return None
+    rows = _fetch_rows(
+        "SELECT user_id, email, display_name, role, agency_id, client_ids, "
+        "password_hash, is_active, failed_login_count, locked_until, "
+        "last_login_at, created_at, updated_at "
+        f"FROM {_OPS_SCHEMA}.auth_users "
+        f"WHERE lower(email) = {_sql_literal(normalized)} "
+        "ORDER BY updated_at DESC LIMIT 1"
+    )
+    return rows[0] if rows else None
+
+
+def upsert_auth_user(record: dict) -> None:
+    ensure_auth_tables()
+    now = datetime.now(timezone.utc)
+    row = {
+        "user_id": str(record.get("user_id", "") or ""),
+        "email": str(record.get("email", "") or "").strip().lower(),
+        "display_name": str(record.get("display_name", "") or ""),
+        "role": str(record.get("role", "") or ""),
+        "agency_id": str(record.get("agency_id", "") or ""),
+        "client_ids": str(record.get("client_ids", "") or ""),
+        "password_hash": str(record.get("password_hash", "") or ""),
+        "is_active": bool(record.get("is_active", True)),
+        "failed_login_count": int(record.get("failed_login_count", 0) or 0),
+        "locked_until": record.get("locked_until"),
+        "last_login_at": record.get("last_login_at"),
+        "created_at": record.get("created_at") or now,
+        "updated_at": record.get("updated_at") or now,
+    }
+    df = pd.DataFrame([row])
+    for col in ("locked_until", "last_login_at", "created_at", "updated_at"):
+        df[col] = df[col].astype(object).where(df[col].notna(), None)
+    _upsert_dataframe(df, _OPS_SCHEMA, "auth_users", ["user_id"])
+
+
+def write_auth_session(record: dict) -> None:
+    ensure_auth_tables()
+    now = datetime.now(timezone.utc)
+    row = {
+        "session_id": str(record.get("session_id", "") or ""),
+        "user_id": str(record.get("user_id", "") or ""),
+        "email": str(record.get("email", "") or "").strip().lower(),
+        "role": str(record.get("role", "") or ""),
+        "agency_id": str(record.get("agency_id", "") or ""),
+        "created_at": record.get("created_at") or now,
+        "expires_at": record.get("expires_at"),
+        "revoked_at": record.get("revoked_at"),
+        "user_agent": str(record.get("user_agent", "") or ""),
+    }
+    df = pd.DataFrame([row])
+    for col in ("created_at", "expires_at", "revoked_at"):
+        df[col] = df[col].astype(object).where(df[col].notna(), None)
+    _upsert_dataframe(df, _OPS_SCHEMA, "auth_sessions", ["session_id"])
+
+
+def fetch_auth_session(session_id: str) -> dict | None:
+    ensure_auth_tables()
+    if not session_id:
+        return None
+    rows = _fetch_rows(
+        "SELECT session_id, user_id, email, role, agency_id, created_at, "
+        "expires_at, revoked_at, user_agent "
+        f"FROM {_OPS_SCHEMA}.auth_sessions "
+        f"WHERE session_id = {_sql_literal(session_id)} "
+        "AND revoked_at IS NULL "
+        "AND expires_at > current_timestamp() "
+        "LIMIT 1"
+    )
+    return rows[0] if rows else None
+
+
+def revoke_auth_session(session_id: str) -> None:
+    if not session_id:
+        return
+    session = fetch_auth_session(session_id)
+    if not session:
+        return
+    session["revoked_at"] = datetime.now(timezone.utc)
+    write_auth_session(session)
+
+
+def write_auth_event(record: dict) -> None:
+    ensure_auth_tables()
+    row = {
+        "event_id": str(record.get("event_id", "") or ""),
+        "event_time": record.get("event_time") or datetime.now(timezone.utc),
+        "event_type": str(record.get("event_type", "") or ""),
+        "email": str(record.get("email", "") or "").strip().lower(),
+        "user_id": str(record.get("user_id", "") or ""),
+        "role": str(record.get("role", "") or ""),
+        "agency_id": str(record.get("agency_id", "") or ""),
+        "outcome": str(record.get("outcome", "") or ""),
+        "detail_json": str(record.get("detail_json", "") or "{}"),
+        "session_id": str(record.get("session_id", "") or ""),
+    }
+    if not row["event_id"]:
+        import uuid
+
+        row["event_id"] = uuid.uuid4().hex
+    df = pd.DataFrame([row])
+    df["event_time"] = df["event_time"].astype(object).where(df["event_time"].notna(), None)
+    _upsert_dataframe(df, _OPS_SCHEMA, "auth_events", ["event_id"])
+
+
 def _sql_param(v):
     """Coerce a DataFrame scalar to a type the SQL connector can bind."""
     if v is None or (pd.api.types.is_scalar(v) and pd.isna(v)):
@@ -645,6 +912,70 @@ def _sql_param(v):
     if isinstance(v, np.generic):
         return v.item()
     return v
+
+
+def _is_delta_concurrency_error(exc: Exception) -> bool:
+    message = str(exc)
+    return any(
+        marker in message
+        for marker in (
+            "DELTA_CONCURRENT_APPEND",
+            "DELTA_CONCURRENT_DELETE",
+            "DELTA_CONCURRENT_UPDATE",
+            "ConcurrentAppendException",
+            "ConcurrentDeleteReadException",
+            "ConcurrentTransactionException",
+            "Transaction conflict detected",
+        )
+    )
+
+
+def _upsert_dataframe_via_sql_connector(
+    df: pd.DataFrame,
+    full_table: str,
+    schema: str,
+    table: str,
+    merge_condition: str,
+    update_set: str,
+    insert_cols: str,
+    insert_vals: str,
+) -> None:
+    staging_table = f"{schema}.{table}_staging_{uuid.uuid4().hex}"
+    conn = _get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            f"CREATE TABLE {staging_table} USING DELTA AS "
+            f"SELECT * FROM {full_table} WHERE 1=0"
+        )
+        columns = list(df.columns)
+        col_str = ", ".join(columns)
+        ph = ", ".join(["?" for _ in columns])
+        # The SQL connector can't infer pandas/numpy scalar types as parameters
+        # (e.g. pd.Timestamp -> "Could not infer parameter type"); bind natives.
+        rows = [
+            tuple(_sql_param(v) for v in r)
+            for r in df.itertuples(index=False, name=None)
+        ]
+        for i in range(0, len(rows), 1000):
+            cursor.executemany(
+                f"INSERT INTO {staging_table} ({col_str}) VALUES ({ph})",
+                rows[i : i + 1000],
+            )
+        merge_sql = f"""
+            MERGE INTO {full_table} AS t
+            USING {staging_table} AS s
+            ON {merge_condition}
+            WHEN MATCHED THEN UPDATE SET {update_set}
+            WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})
+        """
+        cursor.execute(merge_sql)
+    finally:
+        try:
+            cursor.execute(f"DROP TABLE IF EXISTS {staging_table}")
+        finally:
+            cursor.close()
+            conn.close()
 
 
 def _upsert_dataframe(
@@ -675,38 +1006,33 @@ def _upsert_dataframe(
         spark.sql(merge_sql)
         spark.catalog.dropTempView(staging_view)
     else:
-        staging_table = f"{schema}.{table}_staging"
-        conn = _get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            f"CREATE OR REPLACE TABLE {staging_table} USING DELTA AS "
-            f"SELECT * FROM {full_table} WHERE 1=0"
-        )
-        columns = list(df.columns)
-        col_str = ", ".join(columns)
-        ph = ", ".join(["?" for _ in columns])
-        # The SQL connector can't infer pandas/numpy scalar types as parameters
-        # (e.g. pd.Timestamp -> "Could not infer parameter type"); bind natives.
-        rows = [
-            tuple(_sql_param(v) for v in r)
-            for r in df.itertuples(index=False, name=None)
-        ]
-        for i in range(0, len(rows), 1000):
-            cursor.executemany(
-                f"INSERT INTO {staging_table} ({col_str}) VALUES ({ph})",
-                rows[i : i + 1000],
-            )
-        merge_sql = f"""
-            MERGE INTO {full_table} AS t
-            USING {staging_table} AS s
-            ON {merge_condition}
-            WHEN MATCHED THEN UPDATE SET {update_set}
-            WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})
-        """
-        cursor.execute(merge_sql)
-        cursor.execute(f"DROP TABLE IF EXISTS {staging_table}")
-        cursor.close()
-        conn.close()
+        max_attempts = int(os.environ.get("ATTRIBUTION_DATABRICKS_UPSERT_RETRIES", "3") or "3")
+        for attempt in range(1, max_attempts + 1):
+            try:
+                _upsert_dataframe_via_sql_connector(
+                    df,
+                    full_table,
+                    schema,
+                    table,
+                    merge_condition,
+                    update_set,
+                    insert_cols,
+                    insert_vals,
+                )
+                break
+            except Exception as exc:
+                if not _is_delta_concurrency_error(exc) or attempt >= max_attempts:
+                    raise
+                sleep_seconds = min(0.4 * (2 ** (attempt - 1)), 3.0)
+                logger.warning(
+                    "[Databricks] Delta concurrency conflict while upserting %s "
+                    "(attempt %s/%s); retrying in %.1fs",
+                    full_table,
+                    attempt,
+                    max_attempts,
+                    sleep_seconds,
+                )
+                time.sleep(sleep_seconds)
 
     return len(df)
 
@@ -819,6 +1145,129 @@ def write_attribution_results(df: pd.DataFrame, schema: str) -> int:
     )
     logger.info(f"[Databricks] Wrote {rows} attribution result rows")
     return rows
+
+
+def write_telegram_event(record: dict) -> None:
+    """Persist one inbound Telegram message/callback event for operator audit."""
+    ensure_telegram_events_table()
+    now = datetime.now(timezone.utc)
+
+    def _int_or_none(value):
+        try:
+            return int(value) if value not in ("", None) else None
+        except (TypeError, ValueError):
+            return None
+
+    row = {
+        "event_id": record.get("event_id", ""),
+        "event_time": record.get("event_time") or now,
+        "update_id": _int_or_none(record.get("update_id")),
+        "message_id": _int_or_none(record.get("message_id")),
+        "chat_id": str(record.get("chat_id", "") or ""),
+        "user_id": str(record.get("user_id", "") or ""),
+        "username": str(record.get("username", "") or ""),
+        "event_type": str(record.get("event_type", "") or ""),
+        "raw_text": str(record.get("raw_text", "") or ""),
+        "voice_file_id": str(record.get("voice_file_id", "") or ""),
+        "parsed_intent": str(record.get("parsed_intent", "") or ""),
+        "params_json": str(record.get("params_json", "") or "{}"),
+        "action_id": str(record.get("action_id", "") or ""),
+        "response_summary": str(record.get("response_summary", "") or ""),
+        "status": str(record.get("status", "") or ""),
+        "error": str(record.get("error", "") or ""),
+    }
+    if not row["event_id"]:
+        import uuid
+
+        row["event_id"] = uuid.uuid4().hex
+    df = pd.DataFrame([row])
+    df["event_time"] = (
+        df["event_time"].astype(object).where(df["event_time"].notna(), None)
+    )
+    _upsert_dataframe(df, _OPS_SCHEMA, "telegram_events", ["event_id"])
+
+
+def fetch_recent_telegram_events(limit: int = 25) -> list[dict]:
+    try:
+        ensure_telegram_events_table()
+        query = (
+            "SELECT event_id, event_time, update_id, message_id, chat_id, user_id, "
+            "username, event_type, raw_text, voice_file_id, parsed_intent, "
+            "params_json, action_id, response_summary, status, error "
+            f"FROM {_OPS_SCHEMA}.telegram_events "
+            f"ORDER BY event_time DESC LIMIT {int(limit)}"
+        )
+        if _is_databricks():
+            return [row.asDict() for row in _get_spark().sql(query).collect()]
+        conn = _get_connection()
+        cursor = conn.cursor()
+        cursor.execute(query)
+        columns = [desc[0] for desc in cursor.description]
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        cursor.close()
+        conn.close()
+        return rows
+    except Exception as exc:
+        logger.warning(f"[Databricks] Could not fetch Telegram events: {exc}")
+        return []
+
+
+def write_operator_alert(record: dict) -> None:
+    """Persist one operator alert for Command Center history."""
+    ensure_operator_alerts_table()
+    now = datetime.now(timezone.utc)
+    row = {
+        "alert_id": str(record.get("alert_id", "") or ""),
+        "event_time": record.get("event_time") or now,
+        "severity": str(record.get("severity", "") or ""),
+        "category": str(record.get("category", "") or ""),
+        "title": str(record.get("title", "") or ""),
+        "message": str(record.get("message", "") or ""),
+        "client_id": str(record.get("client_id", "") or ""),
+        "agency_id": str(record.get("agency_id", "") or ""),
+        "source": str(record.get("source", "") or ""),
+        "run_id": str(record.get("run_id", "") or ""),
+        "action_required": str(record.get("action_required", "") or ""),
+        "metadata_json": str(record.get("metadata_json", "") or "{}"),
+        "status": str(record.get("status", "open") or "open"),
+    }
+    if not row["alert_id"]:
+        import uuid
+
+        row["alert_id"] = uuid.uuid4().hex
+    df = pd.DataFrame([row])
+    df["event_time"] = (
+        df["event_time"].astype(object).where(df["event_time"].notna(), None)
+    )
+    _upsert_dataframe(df, _OPS_SCHEMA, "operator_alerts", ["alert_id"])
+
+
+def fetch_recent_operator_alerts(
+    limit: int = 25,
+    open_only: bool = False,
+) -> list[dict]:
+    try:
+        ensure_operator_alerts_table()
+        where = "WHERE status = 'open'" if open_only else ""
+        query = (
+            "SELECT alert_id, event_time, severity, category, title, message, "
+            "client_id, agency_id, source, run_id, action_required, "
+            f"metadata_json, status FROM {_OPS_SCHEMA}.operator_alerts "
+            f"{where} ORDER BY event_time DESC LIMIT {int(limit)}"
+        )
+        if _is_databricks():
+            return [row.asDict() for row in _get_spark().sql(query).collect()]
+        conn = _get_connection()
+        cursor = conn.cursor()
+        cursor.execute(query)
+        columns = [desc[0] for desc in cursor.description]
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        cursor.close()
+        conn.close()
+        return rows
+    except Exception as exc:
+        logger.warning(f"[Databricks] Could not fetch operator alerts: {exc}")
+        return []
 
 
 def write_pipeline_run(record: dict) -> None:
