@@ -16,6 +16,7 @@ build/
 
 # Virtual environments
 .venv/
+.venv*/
 venv/
 env/
 ENV/
@@ -31,9 +32,19 @@ Thumbs.db
 
 # Logs
 *.log
+reports/
+reports/usability/
 
 # ARIE runtime
 arie.pid
+cloudrun_proxy*.pid
+streamlit.pid
+attribution_agent/arie_bot.lock
+
+# Local workspaces and prototypes
+attribution-agent/
+prototypes/
+website-work/
 
 # Databricks
 .databricks/

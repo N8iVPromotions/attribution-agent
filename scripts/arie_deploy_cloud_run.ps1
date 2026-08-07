@@ -53,7 +53,8 @@ $secretKeys = @(
     "DATABRICKS_SERVER_HOSTNAME",
     "DATABRICKS_HTTP_PATH",
     "DATABRICKS_TOKEN",
-    "API_KEY_ADMIN"
+    "API_KEY_ADMIN",
+    "ARIE_BOOTSTRAP_ADMIN_PASSWORD"
 )
 
 function Invoke-Gcloud {
@@ -198,7 +199,10 @@ $commonEnv = @(
     "COMMS_PROVIDER=gmail",
     "GOOGLE_CLOUD_PROJECT=$ProjectId",
     "ATTRIBUTION_CLOUD_RUN_JOB=$jobPipeline",
-    "ATTRIBUTION_CLOUD_RUN_REGION=$Region"
+    "ATTRIBUTION_CLOUD_RUN_REGION=$Region",
+    "ARIE_AUTH_ENABLED=true",
+    "ARIE_BOOTSTRAP_ADMIN_EMAIL=zajen@n8ivpromotions.com",
+    "ARIE_SESSION_TTL_HOURS=12"
 ) -join ","
 
 $jobArgs = @(

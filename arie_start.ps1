@@ -1,4 +1,4 @@
-# arie_start.ps1 — Start ARIE in the background (no console window)
+# arie_start.ps1 - Start ARIE in the background (no console window)
 # Usage: .\arie_start.ps1
 # Logs go to: arie_out.log / arie_err.log in the repo root
 
@@ -9,13 +9,14 @@ $pidFile  = "$repoRoot\arie.pid"
 $logOut   = "$repoRoot\arie_out.log"
 $logErr   = "$repoRoot\arie_err.log"
 
-# Check if already running
 if (Test-Path $pidFile) {
-    $oldPid = Get-Content $pidFile -Raw
-    $running = Get-Process -Id $oldPid -ErrorAction SilentlyContinue
-    if ($running) {
-        Write-Output "ARIE already running (PID $oldPid). Use arie_stop.ps1 to stop it first."
-        exit 0
+    $oldPid = (Get-Content $pidFile -Raw -ErrorAction SilentlyContinue).Trim()
+    if ($oldPid) {
+        $running = Get-Process -Id $oldPid -ErrorAction SilentlyContinue
+        if ($running) {
+            Write-Output "ARIE already running (PID $oldPid). Use arie_stop.ps1 to stop it first."
+            exit 0
+        }
     }
     Remove-Item $pidFile -Force
 }
@@ -24,6 +25,12 @@ if (Test-Path $pidFile) {
 "" | Out-File $logErr -Encoding utf8
 
 $env:PYTHONPATH = $workDir
+$processPath = [Environment]::GetEnvironmentVariable("Path", "Process")
+if (-not $processPath) {
+    $processPath = [Environment]::GetEnvironmentVariable("PATH", "Process")
+}
+[Environment]::SetEnvironmentVariable("PATH", $null, "Process")
+[Environment]::SetEnvironmentVariable("Path", $processPath, "Process")
 
 $proc = Start-Process `
     -FilePath $pythonw `
@@ -31,9 +38,10 @@ $proc = Start-Process `
     -WorkingDirectory $workDir `
     -RedirectStandardOutput $logOut `
     -RedirectStandardError $logErr `
+    -WindowStyle Hidden `
     -PassThru
 
 $proc.Id | Out-File $pidFile -Encoding utf8
-Write-Output "ARIE started — PID $($proc.Id)"
+Write-Output "ARIE started - PID $($proc.Id)"
 Write-Output "Logs: $logOut / $logErr"
 Write-Output "Stop with: .\arie_stop.ps1"

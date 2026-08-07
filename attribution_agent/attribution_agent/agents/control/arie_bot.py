@@ -14,6 +14,8 @@ import os
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 
 import requests
 
@@ -30,6 +32,137 @@ _bot_token: str = ""
 _chat_id: str = ""
 _running: bool = False
 _thread: threading.Thread | None = None
+_bot_lock_handle = None
+
+
+def _bot_lock_path() -> Path:
+    configured = os.environ.get("ARIE_BOT_LOCK_FILE", "")
+    if configured:
+        return Path(configured)
+    return Path(__file__).resolve().parents[3] / "arie_bot.lock"
+
+
+def _acquire_bot_lock() -> bool:
+    """Prevent duplicate long-polling listeners for the same Telegram token."""
+    global _bot_lock_handle
+    if _bot_lock_handle:
+        return True
+
+    path = _bot_lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+", encoding="utf-8")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return False
+
+    handle.seek(0)
+    handle.truncate()
+    handle.write(str(os.getpid()))
+    handle.flush()
+    _bot_lock_handle = handle
+    return True
+
+
+def _release_bot_lock() -> None:
+    global _bot_lock_handle
+    if not _bot_lock_handle:
+        return
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            _bot_lock_handle.seek(0)
+            msvcrt.locking(_bot_lock_handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(_bot_lock_handle.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    finally:
+        _bot_lock_handle.close()
+        _bot_lock_handle = None
+
+
+def _json_dumps(value: object) -> str:
+    try:
+        return json.dumps(value or {}, sort_keys=True)
+    except Exception:
+        return "{}"
+
+
+def _log_telegram_event(record: dict) -> None:
+    """Best-effort durable event log for inbound Telegram messages/callbacks."""
+    try:
+        from utils.databricks_writer import write_telegram_event
+
+        write_telegram_event(record)
+    except Exception as exc:
+        logger.debug(f"[ARIE] telegram_events write failed: {exc}")
+
+
+def _message_event_base(message: dict, update_id: int | None) -> dict:
+    sender = message.get("from", {}) or {}
+    chat = message.get("chat", {}) or {}
+    voice = message.get("voice", {}) or {}
+    message_id = message.get("message_id")
+    event_id = (
+        f"telegram-message-{update_id or 'no-update'}-"
+        f"{message_id or uuid.uuid4().hex[:8]}"
+    )
+    return {
+        "event_id": event_id,
+        "event_time": datetime.now(timezone.utc),
+        "update_id": update_id,
+        "message_id": message_id,
+        "chat_id": chat.get("id", ""),
+        "user_id": sender.get("id", ""),
+        "username": sender.get("username", ""),
+        "event_type": "message",
+        "raw_text": message.get("text", "") or "",
+        "voice_file_id": voice.get("file_id", ""),
+        "parsed_intent": "",
+        "params_json": "{}",
+        "action_id": "",
+        "response_summary": "",
+        "status": "received",
+        "error": "",
+    }
+
+
+def _callback_event_base(query: dict, update_id: int | None) -> dict:
+    sender = query.get("from", {}) or {}
+    message = query.get("message", {}) or {}
+    chat = message.get("chat", {}) or {}
+    callback_id = query.get("id", "") or uuid.uuid4().hex[:8]
+    return {
+        "event_id": f"telegram-callback-{update_id or 'no-update'}-{callback_id}",
+        "event_time": datetime.now(timezone.utc),
+        "update_id": update_id,
+        "message_id": message.get("message_id"),
+        "chat_id": chat.get("id", ""),
+        "user_id": sender.get("id", ""),
+        "username": sender.get("username", ""),
+        "event_type": "callback_query",
+        "raw_text": query.get("data", "") or "",
+        "voice_file_id": "",
+        "parsed_intent": "approval_callback",
+        "params_json": "{}",
+        "action_id": "",
+        "response_summary": "",
+        "status": "received",
+        "error": "",
+    }
 
 
 # ── Telegram helpers ───────────────────────────────────────────
@@ -203,20 +336,39 @@ Return exactly:
 
 
 # ── Callback query handler (inline button presses) ─────────────
-def _handle_callback_query(query: dict) -> None:
+def _handle_callback_query(query: dict, update_id: int | None = None) -> None:
+    event_record = _callback_event_base(query, update_id)
     data = query.get("data", "")
     qid = query["id"]
 
     if ":" not in data:
+        event_record.update(
+            {
+                "status": "ignored",
+                "response_summary": "Ignored callback without action prefix",
+            }
+        )
+        _log_telegram_event(event_record)
         return
 
     action, action_id = data.split(":", 1)
+    event_record["action_id"] = action_id
+    event_record["params_json"] = _json_dumps(
+        {"action": action, "action_id": action_id}
+    )
 
     with _lock:
         pending = _pending.pop(action_id, None)
 
     if not pending:
         _api("answerCallbackQuery", callback_query_id=qid, text="Already processed.")
+        event_record.update(
+            {
+                "status": "already_processed",
+                "response_summary": "Callback action was already processed",
+            }
+        )
+        _log_telegram_event(event_record)
         return
 
     if action == "approve":
@@ -225,17 +377,39 @@ def _handle_callback_query(query: dict) -> None:
         _update_approval_queue(action_id, "approved")
         try:
             result = pending["callback"]()
+            event_record.update(
+                {
+                    "status": "approved",
+                    "response_summary": str(result)[:1000],
+                }
+            )
             send_message(f"✓ *Done*\n\n{result}")
         except Exception as exc:
+            event_record.update(
+                {
+                    "status": "failed",
+                    "response_summary": "Callback execution failed",
+                    "error": str(exc)[:1000],
+                }
+            )
             send_message(f"⚠️ *Failed*\n\n{exc}")
     else:
         _api("answerCallbackQuery", callback_query_id=qid, text="❌ Rejected")
         send_message("❌ *Rejected* — action cancelled.")
         _update_approval_queue(action_id, "rejected")
+        event_record.update(
+            {
+                "status": "rejected",
+                "response_summary": "Action rejected in Telegram",
+            }
+        )
+
+    _log_telegram_event(event_record)
 
 
 # ── Message handler ────────────────────────────────────────────
-def _handle_message(message: dict) -> None:
+def _handle_message(message: dict, update_id: int | None = None) -> None:
+    event_record = _message_event_base(message, update_id)
     text = message.get("text", "") or ""
     voice = message.get("voice")
 
@@ -252,15 +426,36 @@ def _handle_message(message: dict) -> None:
                 "Add `OPENAI_API_KEY` to your `.env` to enable voice commands.\n"
                 'Text commands work now — say *"help"* to get started.'
             )
+            event_record.update(
+                {
+                    "status": "failed",
+                    "response_summary": "Voice transcription not configured",
+                    "error": "No transcription text returned",
+                }
+            )
+            _log_telegram_event(event_record)
             return
 
     text = text.strip()
     if not text:
+        event_record.update(
+            {
+                "status": "ignored",
+                "response_summary": "Ignored empty Telegram message",
+            }
+        )
+        _log_telegram_event(event_record)
         return
 
     parsed = _parse_intent(text)
     intent = parsed.get("intent", "unknown")
     params = parsed.get("params", {})
+    event_record["raw_text"] = text
+    event_record["parsed_intent"] = intent
+    event_record["params_json"] = _json_dumps(params)
+    response_summary = ""
+    status = "handled"
+    action_id = ""
 
     # ── STATUS ──────────────────────────────────────────────────
     if intent == "check_status":
@@ -273,6 +468,7 @@ def _handle_message(message: dict) -> None:
             f"🎯 *Prospects:* {len(PROSPECTS)}\n"
             f"⏳ *Pending approvals:* {len(_pending)}"
         )
+        response_summary = "Sent status overview"
 
     # ── LIST PROSPECTS ──────────────────────────────────────────
     elif intent == "list_prospects":
@@ -280,6 +476,7 @@ def _handle_message(message: dict) -> None:
 
         lines = [f"{p['id']}. *{p['name']}* — {p['industry']}" for p in PROSPECTS]
         send_message("*Outreach Prospects*\n\n" + "\n".join(lines))
+        response_summary = f"Listed {len(PROSPECTS)} prospects"
 
     # ── LIST CLIENTS ────────────────────────────────────────────
     elif intent == "list_clients":
@@ -287,6 +484,7 @@ def _handle_message(message: dict) -> None:
 
         lines = [f"• `{cid}`" for cid in CLIENT_REGISTRY]
         send_message("*Attribution Clients*\n\n" + "\n".join(lines))
+        response_summary = f"Listed {len(CLIENT_REGISTRY)} clients"
 
     # ── GENERATE OUTREACH ───────────────────────────────────────
     elif intent == "generate_outreach":
@@ -302,6 +500,13 @@ def _handle_message(message: dict) -> None:
                 + "\n".join(lines)
                 + '\n\nSay _"generate emails for [business name]"_'
             )
+            event_record.update(
+                {
+                    "status": "needs_clarification",
+                    "response_summary": "Asked operator to choose a prospect",
+                }
+            )
+            _log_telegram_event(event_record)
             return
 
         prospect = matches[0]
@@ -313,10 +518,12 @@ def _handle_message(message: dict) -> None:
             )
             return f"3 emails ready for *{prospect['name']}*\n\n{subjects}"
 
-        request_approval(
+        action_id = request_approval(
             f"Generate 3-email sequence for *{prospect['name']}* ({prospect['industry']})?",
             do_generate,
         )
+        status = "approval_requested"
+        response_summary = f"Requested approval for outreach to {prospect['name']}"
 
     # ── RUN PIPELINE ────────────────────────────────────────────
     elif intent == "run_pipeline":
@@ -389,10 +596,12 @@ def _handle_message(message: dict) -> None:
             ).start()
             return f"Submitted · Run ID: `{run_id}`\nI'll message you when it's done."
 
-        request_approval(
+        action_id = request_approval(
             f"Run attribution pipeline (*{label}*) for `{client_id}`?\n\n{warning}",
             do_run,
         )
+        status = "approval_requested"
+        response_summary = f"Requested approval for pipeline {label} for {client_id}"
 
     # ── HELP ────────────────────────────────────────────────────
     elif intent == "help":
@@ -411,20 +620,47 @@ def _handle_message(message: dict) -> None:
             '  _"Run live pipeline"_\n\n'
             "🎙️ Voice commands work too — just send a voice message!"
         )
+        response_summary = "Sent help menu"
 
     # ── UNKNOWN ─────────────────────────────────────────────────
     else:
         send_message('I didn\'t catch that. Say *"help"* to see what I can do.')
+        status = "unknown"
+        response_summary = "Sent fallback help prompt"
+
+    event_record.update(
+        {
+            "action_id": action_id,
+            "response_summary": response_summary,
+            "status": status,
+        }
+    )
+    _log_telegram_event(event_record)
 
 
 # ── Long-polling loop ──────────────────────────────────────────
 def _poll_loop() -> None:
     global _running
-    offset = 0
-    send_message(
+    offset = _initial_update_offset()
+    startup_response = send_message(
         "🟢 *ARIE online*\n"
         "Automatic Revenue Intelligence Engine ready.\n\n"
         'Say *"help"* to see available commands.'
+    )
+    startup_message = (startup_response or {}).get("result", {}) or {}
+    _log_telegram_event(
+        {
+            "event_id": f"telegram-startup-{uuid.uuid4().hex[:12]}",
+            "event_time": datetime.now(timezone.utc),
+            "message_id": startup_message.get("message_id"),
+            "chat_id": _chat_id,
+            "event_type": "bot_status",
+            "raw_text": "ARIE online",
+            "parsed_intent": "startup",
+            "params_json": "{}",
+            "response_summary": "Startup notification sent",
+            "status": "online",
+        }
     )
 
     while _running:
@@ -449,12 +685,14 @@ def _poll_loop() -> None:
                 if "message" in update:
                     chat_id = str(update["message"].get("chat", {}).get("id", ""))
                     if chat_id == str(_chat_id):
-                        _handle_message(update["message"])
+                        _handle_message(
+                            update["message"], update_id=update.get("update_id")
+                        )
                 elif "callback_query" in update:
                     cq = update["callback_query"]
                     chat_id = str(cq.get("message", {}).get("chat", {}).get("id", ""))
                     if chat_id == str(_chat_id):
-                        _handle_callback_query(cq)
+                        _handle_callback_query(cq, update_id=update.get("update_id"))
             except Exception as exc:
                 logger.exception(f"ARIE update error: {exc}")
 
@@ -464,6 +702,10 @@ def start(token: str, chat_id: str) -> None:
     global _bot_token, _chat_id, _running, _thread
     if _thread and _thread.is_alive():
         return
+    if not _acquire_bot_lock():
+        raise RuntimeError(
+            "Another ARIE Telegram listener is already running. Stop it before starting a new one."
+        )
     _bot_token = token
     _chat_id = str(chat_id)
     _running = True
@@ -475,10 +717,30 @@ def start(token: str, chat_id: str) -> None:
 def stop() -> None:
     global _running
     _running = False
+    _release_bot_lock()
 
 
 def is_running() -> bool:
     return bool(_thread and _thread.is_alive())
+
+
+def _initial_update_offset() -> int:
+    """Start after already-pending updates so restarts do not replay old commands."""
+    try:
+        resp = requests.get(
+            f"https://api.telegram.org/bot{_bot_token}/getUpdates",
+            params={
+                "timeout": 0,
+                "allowed_updates": ["message", "callback_query"],
+            },
+            timeout=10,
+        )
+        updates = resp.json().get("result", [])
+        if not updates:
+            return 0
+        return max(update["update_id"] for update in updates) + 1
+    except Exception:
+        return 0
 
 
 # ── Standalone entry point ─────────────────────────────────────

@@ -53,6 +53,13 @@ from utils.databricks_writer import (
     write_normalized_ad_data,
     write_attribution_results,
 )
+from utils.operator_alerts import (
+    build_attribution_coverage_alerts,
+    build_credential_alerts,
+    build_source_failure_alerts,
+    build_validation_alerts,
+    dispatch_alerts,
+)
 
 
 def _with_retry(fn, retries: int = 3, delay: int = 15, label: str = ""):
@@ -326,7 +333,11 @@ def step_build_attribution(
 
 
 def step_alert(
-    meta_result, hubspot_result, stripe_result, config: ClientConfig
+    meta_result,
+    hubspot_result,
+    stripe_result,
+    config: ClientConfig,
+    run_id: str = "",
 ) -> None:
     all_reports = []
     if meta_result and meta_result[1]:
@@ -341,6 +352,7 @@ def step_alert(
         return
     for r in issues:
         logger.warning(r.summary())
+    dispatch_alerts(build_validation_alerts(config, issues, run_id=run_id))
 
 
 def step_data_quality_agent(
@@ -378,7 +390,7 @@ def step_data_quality_agent(
         logger.warning(f"[DataQuality] agent step failed (non-fatal): {exc!r}")
 
 
-def ingest_flow(client_id: str) -> dict:
+def ingest_flow(client_id: str, run_id: str = "") -> dict:
     logger.info(f"{'=' * 50}")
     logger.info(f"Ingest Flow START | client={client_id}")
     logger.info(f"{'=' * 50}")
@@ -391,6 +403,21 @@ def ingest_flow(client_id: str) -> dict:
     google_token = config.google_ads_refresh_token
     linkedin_token = config.linkedin_access_token
     tiktok_token = config.tiktok_access_token
+
+    dispatch_alerts(
+        build_credential_alerts(
+            config,
+            tokens={
+                "meta": meta_token,
+                "google_ads": google_token,
+                "linkedin_ads": linkedin_token,
+                "tiktok_ads": tiktok_token,
+                "hubspot": hubspot_token,
+                "stripe": stripe_token,
+            },
+            run_id=run_id,
+        )
+    )
 
     step_setup(config.databricks_schema)
 
@@ -424,7 +451,7 @@ def ingest_flow(client_id: str) -> dict:
     # Closed-loop join: attribute closed/won revenue back to ad touchpoints.
     attribution = step_build_attribution(normalized_ads, hubspot_df, stripe_df, config)
 
-    step_alert(meta_validated, hubspot_validated, stripe_validated, config)
+    step_alert(meta_validated, hubspot_validated, stripe_validated, config, run_id)
 
     summary = {
         "client_id": client_id,
@@ -444,6 +471,13 @@ def ingest_flow(client_id: str) -> dict:
             f"[Ingest] {len(source_failures)} source(s) failed for {client_id}: "
             + ", ".join(source_failures.keys())
         )
+        dispatch_alerts(
+            build_source_failure_alerts(config, source_failures, run_id=run_id)
+        )
+
+    dispatch_alerts(
+        build_attribution_coverage_alerts(config, attribution, run_id=run_id)
+    )
 
     step_data_quality_agent(
         meta_validated,

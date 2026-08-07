@@ -130,6 +130,7 @@ foreach ($secret in @(
 
 foreach ($secret in @(
     "SENDGRID_API_KEY",
+    "ARIE_BOOTSTRAP_ADMIN_PASSWORD",
     "GMAIL_SENDER",
     "GMAIL_APP_PASSWORD",
     "GOOGLE_ADS_DEVELOPER_TOKEN",
