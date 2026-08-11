@@ -6,7 +6,7 @@ The lightweight UI control panel from the Unified Strategic Playbook
 of a prospect, watch the mock database tables update, and show the deal-won
 webhook backfilling the marketing timeline with fractional revenue credit.
 
-Run it standalone (separate from the internal Command Center in app.py):
+Run it standalone (separate from the internal Vercel Command Center):
 
     cd attribution_agent/attribution_agent
     streamlit run demo/demo_app.py

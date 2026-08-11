@@ -7,7 +7,6 @@ param(
 
     [string]$Region = "us-central1",
     [string]$AttributionModel = "w_shape",
-    [string]$RunMode = "agency",
     [string[]]$ClientIds = @()
 )
 
@@ -22,19 +21,19 @@ if (-not $gcloud) {
 }
 
 $argsList = @(
-    "flows/agency_flow.py",
+    "flows/job_launcher.py",
     "--agency",
     $AgencyId,
     "--dry-run",
     "--attribution-model",
-    $AttributionModel,
-    "--run-mode",
-    $RunMode
+    $AttributionModel
 )
 
 if ($ClientIds.Count -gt 0) {
-    $argsList += "--client-filter"
-    $argsList += $ClientIds
+    foreach ($clientId in $ClientIds) {
+        $argsList += "--client"
+        $argsList += $clientId
+    }
 }
 
 $jobArgs = ($argsList -join ",")
@@ -52,7 +51,7 @@ if ($ClientIds.Count -gt 0) {
 }
 Write-Host ""
 
-& $gcloud.Source run jobs execute attribution-pipeline `
+& $gcloud.Source run jobs execute attribution-launcher `
     --project $ProjectId `
     --region $Region `
     --args $jobArgs `

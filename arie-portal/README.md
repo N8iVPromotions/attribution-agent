@@ -1,9 +1,8 @@
 # ARIE Internal Command Center
 
 Production operations console for ARIE, the Automatic Revenue Intelligence
-Engine. This is the canonical internal control surface; the Streamlit app is
-retained as an administrative fallback and the synthetic sales demo remains a
-separate application.
+Engine. This is the canonical internal control surface. The synthetic sales
+demo remains a separate application.
 
 ## Operator capabilities
 

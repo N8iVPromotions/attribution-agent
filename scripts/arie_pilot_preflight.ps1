@@ -142,11 +142,14 @@ foreach ($secret in @(
 }
 
 if ($AfterDeploy) {
-    $serviceResult = Invoke-GcloudQuiet @("run", "services", "describe", "attribution-ui", "--project", $ProjectId, "--region", $Region)
-    if ($serviceResult.ExitCode -eq 0) { Write-Pass "Cloud Run service exists: attribution-ui" } else { Write-Fail "Cloud Run service missing: attribution-ui" }
+    $apiResult = Invoke-GcloudQuiet @("run", "services", "describe", "attribution-api", "--project", $ProjectId, "--region", $Region)
+    if ($apiResult.ExitCode -eq 0) { Write-Pass "Cloud Run service exists: attribution-api" } else { Write-Fail "Cloud Run service missing: attribution-api" }
 
     $jobResult = Invoke-GcloudQuiet @("run", "jobs", "describe", "attribution-pipeline", "--project", $ProjectId, "--region", $Region)
     if ($jobResult.ExitCode -eq 0) { Write-Pass "Cloud Run job exists: attribution-pipeline" } else { Write-Fail "Cloud Run job missing: attribution-pipeline" }
+
+    $launcherResult = Invoke-GcloudQuiet @("run", "jobs", "describe", "attribution-launcher", "--project", $ProjectId, "--region", $Region)
+    if ($launcherResult.ExitCode -eq 0) { Write-Pass "Cloud Run job exists: attribution-launcher" } else { Write-Fail "Cloud Run job missing: attribution-launcher" }
 
     $schedulerResult = Invoke-GcloudQuiet @("scheduler", "jobs", "describe", "attribution-monthly", "--project", $ProjectId, "--location", $Region)
     if ($schedulerResult.ExitCode -eq 0) { Write-Pass "Cloud Scheduler job exists: attribution-monthly" } else { Write-Warn "Cloud Scheduler job missing: attribution-monthly" }
@@ -166,5 +169,5 @@ Write-Pass "Preflight passed."
 Write-Host ""
 Write-Host "Next:"
 Write-Host "  PROJECT_ID=$ProjectId ./deploy.sh --seed-secrets"
-Write-Host "  OPERATOR_PRINCIPAL=user:you@example.com PROJECT_ID=$ProjectId ./deploy.sh"
+Write-Host "  PROJECT_ID=$ProjectId ./deploy.sh"
 Write-Host "  .\scripts\arie_cloud_run_dry_run.ps1 -ProjectId $ProjectId -AgencyId <agency_id>"

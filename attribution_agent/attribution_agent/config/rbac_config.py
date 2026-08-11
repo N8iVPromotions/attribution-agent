@@ -6,7 +6,7 @@ Role-Based Access Control definitions.
 This module is the authority on roles and permissions.
 It is pure Python with no external dependencies — it defines the rules
 but does not enforce them at the transport layer (enforcement lives in
-api/auth.py for the REST API and is checked inline in the Streamlit app).
+api/auth.py for the REST API and in the Vercel Command Center API routes).
 """
 
 from __future__ import annotations

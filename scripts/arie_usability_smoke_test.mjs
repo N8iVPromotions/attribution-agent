@@ -5,18 +5,24 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { chromium } = require("playwright");
 
-const url = process.argv[2] || "http://127.0.0.1:8501";
+const url = process.argv[2] || "http://127.0.0.1:3000";
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 const outDir = path.resolve("reports", "usability", timestamp);
 fs.mkdirSync(outDir, { recursive: true });
 
-const tabs = ["Pipeline", "Clients", "Outreach", "Observability"];
+const views = ["Overview", "Pipeline", "Tenants", "Reports", "Alerts", "Governance", "Audit"];
 const checks = [];
 
 function note(name, status, detail = "") {
   checks.push({ name, status, detail });
   const marker = status === "pass" ? "PASS" : status === "warn" ? "WARN" : "FAIL";
   console.log(`${marker} ${name}${detail ? ` - ${detail}` : ""}`);
+}
+
+function httpCredentials() {
+  const username = process.env.ARIE_BASIC_AUTH_USER;
+  const password = process.env.ARIE_BASIC_AUTH_PASSWORD;
+  return username && password ? { username, password } : undefined;
 }
 
 async function waitForApp(page) {
@@ -34,11 +40,11 @@ async function checkForRuntimeErrors(page, label) {
   const badPatterns = [
     /Traceback/i,
     /ModuleNotFoundError/i,
-    /NameError/i,
-    /KeyError/i,
+    /ReferenceError/i,
     /TypeError/i,
-    /StreamlitAPIException/i,
-    /Observability data unavailable/i,
+    /Unhandled Runtime Error/i,
+    /Application error/i,
+    /Command Center authentication is not configured/i
   ];
   const found = badPatterns.find((pattern) => pattern.test(text));
   if (found) {
@@ -49,15 +55,15 @@ async function checkForRuntimeErrors(page, label) {
   return text;
 }
 
-async function clickTab(page, name) {
-  const tab = page.getByRole("tab", { name });
-  await tab.waitFor({ timeout: 30000 });
-  await tab.click();
-  await page.waitForTimeout(1200);
+async function clickView(page, name) {
+  const button = page.getByRole("button", { name: new RegExp(name, "i") }).first();
+  await button.waitFor({ timeout: 30000 });
+  await button.click();
+  await page.waitForTimeout(700);
 }
 
 async function runViewport(browser, viewportName, viewport) {
-  const context = await browser.newContext({ viewport });
+  const context = await browser.newContext({ viewport, httpCredentials: httpCredentials() });
   const page = await context.newPage();
   const consoleErrors = [];
   page.on("console", (msg) => {
@@ -69,66 +75,23 @@ async function runViewport(browser, viewportName, viewport) {
 
   await waitForApp(page);
   note(`${viewportName} loads`, "pass", url);
-  await page.screenshot({
-    path: path.join(outDir, `${viewportName}-pipeline.png`),
-    fullPage: true,
-  });
-  await checkForRuntimeErrors(page, `${viewportName} Pipeline`);
-  const recentRuns = page.getByRole("button", { name: /Recent runs/i });
-  if (await recentRuns.count()) {
-    await recentRuns.first().click();
-    await page.waitForTimeout(1000);
-    await checkForRuntimeErrors(page, `${viewportName} Recent runs interaction`);
-    note(`${viewportName} Recent runs button`, "pass");
-  } else {
-    note(`${viewportName} Recent runs button`, "warn", "Button not found");
-  }
 
-  for (const tabName of tabs) {
-    await clickTab(page, tabName);
+  for (const view of views) {
+    await clickView(page, view);
     await page.screenshot({
-      path: path.join(outDir, `${viewportName}-${tabName.toLowerCase()}.png`),
-      fullPage: true,
+      path: path.join(outDir, `${viewportName}-${view.toLowerCase()}.png`),
+      fullPage: true
     });
-    const text = await checkForRuntimeErrors(page, `${viewportName} ${tabName}`);
-    if (!text.includes(tabName) && tabName !== "Pipeline") {
-      note(`${viewportName} ${tabName} label`, "warn", "Tab name not visible after click");
-    } else {
-      note(`${viewportName} ${tabName} label`, "pass");
-    }
-  }
-
-  await clickTab(page, "Clients");
-  const businessName = page.getByLabel("Business name");
-  if (await businessName.count()) {
-    await businessName.first().fill("Usability Test Company");
-    await checkForRuntimeErrors(page, `${viewportName} client form fill`);
-    note(`${viewportName} client form fill`, "pass");
-  } else {
-    note(`${viewportName} client form fill`, "warn", "Business name input not found");
-  }
-
-  await clickTab(page, "Outreach");
-  const prospectsText = await visibleText(page);
-  if (prospectsText.includes("Alani Skin MD") && prospectsText.includes("Generate 3-Email Sequence")) {
-    note(`${viewportName} outreach prospect selector`, "pass");
-  } else {
-    note(`${viewportName} outreach prospect selector`, "warn", "Expected outreach controls not visible");
-  }
-
-  const bodyText = await visibleText(page);
-  for (const expected of ["Pipeline", "Clients", "Outreach", "Observability"]) {
+    const text = await checkForRuntimeErrors(page, `${viewportName} ${view}`);
     note(
-      `${viewportName} has ${expected} navigation`,
-      bodyText.includes(expected) ? "pass" : "fail"
+      `${viewportName} ${view} visible`,
+      text.includes(view) ? "pass" : "warn",
+      text.includes(view) ? "" : "View label not found after navigation"
     );
   }
+
   if (consoleErrors.length) {
-    note(
-      `${viewportName} browser console`,
-      "warn",
-      consoleErrors.slice(0, 5).join(" | ")
-    );
+    note(`${viewportName} browser console`, "warn", consoleErrors.slice(0, 5).join(" | "));
   } else {
     note(`${viewportName} browser console`, "pass");
   }
@@ -152,7 +115,7 @@ const summary = {
   pass: checks.filter((check) => check.status === "pass").length,
   warn: checks.filter((check) => check.status === "warn").length,
   fail: failed.length,
-  checks,
+  checks
 };
 fs.writeFileSync(path.join(outDir, "summary.json"), JSON.stringify(summary, null, 2));
 console.log(`SUMMARY ${summary.pass} pass, ${summary.warn} warn, ${summary.fail} fail`);

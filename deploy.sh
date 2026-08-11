@@ -8,11 +8,11 @@
 #
 # Usage:
 #   PROJECT_ID=my-project ./deploy.sh --seed-secrets   # one-time: push .env values to Secret Manager
-#   PROJECT_ID=my-project ./deploy.sh                  # build image + deploy job, UI, scheduler
+#   PROJECT_ID=my-project ./deploy.sh                  # build image + deploy backend jobs/API/scheduler
 #
 # Per-agency manual run (execute-time args override the deployed ones):
-#   gcloud run jobs execute attribution-pipeline --region "$REGION" \
-#     --args "flows/agency_flow.py,--agency,demo_agency,--dry-run" --wait
+#   gcloud run jobs execute attribution-launcher --region "$REGION" \
+#     --args "flows/job_launcher.py,--agency,demo_agency,--dry-run" --wait
 set -euo pipefail
 
 # Git Bash (MSYS) rewrites unix-looking args (/mnt/... -> C:/...), mangling
@@ -25,7 +25,6 @@ PROJECT_ID="${PROJECT_ID:?set PROJECT_ID, e.g. PROJECT_ID=my-project ./deploy.sh
 REGION="${REGION:-us-central1}"
 REPO="${REPO:-attribution}"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/attribution-agent"
-SERVICE_UI="attribution-ui"
 SERVICE_API="attribution-api"
 JOB_PIPELINE="attribution-pipeline"
 JOB_LAUNCHER="attribution-launcher"
@@ -37,9 +36,7 @@ REGISTRY_BUCKET="${REGISTRY_BUCKET:-${PROJECT_ID}-attribution-registry}"
 RAW_ARCHIVE_BUCKET="${RAW_ARCHIVE_BUCKET:-${PROJECT_ID}-attribution-raw}"
 PIPELINE_TASKS="${PIPELINE_TASKS:-20}"
 PIPELINE_PARALLELISM="${PIPELINE_PARALLELISM:-5}"
-ALLOW_UNAUTHENTICATED_UI="${ALLOW_UNAUTHENTICATED_UI:-false}"
 ALLOW_UNAUTHENTICATED_API="${ALLOW_UNAUTHENTICATED_API:-false}"
-OPERATOR_PRINCIPAL="${OPERATOR_PRINCIPAL:-}"
 COMMAND_CENTER_SA="${COMMAND_CENTER_SA:-}"
 SA_RUNTIME_NAME="attribution-runtime"
 SA_SCHEDULER_NAME="attribution-scheduler"
@@ -85,9 +82,6 @@ COMMON_ENV+=",COMMS_PROVIDER=gmail"
 COMMON_ENV+=",GOOGLE_CLOUD_PROJECT=${PROJECT_ID}"
 COMMON_ENV+=",ATTRIBUTION_CLOUD_RUN_JOB=${JOB_PIPELINE}"
 COMMON_ENV+=",ATTRIBUTION_CLOUD_RUN_REGION=${REGION}"
-COMMON_ENV+=",ARIE_AUTH_ENABLED=true"
-COMMON_ENV+=",ARIE_BOOTSTRAP_ADMIN_EMAIL=${ARIE_BOOTSTRAP_ADMIN_EMAIL:-zajen@n8ivpromotions.com}"
-COMMON_ENV+=",ARIE_SESSION_TTL_HOURS=${ARIE_SESSION_TTL_HOURS:-12}"
 COMMON_ENV+=",ARIE_CLIENT_LOCK_BUCKET=${REGISTRY_BUCKET}"
 COMMON_ENV+=",ARIE_CLIENT_LOCKS_ENABLED=true"
 COMMON_ENV+=",ARIE_RAW_ARCHIVE_BUCKET=${RAW_ARCHIVE_BUCKET}"
@@ -119,15 +113,6 @@ build_secret_flags() {
       echo "WARN: secret $key not in Secret Manager — env var will be unset"
     fi
   done
-}
-
-build_ui_auth_flag() {
-  if [ "$ALLOW_UNAUTHENTICATED_UI" = "true" ]; then
-    UI_AUTH_FLAG="--allow-unauthenticated"
-    echo "WARN: attribution-ui will be public because ALLOW_UNAUTHENTICATED_UI=true"
-  else
-    UI_AUTH_FLAG="--no-allow-unauthenticated"
-  fi
 }
 
 build_api_auth_flag() {
@@ -213,7 +198,6 @@ for key in "${SECRET_KEYS[@]}"; do
 done
 
 build_secret_flags
-build_ui_auth_flag
 build_api_auth_flag
 
 # Client-registry bucket (objectAdmin: the admin portal writes clients.json)
@@ -305,41 +289,9 @@ gcloud run jobs deploy "$JOB_MAINTENANCE" \
 gcloud run jobs add-iam-policy-binding "$JOB_MAINTENANCE" --region "$REGION" \
   --member "serviceAccount:${SCHED_SA}" --role roles/run.invoker >/dev/null
 
-# ── 6. Cloud Run Service (Streamlit UI) ──────────────────────────────────────
-# Streamlit needs: long request timeout (websocket), sticky single instance
-# (session state is per-instance), and CPU outside requests for the ARIE
-# Telegram long-poll thread + in-process pipeline runs. min-instances=1 +
-# no-cpu-throttling switches billing to instance-based — drop both if ARIE
-# in the UI is expendable and cold starts are acceptable.
-gcloud run deploy "$SERVICE_UI" \
-  --image "${IMAGE}:${GIT_SHA}" \
-  --region "$REGION" \
-  --service-account "$RUNTIME_SA" \
-  --port 8080 \
-  "$UI_AUTH_FLAG" \
-  --set-secrets "$SECRET_FLAGS" \
-  --set-env-vars "$COMMON_ENV" \
-  --add-volume "name=registry,type=cloud-storage,bucket=${REGISTRY_BUCKET}" \
-  --add-volume-mount "volume=registry,mount-path=/mnt/registry" \
-  --timeout 3600 \
-  --session-affinity \
-  --min-instances 1 \
-  --max-instances 1 \
-  --no-cpu-throttling \
-  --memory 2Gi --cpu 2
-
-if [ -n "$OPERATOR_PRINCIPAL" ]; then
-  gcloud run services add-iam-policy-binding "$SERVICE_UI" --region "$REGION" \
-    --member "$OPERATOR_PRINCIPAL" --role roles/run.invoker >/dev/null
-  echo "Granted $OPERATOR_PRINCIPAL access to $SERVICE_UI"
-elif [ "$ALLOW_UNAUTHENTICATED_UI" != "true" ]; then
-  echo "NOTE: attribution-ui is private. Set OPERATOR_PRINCIPAL=user:you@example.com on deploy to grant explicit access."
-fi
-
-# ── 6b. Cloud Run Service (FastAPI REST layer) ───────────────────────────────
-# Same image, overrides CMD to run uvicorn instead of Streamlit. This is what
-# the Replit Command Center's Live mode calls (X-API-Key + a Cloud Run ID
-# token minted from a service-account key — see command_center/README.md).
+# ── 6. Cloud Run Service (FastAPI REST layer) ───────────────────────────────
+# Same image, default FastAPI command. The Vercel Command Center can call this
+# service for approval mutations when ARIE_API_BASE and ARIE_API_KEY are set.
 gcloud run deploy "$SERVICE_API" \
   --image "${IMAGE}:${GIT_SHA}" \
   --region "$REGION" \
@@ -356,16 +308,12 @@ gcloud run deploy "$SERVICE_API" \
   --max-instances 3 \
   --memory 1Gi --cpu 1
 
-if [ -n "$OPERATOR_PRINCIPAL" ]; then
-  gcloud run services add-iam-policy-binding "$SERVICE_API" --region "$REGION" \
-    --member "$OPERATOR_PRINCIPAL" --role roles/run.invoker >/dev/null
-fi
 if [ -n "$COMMAND_CENTER_SA" ]; then
   gcloud run services add-iam-policy-binding "$SERVICE_API" --region "$REGION" \
     --member "serviceAccount:${COMMAND_CENTER_SA}" --role roles/run.invoker >/dev/null
   echo "Granted $COMMAND_CENTER_SA invoker access to $SERVICE_API"
 elif [ "$ALLOW_UNAUTHENTICATED_API" != "true" ]; then
-  echo "NOTE: attribution-api is private. Set COMMAND_CENTER_SA=name@project.iam.gserviceaccount.com on deploy to grant the Replit app access."
+  echo "NOTE: attribution-api is private. Set COMMAND_CENTER_SA=name@project.iam.gserviceaccount.com on deploy to grant a trusted command-center service account access."
 fi
 
 # ── 7. Seed clients.json into the registry bucket (first deploy only) ────────
@@ -415,7 +363,6 @@ gcloud scheduler jobs "$MAINTENANCE_SCHED_VERB" http "$SCHEDULER_MAINTENANCE_JOB
 echo ""
 echo "── Deployed ──────────────────────────────────────────────"
 echo "Image:     ${IMAGE}:${GIT_SHA}"
-echo "UI:        $(gcloud run services describe "$SERVICE_UI" --region "$REGION" --format 'value(status.url)')"
 echo "API:       $(gcloud run services describe "$SERVICE_API" --region "$REGION" --format 'value(status.url)')"
 echo "Job:       gcloud run jobs execute $JOB_LAUNCHER --region $REGION --args 'flows/job_launcher.py,--dry-run,--expected-client-count,20' --wait"
 echo "Scheduler: $SCHEDULER_JOB ($SCHEDULE America/New_York)"

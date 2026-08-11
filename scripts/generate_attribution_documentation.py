@@ -303,7 +303,7 @@ def add_cover(doc: Document) -> None:
     add_callout(
         doc,
         "Executive readout",
-        "ARIE is no longer just a prototype. The repository contains a managed attribution service architecture with a Streamlit Command Center, Cloud Run execution path, Databricks persistence, source connectors, attribution models, client onboarding, reporting, API access, and Telegram operator control. The remaining work is mostly verification, credential hygiene, operational hardening, and pilot onboarding.",
+        "ARIE is no longer just a prototype. The repository contains a managed attribution service architecture with a Vercel Command Center, Cloud Run execution path, Databricks persistence, source connectors, attribution models, client onboarding, reporting, API access, and Telegram operator control. The remaining work is mostly verification, credential hygiene, operational hardening, and pilot onboarding.",
     )
     doc.add_page_break()
 
@@ -340,15 +340,15 @@ def section_current_snapshot(doc: Document) -> None:
     add_callout(
         doc,
         "Build status",
-        "The merged base is on main at origin/main. Local work adds Telegram duplicate-send protection, Telegram event logging, desktop launcher scripts, and usability testing support. Local app services were not reachable during this documentation pass, so existing PID files should be treated as stale until ARIE is restarted.",
+        "The merged base is on main at origin/main. Local work consolidates the operator UI into the Vercel Command Center, keeps Cloud Run jobs as the execution layer, and preserves Telegram operator control as a standalone backend listener.",
     )
     add_table(
         doc,
         ["Area", "Current state", "Operator meaning"],
         [
             ["Git baseline", "main...origin/main at 332e165, Productize ARIE command center (#66).", "The major ARIE Command Center productization work has been merged."],
-            ["Local uncommitted changes", "Modified app/bot/Databricks writer/start-stop scripts plus new docs and launcher/test scripts.", "These are important finishing changes, especially for Telegram and desktop persistence."],
-            ["Runtime check", "Streamlit on 127.0.0.1:8501 and FastAPI on 127.0.0.1:8081 were not reachable.", "Run arie_start.ps1 or the desktop shortcut before testing the UI locally."],
+            ["Local uncommitted changes", "Vercel portal, Cloud Run scripts, docs, and backend operator-control changes.", "The repo should treat arie-portal as the only command center UI."],
+            ["Runtime check", "Vercel portal verification should run from arie-portal with npm.cmd run check.", "Use the Vercel portal locally or in production; do not use retired Streamlit/Replit command centers."],
             ["GCP tooling", "GCP is authenticated in the operator PowerShell terminal. The Codex sandbox did not have gcloud on PATH during this documentation pass.", "Run gcloud/preflight commands from your normal PowerShell terminal; treat sandbox PATH issues as environment-specific."],
             ["Usability smoke test", "Latest recorded run: 38 pass, 2 warn, 0 fail.", "Core UI surfaces loaded on desktop and mobile; live pipeline/email actions were intentionally not triggered."],
             ["Public N8iV website", "The live URL previously showed an old/placeholder site copy path.", "DNS/Vercel/Wix transfer should be verified separately from ARIE backend readiness."],
@@ -361,11 +361,9 @@ def section_current_snapshot(doc: Document) -> None:
         ["File or folder", "Purpose"],
         [
             [r"attribution_agent\attribution_agent\agents\control\arie_bot.py", "Adds durable Telegram event logging, cross-process listener lock, startup events, stale update offset handling, and duplicate-response prevention."],
-            [r"attribution_agent\attribution_agent\app.py", "Adds Command Center controls and Observability support for recent Telegram triggers; avoids auto-starting the bot unless explicitly configured."],
             [r"attribution_agent\attribution_agent\utils\databricks_writer.py", "Adds telegram_events table support plus write/fetch helpers."],
             [r"arie_start.ps1 / arie_stop.ps1", "Improves local process start/stop handling, PID files, hidden windows, and PATH normalization."],
-            [r"scripts\arie_open_command_center.ps1", "Starts/opens ARIE in local, Cloud Run proxy, or Cloud URL mode."],
-            [r"scripts\install_arie_desktop_shortcut.ps1", "Creates a persistent desktop shortcut for ARIE Command Center."],
+            [r"arie-portal", "Canonical Vercel Command Center for operations, run execution, tenant lifecycle, reports, alerts, and governance."],
             [r"scripts\arie_usability_smoke_test.mjs", "Playwright smoke test for command center usability across desktop and mobile."],
         ],
         [3000, 6360],
@@ -418,9 +416,9 @@ def section_architecture(doc: Document) -> None:
         doc,
         ["Layer", "Component", "Files or service"],
         [
-            ["Operator UI", "Streamlit Command Center", r"attribution_agent\attribution_agent\app.py"],
-            ["Pipeline compute", "Cloud Run Job attribution-pipeline", r"Dockerfile, deploy.sh, scripts\arie_deploy_cloud_run.ps1"],
-            ["UI hosting", "Cloud Run Service attribution-ui", r"Streamlit running in the same container image"],
+            ["Operator UI", "Vercel Command Center", r"arie-portal"],
+            ["Pipeline launcher", "Cloud Run Job attribution-launcher", r"flows\job_launcher.py"],
+            ["Pipeline workers", "Cloud Run Job attribution-pipeline", r"flows\agency_flow.py"],
             ["Scheduling", "Cloud Scheduler attribution-monthly", "Monthly trigger, default 9am ET on the 1st"],
             ["Data layer", "Databricks SQL/Delta", r"utils\databricks_writer.py"],
             ["Client registry", "GCS-mounted clients.json or Databricks ops client_registry", r"config\client_config.py"],
@@ -511,7 +509,7 @@ def section_command_center(doc: Document) -> None:
     add_heading(doc, "6. Command Center And Client Setup", 1)
     add_para(
         doc,
-        "The ARIE Command Center is the internal operator surface. It is currently a Streamlit application with tabs for execution, client onboarding, outreach, and observability. It is sufficient for internal operation today and can later be replaced or wrapped by a login-based agency/customer portal.",
+        "The ARIE Command Center is the internal operator surface. The supported UI is the Vercel app in arie-portal, with server-side Databricks reads and server-side Cloud Run job execution.",
     )
     add_table(
         doc,
@@ -519,8 +517,11 @@ def section_command_center(doc: Document) -> None:
         [
             ["Pipeline", "Select agency/client scope, dry-run/live mode, attribution model, run mode, and submit the Cloud Run pipeline command."],
             ["Clients", "Add, remove, and update clients; capture business details, account IDs, attribution defaults, report emails, and credentials."],
-            ["Outreach", "Generate and manage operator outreach/prospecting actions associated with ARIE/N8iV workflows."],
-            ["Observability", "Inspect recent pipeline health, row counts, warnings, costs, evals, audit activity, and Telegram triggers."],
+            ["Tenants", "Create, update, and remove agency/business records through the audited tenant lifecycle workflow."],
+            ["Reports", "Review generated report previews and delivery state."],
+            ["Alerts", "Inspect urgent operator alerts, source issues, and token warnings."],
+            ["Governance", "Review approvals, cost posture, and operational guardrails."],
+            ["Audit", "Inspect command center and lifecycle audit history."],
         ],
         [1700, 7660],
     )
@@ -543,7 +544,7 @@ def section_command_center(doc: Document) -> None:
     add_callout(
         doc,
         "Credential storage rule",
-        "Credential values entered in the UI/API are written to GCP Secret Manager. The client registry stores only Secret Manager IDs, using names like attr-prod-<client-id>-<credential-name> unless the prefix/environment is overridden.",
+        "Credential values entered through the command center lifecycle path are written to GCP Secret Manager. The client registry stores only Secret Manager IDs, using names like attr-prod-<client-id>-<credential-name> unless the prefix/environment is overridden.",
     )
 
 
@@ -591,9 +592,9 @@ def section_interfaces(doc: Document) -> None:
         "The ARIE Telegram bot supports status, overview, prospect/outreach, and pipeline commands. Local changes add durable trigger logging and a cross-process lock because Telegram allows only one getUpdates consumer per bot token.",
     )
     for item in [
-        "Start standalone listener through arie_start.ps1 or scripts/arie_open_command_center.ps1 -StartBot.",
-        "Do not start both Streamlit-embedded bot and standalone bot at the same time.",
-        "The app defaults to not auto-starting the bot; set ARIE_COMMAND_CENTER_START_BOT=true only when intentionally embedding it.",
+        "Start the standalone listener through arie_start.ps1.",
+        "Do not start multiple Telegram long-polling listeners for the same bot token.",
+        "The command center UI does not embed the bot; it reads durable backend telemetry.",
         "Recent bot triggers can be reviewed in the Command Center Observability tab after Databricks logging succeeds.",
     ]:
         add_bullet(doc, item)
@@ -644,20 +645,19 @@ def section_deployment(doc: Document) -> None:
         [
             ["Preflight", r".\scripts\arie_pilot_preflight.ps1 -ProjectId <project> -AfterDeploy"],
             ["Seed secrets", r".\scripts\arie_seed_secrets.ps1 -ProjectId <project>"],
-            ["Deploy Cloud Run", r".\scripts\arie_deploy_cloud_run.ps1 -ProjectId <project> -OperatorPrincipal user:you@example.com"],
-            ["Open private UI", r"gcloud run services proxy attribution-ui --project <project> --region us-central1 --port 8080"],
+            ["Deploy Cloud Run backend", r".\scripts\arie_deploy_cloud_run.ps1 -ProjectId <project>"],
+            ["Deploy Vercel UI", r"cd arie-portal; npm.cmd run check; npx.cmd vercel deploy --yes"],
             ["Cloud Run dry run", r".\scripts\arie_cloud_run_dry_run.ps1 -ProjectId <project> -AgencyId <agency_id> -AttributionModel w_shape -ClientIds <client_id>"],
-            ["Local Streamlit", r".\arie_start.ps1 or .\scripts\arie_open_command_center.ps1 -Mode Local -StartBot"],
-            ["Stop local services", r".\arie_stop.ps1"],
-            ["Desktop shortcut", r".\scripts\install_arie_desktop_shortcut.ps1 -Mode Local -StartBot"],
+            ["Start Telegram listener", r".\arie_start.ps1"],
+            ["Stop Telegram listener", r".\arie_stop.ps1"],
         ],
         [2100, 7260],
     )
     add_heading(doc, "Cloud Run Production Path", 2)
     for item in [
         "One image is built from the root Dockerfile and pushed to Artifact Registry.",
-        "Cloud Run service attribution-ui hosts the Streamlit Command Center.",
-        "Cloud Run job attribution-pipeline runs the agency/client pipeline.",
+        "Vercel hosts the Command Center UI from arie-portal.",
+        "Cloud Run job attribution-launcher creates work manifests and launches attribution-pipeline workers.",
         "Cloud Scheduler attribution-monthly runs the job on a schedule.",
         "GCS bucket <project>-attribution-registry stores clients.json when using local registry backend in Cloud Run.",
         "Secret Manager injects global environment secrets at deploy time and stores per-client source credentials at onboarding time.",
@@ -738,17 +738,15 @@ def section_checklist(doc: Document) -> None:
 def section_commands(doc: Document) -> None:
     add_heading(doc, "12. Useful Commands", 1)
     commands = [
-        ("Local app", r".\arie_start.ps1"),
-        ("Stop local app", r".\arie_stop.ps1"),
-        ("Open desktop-style app", r".\scripts\arie_open_command_center.ps1 -Mode Local -StartBot"),
-        ("Install shortcut", r".\scripts\install_arie_desktop_shortcut.ps1 -Mode Local -StartBot"),
+        ("Start Telegram listener", r".\arie_start.ps1"),
+        ("Stop Telegram listener", r".\arie_stop.ps1"),
+        ("Run Vercel portal locally", r"cd arie-portal; npm.cmd run dev"),
         ("Preflight", r".\scripts\arie_pilot_preflight.ps1 -ProjectId n8iv-analytics-production -AfterDeploy"),
         ("Seed secrets", r".\scripts\arie_seed_secrets.ps1 -ProjectId n8iv-analytics-production"),
-        ("Deploy", r".\scripts\arie_deploy_cloud_run.ps1 -ProjectId n8iv-analytics-production -OperatorPrincipal user:zajen@n8ivpromotions.com"),
-        ("Cloud proxy", r"gcloud run services proxy attribution-ui --project n8iv-analytics-production --region us-central1 --port 8080"),
+        ("Deploy backend", r".\scripts\arie_deploy_cloud_run.ps1 -ProjectId n8iv-analytics-production"),
+        ("Deploy portal", r"cd arie-portal; npx.cmd vercel deploy --yes"),
         ("Dry run", r".\scripts\arie_cloud_run_dry_run.ps1 -ProjectId n8iv-analytics-production -AgencyId <agency_id> -AttributionModel w_shape -ClientIds <client_id>"),
         ("FastAPI docs", r"http://127.0.0.1:8081/docs"),
-        ("Streamlit local", r"http://127.0.0.1:8501"),
     ]
     add_table(doc, ["Task", "Command"], [[a, b] for a, b in commands], [2100, 7260])
     add_para(

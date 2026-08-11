@@ -1,63 +1,45 @@
-# ARIE Command Center App
+# ARIE Command Center
 
-ARIE can be opened as a persistent desktop-style browser app from Windows.
+The only supported ARIE Command Center UI is the Vercel app in `arie-portal/`.
 
-## Recommended Internal Setup
+## Production URL
 
-Use the local Command Center for day-to-day operation:
-
-```powershell
-.\scripts\install_arie_desktop_shortcut.ps1 -Mode Local -StartBot
+```text
+https://arie-command-center.vercel.app
 ```
 
-This creates a desktop shortcut named `ARIE Command Center`. Opening it will:
-
-- start the local Streamlit Command Center if it is not already running
-- start the standalone ARIE Telegram listener if it is not already running
-- open the Command Center in a browser app window
-
-## Cloud Run Setup
-
-The deployed Command Center uses an in-app authentication layer backed by
-Databricks Delta tables in `ATTRIBUTION_OPS_SCHEMA`:
-
-- `auth_users`
-- `auth_sessions`
-- `auth_events`
-
-The first admin user is bootstrapped only when the user table is empty. Set
-`ARIE_BOOTSTRAP_ADMIN_EMAIL` and the Secret Manager secret
-`ARIE_BOOTSTRAP_ADMIN_PASSWORD`. If the password secret is not present, ARIE
-falls back to `API_KEY_ADMIN` for the first bootstrap login.
-
-Use Cloud Run proxy mode when you want the hosted Command Center but the service is private:
+## Local Development
 
 ```powershell
-.\scripts\install_arie_desktop_shortcut.ps1 -Mode CloudProxy -StartBot
+cd C:\Users\zajen\attribution-agent\arie-portal
+npm.cmd install
+npm.cmd run dev
 ```
 
-This starts:
+Then open the local Next.js URL printed by the dev server.
 
-- `gcloud run services proxy attribution-ui`
-- a browser app window at `http://127.0.0.1:8080`
+## Authentication
 
-Use direct Cloud Run URL mode only if the UI service is publicly accessible or your browser is authenticated:
+The Vercel app uses server-side Basic Auth for the internal pilot release:
 
-```powershell
-.\scripts\install_arie_desktop_shortcut.ps1 -Mode CloudUrl
-```
+- `ARIE_BASIC_AUTH_USER`
+- `ARIE_BASIC_AUTH_PASSWORD`
 
-## One-Time Open Without Installing
+Production fails closed if either value is missing.
 
-```powershell
-.\scripts\arie_open_command_center.ps1 -Mode Local -StartBot
-```
+## Backend Dependencies
 
-Logs and runtime PID files stay in the repo root:
+The browser never receives Databricks, GCP, or ARIE API credentials. Server-side
+routes use:
 
-- `streamlit_out.log`
-- `streamlit_err.log`
-- `streamlit.pid`
-- `cloudrun_proxy_out.log`
-- `cloudrun_proxy_err.log`
-- `cloudrun_proxy.pid`
+- Databricks SQL for command center data.
+- GCP Workload Identity Federation for Cloud Run job execution.
+- Optional FastAPI control API access for approval mutations.
+
+Required production variables are documented in `arie-portal/README.md`.
+
+## Removed Paths
+
+The old Streamlit, Replit, and static prototype command centers are retired.
+Do not use local desktop launcher scripts or Cloud Run `attribution-ui` as
+operator surfaces.
