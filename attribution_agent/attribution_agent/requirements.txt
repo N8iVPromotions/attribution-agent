@@ -20,12 +20,14 @@ google-ads==31.0.0
 google-auth>=2.29.0,<3
 google-cloud-secret-manager>=2.20.0,<3
 google-cloud-storage>=2.18.0,<4
-streamlit>=1.35.0,<1.50
+streamlit>=1.54.0,<2
 databricks-sdk>=0.28.0,<1.0
 fastapi>=0.115.0,<1.0
 uvicorn>=0.30.0,<1.0
-fastmcp>=0.1.0,<3
+fastmcp>=3.2.0,<4
 # Constrain transitive deps that otherwise resolve to versions conflicting with
-# base-image packages (mlflow-skinny needs protobuf<6; gradio-client needs websockets<13).
+# base-image packages while still allowing patched MCP/Streamlit releases.
 protobuf>=4.25.0,<6
-websockets>=10,<13
+websockets>=12,<18
+mcp>=1.23.0,<2
+pillow>=12.3.0,<13
