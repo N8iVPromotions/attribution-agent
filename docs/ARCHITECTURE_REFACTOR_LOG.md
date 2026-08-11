@@ -590,3 +590,51 @@ run from the authenticated Command Center.
   quota is unavailable until 2026-08-15 19:49 local time. No production job,
   registry mutation, schema creation, or DROP statement was executed in this
   implementation session.
+
+## 2026-08-10 — Production tenant-control rollout and eval-gate repair
+
+### Production rollout completed
+
+- Migrated one active agency and one active business from the recovery GCS
+  registry into `workspace.attribution_ops.agency_registry` and
+  `workspace.attribution_ops.client_registry`. The migration was upsert-only;
+  it did not delete the GCS source or drop a schema.
+- Updated `scripts/deploy_databricks_tenant_lifecycle.ps1` to create the parent
+  Databricks workspace directory before importing the SOURCE notebook. The
+  serialized tenant lifecycle workflow is deployed as job
+  `365925374048436` at `/Shared/ARIE/tenant_lifecycle`.
+- Cloud Build `7b3052ef-91bf-4d14-9d8f-1ded069e2097` produced image
+  `us-central1-docker.pkg.dev/n8iv-analytics-production/attribution/attribution-agent:151dfc2`
+  with immutable digest
+  `sha256:2bb32d8ad8db8e5a0998783907e40322782009ab06130a4ccae8d833d42d5b34`.
+- Deployed the 20-task attribution worker, launcher, benchmark finalizer,
+  weekly Delta maintenance job, and Command Center Cloud Run service with the
+  Delta registry backend. The deployment did not execute a pipeline run.
+- Added `DATABRICKS_TENANT_LIFECYCLE_JOB_ID=365925374048436` to the Vercel
+  production environment. Deployment `dpl_5Q7rLFkbt9Yf1EqePmbxYuUEU9bw`
+  reached `READY` and is aliased to
+  `https://arie-command-center.vercel.app`.
+
+### Eval-gate diagnosis and correction
+
+- GitHub Actions run `31452927231` showed two isolated contract failures:
+  executive reporting emitted a human-readable status label instead of the
+  machine enum, and governance counted reviewer-only evidence as a disclosure
+  in the quoted client draft.
+- `evals/eval_runner.py` now invokes the gateway with strict per-agent tool
+  schemas, matching the forced structured-output behavior used in production.
+  The governance schema explicitly scopes `partial_data_disclosed` to the
+  client-facing draft, and failed evaluations now log the exact mismatched
+  fields for diagnosis.
+- Added `tests/test_eval_runner.py` to lock the structured-output contract and
+  disclosure semantics.
+
+### Verification proof
+
+- Exact production-backed CI command passed all four golden agents at `1.00`:
+  data quality, revenue analyst, executive reporting, and governance reviewer.
+- Full Python suite: 170 passed with one upstream Starlette/httpx deprecation
+  warning.
+- Ruff format and lint checks pass across all 114 Python files.
+- No attribution run, lifecycle create/delete command, or production
+  `DROP SCHEMA` was executed during release validation.
