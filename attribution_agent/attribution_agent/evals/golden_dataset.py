@@ -14,6 +14,8 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
+from numbers import Real
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +31,19 @@ class GoldenDatasetManager:
         expected_fields: dict | None = None,
         source: str = "manual",
         run_id: str = "",
+        tolerance: dict | None = None,
+        sample_id: str | None = None,
+        raise_on_error: bool = False,
     ) -> str:
         """Promote a real run output to a golden sample. Returns sample_id."""
-        sample_id = uuid.uuid4().hex
-        input_hash = hashlib.sha256(input_text.encode()).hexdigest()[:32]
+        from utils.pii_masker import PIIMasker
+
+        masker = PIIMasker()
+        masked_input, _ = masker.mask(input_text)
+        masked_output, _ = masker.mask(expected_output)
+        masked_fields, _ = masker.mask_dict(expected_fields or {})
+        sample_id = sample_id or uuid.uuid4().hex
+        input_hash = hashlib.sha256(masked_input.encode()).hexdigest()[:32]
         try:
             import pandas as pd
             from utils.databricks_writer import _upsert_dataframe
@@ -44,10 +55,10 @@ class GoldenDatasetManager:
                         "created_at": datetime.now(timezone.utc),
                         "agent_name": agent_name,
                         "input_hash": input_hash,
-                        "input_summary": input_text[:500],
-                        "expected_output": expected_output,
-                        "expected_fields": json.dumps(expected_fields or {}),
-                        "tolerance_json": json.dumps({}),
+                        "input_summary": masked_input,
+                        "expected_output": masked_output,
+                        "expected_fields": json.dumps(masked_fields),
+                        "tolerance_json": json.dumps(tolerance or {}),
                         "source": source,
                         "run_id": run_id,
                         "is_active": True,
@@ -58,7 +69,39 @@ class GoldenDatasetManager:
             logger.info(f"[GoldenDataset] Promoted sample {sample_id} for {agent_name}")
         except Exception as exc:
             logger.warning(f"[GoldenDataset] promote_sample failed: {exc}")
+            if raise_on_error:
+                raise
         return sample_id
+
+    def seed_file(self, path: str | Path) -> int:
+        """Idempotently upsert fully masked samples from JSON or JSONL."""
+        source_path = Path(path)
+        if source_path.suffix == ".jsonl":
+            samples = [
+                json.loads(line)
+                for line in source_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        else:
+            samples = json.loads(source_path.read_text(encoding="utf-8"))
+        if not isinstance(samples, list):
+            raise ValueError("Golden seed file must contain a JSON array or JSONL")
+
+        for sample in samples:
+            identity = f"{sample['agent_name']}:{sample['input_text']}"
+            stable_id = hashlib.sha256(identity.encode()).hexdigest()[:32]
+            self.promote_sample(
+                agent_name=sample["agent_name"],
+                input_text=sample["input_text"],
+                expected_output=sample["expected_output"],
+                expected_fields=sample.get("expected_fields", {}),
+                tolerance=sample.get("tolerance", {}),
+                source=sample.get("source", "seed"),
+                run_id=sample.get("run_id", ""),
+                sample_id=stable_id,
+                raise_on_error=True,
+            )
+        return len(samples)
 
     def load_samples(self, agent_name: str) -> list[dict]:
         try:
@@ -90,11 +133,7 @@ class GoldenDatasetManager:
 
     def evaluate(self, agent_name: str, actual_output: str, sample: dict) -> dict:
         """Compare actual output against a golden sample. Returns field-level results."""
-        expected_fields = {}
-        try:
-            expected_fields = json.loads(sample.get("expected_fields", "{}"))
-        except Exception:
-            pass
+        expected_fields = _json_object(sample.get("expected_fields", {}))
 
         if not expected_fields:
             return {"passed": True, "score": 1.0, "field_results": {}}
@@ -102,29 +141,14 @@ class GoldenDatasetManager:
         field_results = {}
         passed_count = 0
 
-        try:
-            actual = (
-                json.loads(actual_output)
-                if actual_output.strip().startswith("{")
-                else {}
-            )
-        except Exception:
-            actual = {}
+        actual = _json_object(actual_output)
+        tolerance_dict = _json_object(sample.get("tolerance_json", {}))
 
         for field, expected_val in expected_fields.items():
             actual_val = actual.get(field)
-            passed = actual_val is not None
-            if isinstance(expected_val, (int, float)) and isinstance(
-                actual_val, (int, float)
-            ):
-                tolerance = float(sample.get("tolerance_json", "{}") or "{}").get(
-                    field, 0.1
-                )
-                try:
-                    tol_dict = json.loads(sample.get("tolerance_json", "{}") or "{}")
-                    tolerance = tol_dict.get(field, 0.1)
-                except Exception:
-                    tolerance = 0.1
+            passed = actual_val == expected_val
+            if _is_number(expected_val) and _is_number(actual_val):
+                tolerance = float(tolerance_dict.get(field, 0.1))
                 if expected_val != 0:
                     passed = (
                         abs(actual_val - expected_val) / abs(expected_val) <= tolerance
@@ -140,4 +164,28 @@ class GoldenDatasetManager:
                 passed_count += 1
 
         score = passed_count / len(expected_fields) if expected_fields else 1.0
-        return {"passed": score >= 0.80, "score": score, "field_results": field_results}
+        return {
+            "passed": passed_count == len(expected_fields),
+            "score": score,
+            "field_results": field_results,
+        }
+
+
+def _json_object(value: object) -> dict:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return {}
+    text = value.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        text = "\n".join(lines[1:-1]).strip()
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, Real) and not isinstance(value, bool)

@@ -11,9 +11,11 @@ Two outputs:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import pandas as pd
+import pyarrow as pa
 from loguru import logger
 
 
@@ -276,3 +278,12 @@ def validate_stripe(
     client_id: str,
 ) -> tuple[pd.DataFrame, ValidationReport]:
     return StripeValidator(client_id=client_id).validate(df)
+
+
+def validate_record_batch(
+    batch: pa.RecordBatch,
+    validator: Callable[[pd.DataFrame], tuple[pd.DataFrame, ValidationReport]],
+) -> tuple[pa.RecordBatch, ValidationReport]:
+    """Validate one bounded batch and return its filtered Arrow representation."""
+    validated, report = validator(batch.to_pandas())
+    return pa.RecordBatch.from_pandas(validated, preserve_index=False), report

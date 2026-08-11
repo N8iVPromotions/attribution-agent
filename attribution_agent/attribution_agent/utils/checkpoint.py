@@ -83,6 +83,48 @@ class Checkpointer:
             logger.debug(f"[Checkpoint] get_completed_steps failed: {exc}")
             return set()
 
+    def get_step_result(self, run_id: str, client_id: str, step_name: str) -> dict:
+        """Return a completed step's stored result."""
+        import json
+
+        try:
+            from utils.databricks_writer import (
+                _get_connection,
+                _get_spark,
+                _is_databricks,
+            )
+
+            query = (
+                f"SELECT result_json FROM {_OPS_SCHEMA}.pipeline_checkpoints "
+                f"WHERE run_id = '{run_id}' AND client_id = '{client_id}' "
+                f"AND step_name = '{step_name}' AND status = 'completed' "
+                "ORDER BY completed_at DESC LIMIT 1"
+            )
+            if _is_databricks():
+                rows = _get_spark().sql(query).collect()
+                value = rows[0]["result_json"] if rows else "{}"
+            else:
+                conn = _get_connection()
+                cursor = conn.cursor()
+                cursor.execute(query)
+                row = cursor.fetchone()
+                cursor.close()
+                conn.close()
+                value = row[0] if row else "{}"
+            if not value:
+                raise RuntimeError(
+                    f"No completed checkpoint result for {client_id}/{step_name}"
+                )
+            result = json.loads(value)
+            if not isinstance(result, dict):
+                raise TypeError("Checkpoint result must be a JSON object")
+            return result
+        except Exception as exc:
+            logger.error(f"[Checkpoint] get_step_result failed: {exc}")
+            raise RuntimeError(
+                f"Unable to restore checkpoint result for {client_id}/{step_name}"
+            ) from exc
+
     def _write(
         self,
         checkpoint_id: str,

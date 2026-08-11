@@ -22,13 +22,13 @@ function pickText(...values: unknown[]) {
 }
 
 function pipelineCommand(input: PipelineTriggerInput) {
-  const clientArgs = input.clientIds.length ? `,--client-filter,${input.clientIds.join(",")}` : "";
+  const clientArgs = input.clientIds.map((clientId) => `,--client,${clientId}`).join("");
   const dryRun = input.dryRun ? ",--dry-run" : "";
   return [
-    "gcloud run jobs execute attribution-pipeline",
+    "gcloud run jobs execute attribution-launcher",
     "--project n8iv-analytics-production",
     "--region us-central1",
-    `--args "flows/agency_flow.py,--agency,${input.agencyId}${clientArgs}${dryRun},--attribution-model,${input.attributionModel},--run-mode,${input.runMode}"`,
+    `--args "flows/job_launcher.py,--agency,${input.agencyId}${clientArgs}${dryRun},--attribution-model,${input.attributionModel}"`,
     "--wait"
   ].join(" ");
 }
@@ -100,4 +100,8 @@ export async function triggerPipelineRun(input: PipelineTriggerInput): Promise<P
     message: pickText(payload.message) || "Pipeline execution request submitted.",
     operation: pickText(payload.operation, payload.cloud_run_operation, payload.name, payload.metadata?.name)
   };
+}
+
+export function hasPipelineExecutionConfig() {
+  return hasGcpCloudRunOidcConfig() || Boolean((process.env.ARIE_PIPELINE_TRIGGER_URL || "").trim());
 }

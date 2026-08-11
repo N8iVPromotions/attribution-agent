@@ -43,6 +43,7 @@ from agents.insight.insight_agent import generate_insight_report
 from agents.comms.comms_agent import send_agency_report
 from attribution_models import normalize_model
 from utils.databricks_writer import _run_sql, write_pipeline_run
+from utils.idempotency import claim_report_delivery, report_delivery_key
 from utils.operator_alerts import OperatorAlert, dispatch_alerts
 
 try:
@@ -70,6 +71,26 @@ def _get_client_recipient(client_id: str) -> str:
     return config.client_report_email
 
 
+def _partial_suppression_alert(
+    *, client_id: str, agency_id: str, run_id: str, source_failures: dict
+) -> OperatorAlert:
+    event_code = "PARTIAL_INGESTION_REPORT_SUPPRESSED"
+    return OperatorAlert(
+        severity="warning",
+        category="partial_ingestion_report_suppressed",
+        title=event_code,
+        message=(
+            f"{event_code}: report delivery blocked after partial ingestion for "
+            f"client {client_id}"
+        ),
+        client_id=client_id,
+        agency_id=agency_id,
+        run_id=run_id,
+        action_required="Resolve failed sources and rerun before report delivery.",
+        metadata={"event_code": event_code, "source_failures": source_failures},
+    )
+
+
 def _build_union_all(agency: AgencyConfig) -> str:
     """Generate the UNION ALL clause across all client schemas for SQL templates."""
     clauses = []
@@ -93,7 +114,7 @@ def _agency_client_ids(agency: AgencyConfig) -> list[str]:
     return client_ids
 
 
-def run_agency_benchmark_sql(agency: AgencyConfig) -> None:
+def run_agency_benchmark_sql(agency: AgencyConfig, *, fail_fast: bool = False) -> None:
     """Run the agency_benchmark and agency_dashboard SQL transforms."""
     try:
         union_all_clause = _build_union_all(agency)
@@ -116,6 +137,8 @@ def run_agency_benchmark_sql(agency: AgencyConfig) -> None:
                     _run_sql(stmt)
             logger.info(f"[Agency] Executed {sql_file}")
     except Exception as exc:
+        if fail_fast:
+            raise
         logger.warning(f"[Agency] Benchmark SQL failed (non-fatal): {exc}")
 
 
@@ -144,6 +167,8 @@ def run_agency_pipeline(
     attribution_model: str | None = None,
     run_mode: str = "agency",
     resume_run_id: str | None = None,
+    execution_run_id: str | None = None,
+    run_benchmarks: bool = True,
 ) -> dict:
     """
     Run the full pipeline for every client in the agency:
@@ -156,11 +181,12 @@ def run_agency_pipeline(
     """
     from flows.saga import PipelineSaga
     from utils.checkpoint import Checkpointer
+    from utils.client_lock import ClientLeaseHeld, client_lease
 
     agency = get_agency(agency_id)
     client_ids = client_filter or _agency_client_ids(agency)
     selected_model = normalize_model(attribution_model or "last_touch")
-    run_id = resume_run_id or str(uuid.uuid4())
+    run_id = resume_run_id or execution_run_id or str(uuid.uuid4())
     checkpointer = Checkpointer()
 
     if resume_run_id:
@@ -191,7 +217,22 @@ def run_agency_pipeline(
             )
             continue
 
-        with PipelineSaga(run_id=run_id, client_id=client_id, agency_id=agency_id):
+        lease = client_lease(client_id, run_id)
+        try:
+            lease.acquire()
+        except ClientLeaseHeld as exc:
+            logger.warning("[Agency] %s", exc)
+            errors.append({"client_id": client_id, "error": str(exc)})
+            continue
+
+        with (
+            lease,
+            PipelineSaga(
+                run_id=run_id,
+                client_id=client_id,
+                agency_id=agency_id,
+            ),
+        ):
             try:
                 # 1. Ingest
                 if "ingest" not in completed_steps:
@@ -202,7 +243,12 @@ def run_agency_pipeline(
                     )
                 else:
                     logger.info(f"[Agency] Resuming — skipping ingest for {client_id}")
-                    ingest_result = {}
+                    ingest_result = checkpointer.get_step_result(
+                        run_id, client_id, "ingest"
+                    )
+
+                ingest_status = ingest_result.get("status", "complete")
+                source_failures = ingest_result.get("source_failures", {})
 
                 # 2. Refresh attribution outputs for the selected model
                 if "attribution_sql" not in completed_steps:
@@ -220,25 +266,34 @@ def run_agency_pipeline(
                         run_id, agency_id, client_id, "generate_report"
                     )
                     report = generate_insight_report(
-                        client_id, attribution_model=selected_model
+                        client_id,
+                        attribution_model=selected_model,
+                        run_id=run_id,
                     )
                     checkpointer.complete_step(
                         run_id, agency_id, client_id, "generate_report"
                     )
                 else:
                     report = generate_insight_report(
-                        client_id, attribution_model=selected_model
+                        client_id,
+                        attribution_model=selected_model,
+                        run_id=run_id,
                     )
 
                 # 3b. Governance review (advisory — never blocks)
                 try:
                     from agents.intelligence.n8iv_agents import run_governance_review
 
+                    governance_payload = report.to_dict()
+                    governance_payload.pop("generated_at", None)
                     gov_warnings = run_governance_review(
                         client_id=client_id,
                         client_name=get_client(client_id).client_name,
                         report_narrative=report.narrative,
-                        report_json=report.to_dict(),
+                        report_json=governance_payload,
+                        agency_id=agency_id,
+                        run_id=run_id,
+                        data_version=report.data_version,
                     )
                     if gov_warnings:
                         logger.warning(
@@ -270,19 +325,78 @@ def run_agency_pipeline(
 
                 # 4. Send white-labeled email
                 email_sent = False
-                if not dry_run and "email_sent" not in completed_steps:
-                    checkpointer.start_step(run_id, agency_id, client_id, "email_sent")
+                delivery_idempotent_skip = False
+                allow_partial_delivery = (
+                    os.environ.get(
+                        "ARIE_ALLOW_PARTIAL_REPORT_DELIVERY", "false"
+                    ).lower()
+                    == "true"
+                )
+                can_deliver = ingest_status != "partial" or allow_partial_delivery
+                if not can_deliver:
+                    suppression_alert = _partial_suppression_alert(
+                        client_id=client_id,
+                        agency_id=agency_id,
+                        run_id=run_id,
+                        source_failures=source_failures,
+                    )
+                    logger.warning(
+                        "%s | client=%s | failed_sources=%s",
+                        suppression_alert.title,
+                        client_id,
+                        ",".join(source_failures),
+                    )
+                    dispatch_alerts([suppression_alert])
+                elif not dry_run and "email_sent" not in completed_steps:
                     recipient = _get_client_recipient(client_id)
-                    email_sent = send_agency_report(
-                        report=report,
-                        recipient_email=recipient,
-                        agency_config=agency,
-                        powerbi_url=agency.powerbi_workspace_url,
+                    delivery_key = report_delivery_key(
+                        client_id, report.report_month, selected_model
                     )
-                    checkpointer.complete_step(
-                        run_id, agency_id, client_id, "email_sent"
-                    )
-                    logger.info(f"[Agency] Report sent to {recipient}")
+                    claim = claim_report_delivery(delivery_key)
+                    if not claim.acquired:
+                        logger.info(
+                            "[Agency] Duplicate report delivery suppressed | key=%s",
+                            delivery_key,
+                        )
+                        checkpointer.complete_step(
+                            run_id, agency_id, client_id, "email_sent"
+                        )
+                        delivery_idempotent_skip = True
+                    else:
+                        checkpointer.start_step(
+                            run_id, agency_id, client_id, "email_sent"
+                        )
+                        try:
+                            email_sent = send_agency_report(
+                                report=report,
+                                recipient_email=recipient,
+                                agency_config=agency,
+                                powerbi_url=agency.powerbi_workspace_url,
+                            )
+                            if not email_sent:
+                                claim.release()
+                        except Exception:
+                            claim.release()
+                            raise
+                        if email_sent:
+                            try:
+                                claim.complete()
+                            except Exception as claim_exc:
+                                logger.warning(
+                                    "[Agency] Email sent but claim finalization failed; "
+                                    "the retained claim still prevents a duplicate | "
+                                    "key=%s error=%r",
+                                    delivery_key,
+                                    claim_exc,
+                                )
+                            checkpointer.complete_step(
+                                run_id, agency_id, client_id, "email_sent"
+                            )
+                            logger.info(
+                                "[Agency] Report sent to %s | key=%s",
+                                recipient,
+                                delivery_key,
+                            )
                 elif dry_run:
                     logger.info(f"[Agency] dry_run — skipping email for {client_id}")
 
@@ -309,10 +423,23 @@ def run_agency_pipeline(
                 except Exception:
                     pass
 
+                if email_sent:
+                    delivery_status = "📧 Report sent"
+                elif dry_run:
+                    delivery_status = "🔕 Dry run — email skipped"
+                elif not can_deliver:
+                    delivery_status = "⛔ Delivery blocked — partial ingest"
+                elif delivery_idempotent_skip:
+                    delivery_status = "Duplicate delivery suppressed"
+                elif "email_sent" in completed_steps:
+                    delivery_status = "📧 Delivery previously completed"
+                else:
+                    delivery_status = "⚠️ Report email was not sent"
+
                 _notify(
                     f"✅ *{get_client(client_id).client_name}* complete\n"
                     f"Pipeline: `${report.total_pipeline:,.0f}` · Top: `{report.top_channel}`\n"
-                    f"{'📧 Report sent' if email_sent else '🔕 Dry run — email skipped'}"
+                    f"{delivery_status}"
                 )
                 results.append(
                     {
@@ -329,9 +456,11 @@ def run_agency_pipeline(
                         "top_channel": report.top_channel,
                         "total_pipeline": report.total_pipeline,
                         "email_sent": email_sent,
-                        "status": "ok",
+                        "status": ingest_status,
+                        "source_failures": source_failures,
                     }
                 )
+                pipeline_status = "partial" if ingest_status == "partial" else "success"
                 write_pipeline_run(
                     {
                         "run_id": run_id,
@@ -339,7 +468,7 @@ def run_agency_pipeline(
                         "client_id": client_id,
                         "run_mode": run_mode,
                         "attribution_model": selected_model,
-                        "status": "success",
+                        "status": pipeline_status,
                         "dry_run": dry_run,
                         "meta_rows": ingest_result.get("meta_rows", 0),
                         "google_rows": ingest_result.get("google_rows", 0),
@@ -352,6 +481,7 @@ def run_agency_pipeline(
                         "total_pipeline": report.total_pipeline,
                         "top_channel": report.top_channel,
                         "email_sent": email_sent,
+                        "warnings": json.dumps(source_failures, default=str),
                         "started_at": started_at,
                         "finished_at": datetime.now(timezone.utc),
                         "output_schema": get_client(client_id).databricks_schema,
@@ -402,7 +532,7 @@ def run_agency_pipeline(
                     logger.warning(f"[Ops] Failed to write run history: {write_exc}")
 
     # Run cross-client benchmark SQL (best-effort)
-    if not dry_run and results:
+    if run_benchmarks and not dry_run and results:
         run_agency_benchmark_sql(agency)
 
     summary = {
@@ -416,12 +546,98 @@ def run_agency_pipeline(
         "errors": errors,
     }
     logger.info(f"[Agency] Pipeline complete | {summary}")
+    partial_count = sum(item.get("status") == "partial" for item in results)
+    success_count = len(results) - partial_count
     _notify(
         f"{'✅' if not errors else '⚠️'} *Pipeline complete*\n"
-        f"{len(results)} succeeded · {len(errors)} failed\n"
+        f"{success_count} succeeded · {partial_count} partial · {len(errors)} failed\n"
         f"Run ID: `{run_id[:8]}`"
     )
     return summary
+
+
+def build_client_work_items(
+    agency_id: str | None,
+    client_filter: list[str] | None = None,
+) -> list[tuple[str, str]]:
+    """Build a deterministic Cloud Run task assignment list."""
+    agency_ids = [agency_id] if agency_id else sorted(list_agencies())
+    allowed_clients = set(client_filter or [])
+    work_items: list[tuple[str, str]] = []
+
+    for current_agency_id in agency_ids:
+        agency = get_agency(current_agency_id)
+        client_ids = sorted(_agency_client_ids(agency))
+        if allowed_clients:
+            client_ids = [cid for cid in client_ids if cid in allowed_clients]
+        work_items.extend((current_agency_id, client_id) for client_id in client_ids)
+
+    return work_items
+
+
+def run_cloud_task(
+    agency_id: str | None,
+    dry_run: bool,
+    client_filter: list[str] | None,
+    attribution_model: str,
+) -> dict | None:
+    """Run this container's indexed client, or return None outside an array job."""
+    task_index_value = os.environ.get("CLOUD_RUN_TASK_INDEX") or os.environ.get(
+        "JOB_COMPLETION_INDEX"
+    )
+    if task_index_value is None:
+        return None
+
+    task_index = int(task_index_value)
+    task_count = int(os.environ.get("CLOUD_RUN_TASK_COUNT", "1"))
+    manifest_uri = os.environ.get("ARIE_WORK_MANIFEST_URI", "").strip()
+    manifest = None
+    if manifest_uri:
+        from utils.work_manifest import load_work_manifest
+
+        manifest = load_work_manifest(manifest_uri)
+        work_items = [
+            (item["agency_id"], item["client_id"]) for item in manifest["work_items"]
+        ]
+        dry_run = bool(manifest.get("dry_run", dry_run))
+        attribution_model = manifest.get("attribution_model", attribution_model)
+    else:
+        work_items = build_client_work_items(agency_id, client_filter)
+    if task_index < 0 or task_count < 1:
+        raise RuntimeError(
+            "Cloud Run task index must be non-negative and task count must be positive"
+        )
+    if client_filter and not work_items:
+        raise RuntimeError("No configured clients matched the requested client filter")
+    if task_count < len(work_items):
+        raise RuntimeError(
+            f"Cloud Run has {task_count} tasks for {len(work_items)} clients"
+        )
+    if task_index >= len(work_items):
+        return {"status": "no_work", "task_index": task_index}
+
+    assigned_agency, assigned_client = work_items[task_index]
+    execution_id = (
+        (manifest.get("run_id") if manifest else None)
+        or os.environ.get("CLOUD_RUN_EXECUTION")
+        or str(uuid.uuid4())
+    )
+    logger.info(
+        "[Job] Task %s/%s assigned to agency=%s client=%s",
+        task_index,
+        task_count,
+        assigned_agency,
+        assigned_client,
+    )
+    return run_agency_pipeline(
+        agency_id=assigned_agency,
+        client_filter=[assigned_client],
+        dry_run=dry_run,
+        attribution_model=attribution_model,
+        run_mode="client",
+        execution_run_id=execution_id,
+        run_benchmarks=False,
+    )
 
 
 def run_all_agencies(
@@ -519,7 +735,15 @@ if __name__ == "__main__":
         _run_mode = args.run_mode
         _client_filter = args.client_filter
 
-    if _agency:
+    cloud_task_result = run_cloud_task(
+        agency_id=_agency,
+        dry_run=_dry_run,
+        client_filter=_client_filter,
+        attribution_model=_attribution_model,
+    )
+    if cloud_task_result is not None:
+        print(json.dumps(cloud_task_result, indent=2, default=str))
+    elif _agency:
         result = run_agency_pipeline(
             agency_id=_agency,
             client_filter=_client_filter,

@@ -55,7 +55,9 @@ class OperatorAlert:
     def to_record(self) -> dict:
         payload = asdict(self)
         payload["event_time"] = self.event_time
-        payload["metadata_json"] = redact_secrets(json.dumps(self.metadata, default=str))
+        payload["metadata_json"] = redact_secrets(
+            json.dumps(self.metadata, default=str)
+        )
         payload.pop("metadata", None)
         payload["message"] = redact_secrets(self.message)
         payload["action_required"] = redact_secrets(self.action_required)
@@ -201,7 +203,9 @@ def send_operator_alert(alert: OperatorAlert) -> None:
         try:
             sender(alert)
         except Exception as exc:
-            logger.warning(f"[Alerts] {channel} delivery failed: {redact_secrets(str(exc))}")
+            logger.warning(
+                f"[Alerts] {channel} delivery failed: {redact_secrets(str(exc))}"
+            )
 
 
 def build_credential_alerts(
@@ -211,7 +215,9 @@ def build_credential_alerts(
     warning_days: int | None = None,
     run_id: str = "",
 ) -> list[OperatorAlert]:
-    warning_days = warning_days or int(os.environ.get("ARIE_TOKEN_EXPIRY_WARNING_DAYS", "14"))
+    warning_days = warning_days or int(
+        os.environ.get("ARIE_TOKEN_EXPIRY_WARNING_DAYS", "14")
+    )
     today = datetime.now(timezone.utc).date()
     alerts: list[OperatorAlert] = []
     tokens = tokens or {}
@@ -240,7 +246,9 @@ def build_credential_alerts(
             )
 
         expiry_value = getattr(config, _platform_expiry_field(source), "")
-        expiry_value = expiry_value or os.environ.get(_expiry_env_key(config.client_id, source), "")
+        expiry_value = expiry_value or os.environ.get(
+            _expiry_env_key(config.client_id, source), ""
+        )
         expires_at = _parse_date(expiry_value)
         if not expires_at:
             continue
@@ -258,7 +266,10 @@ def build_credential_alerts(
                     source=source,
                     run_id=run_id,
                     action_required=f"Reconnect {label} before the next attribution run.",
-                    metadata={"expires_at": expires_at.isoformat(), "days_left": days_left},
+                    metadata={
+                        "expires_at": expires_at.isoformat(),
+                        "days_left": days_left,
+                    },
                 )
             )
         elif days_left <= warning_days:
@@ -273,7 +284,10 @@ def build_credential_alerts(
                     source=source,
                     run_id=run_id,
                     action_required=f"Refresh {label} credentials before they expire.",
-                    metadata={"expires_at": expires_at.isoformat(), "days_left": days_left},
+                    metadata={
+                        "expires_at": expires_at.isoformat(),
+                        "days_left": days_left,
+                    },
                 )
             )
 
@@ -316,7 +330,9 @@ def build_source_failure_alerts(
     return alerts
 
 
-def build_validation_alerts(config, reports: list, *, run_id: str = "") -> list[OperatorAlert]:
+def build_validation_alerts(
+    config, reports: list, *, run_id: str = ""
+) -> list[OperatorAlert]:
     alerts: list[OperatorAlert] = []
     for report in reports:
         if not report or (not report.warnings and report.passed):

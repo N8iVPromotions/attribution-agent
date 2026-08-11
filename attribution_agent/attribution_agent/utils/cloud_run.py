@@ -29,7 +29,9 @@ def cloud_run_settings() -> CloudRunJobSettings:
             or ""
         ).strip(),
         region=os.environ.get("ATTRIBUTION_CLOUD_RUN_REGION", "us-central1").strip(),
-        job_name=os.environ.get("ATTRIBUTION_CLOUD_RUN_JOB", "attribution-pipeline").strip(),
+        job_name=os.environ.get(
+            "ATTRIBUTION_CLOUD_RUN_JOB", "attribution-pipeline"
+        ).strip(),
     )
 
 
@@ -121,4 +123,8 @@ def submit_cloud_run_job(
             f"{redact_secrets(response.text[:500])}"
         )
     payload = response.json()
-    return payload.get("name") or payload.get("metadata", {}).get("name") or settings.job_name
+    return (
+        payload.get("name")
+        or payload.get("metadata", {}).get("name")
+        or settings.job_name
+    )

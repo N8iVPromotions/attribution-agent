@@ -5,6 +5,9 @@ param(
     [string]$Region = "us-central1",
     [string]$Repo = "attribution",
     [string]$RegistryBucket = "",
+    [string]$RawArchiveBucket = "",
+    [int]$PipelineTasks = 20,
+    [int]$PipelineParallelism = 5,
     [string]$OperatorPrincipal = "",
     [switch]$AllowUnauthenticatedUi
 )
@@ -22,11 +25,18 @@ if (-not $gcloud) {
 if (-not $RegistryBucket) {
     $RegistryBucket = "$ProjectId-attribution-registry"
 }
+if (-not $RawArchiveBucket) {
+    $RawArchiveBucket = "$ProjectId-attribution-raw"
+}
 
 $image = "$Region-docker.pkg.dev/$ProjectId/$Repo/attribution-agent"
 $serviceUi = "attribution-ui"
 $jobPipeline = "attribution-pipeline"
+$jobLauncher = "attribution-launcher"
+$jobFinalizer = "attribution-benchmark-finalizer"
+$jobMaintenance = "attribution-delta-maintenance"
 $schedulerJob = "attribution-monthly"
+$schedulerMaintenanceJob = "attribution-weekly-maintenance"
 $runtimeSaName = "attribution-runtime"
 $schedulerSaName = "attribution-scheduler"
 $runtimeSa = "$runtimeSaName@$ProjectId.iam.gserviceaccount.com"
@@ -187,12 +197,30 @@ Invoke-Gcloud storage buckets add-iam-policy-binding "gs://$RegistryBucket" `
     --role roles/storage.objectAdmin `
     --project $ProjectId
 
+if ((Invoke-GcloudQuiet storage buckets describe "gs://$RawArchiveBucket" --project $ProjectId) -ne 0) {
+    Invoke-Gcloud storage buckets create "gs://$RawArchiveBucket" `
+        --location $Region `
+        --uniform-bucket-level-access `
+        --project $ProjectId
+}
+Invoke-Gcloud storage buckets update "gs://$RawArchiveBucket" `
+    --lifecycle-file "attribution_agent/attribution_agent/config/raw_archive_lifecycle.json" `
+    --project $ProjectId
+Invoke-Gcloud storage buckets add-iam-policy-binding "gs://$RawArchiveBucket" `
+    --member "serviceAccount:$runtimeSa" `
+    --role roles/storage.objectCreator `
+    --project $ProjectId
+Invoke-Gcloud storage buckets add-iam-policy-binding "gs://$RawArchiveBucket" `
+    --member "serviceAccount:$runtimeSa" `
+    --role roles/storage.objectViewer `
+    --project $ProjectId
+
 $gitSha = Get-GitSha
 Invoke-Gcloud builds submit --tag "$image`:$gitSha" . --project $ProjectId
 Invoke-Gcloud artifacts docker tags add "$image`:$gitSha" "$image`:latest" --project $ProjectId
 
 $commonEnv = @(
-    "ATTRIBUTION_CLIENT_REGISTRY_BACKEND=local",
+    "ATTRIBUTION_CLIENT_REGISTRY_BACKEND=delta",
     "ATTRIBUTION_CLIENT_REGISTRY_PATH=/mnt/registry/clients.json",
     "ATTRIBUTION_CATALOG=workspace",
     "ATTRIBUTION_OPS_SCHEMA=workspace.attribution_ops",
@@ -202,8 +230,22 @@ $commonEnv = @(
     "ATTRIBUTION_CLOUD_RUN_REGION=$Region",
     "ARIE_AUTH_ENABLED=true",
     "ARIE_BOOTSTRAP_ADMIN_EMAIL=zajen@n8ivpromotions.com",
-    "ARIE_SESSION_TTL_HOURS=12"
+    "ARIE_SESSION_TTL_HOURS=12",
+    "ARIE_CLIENT_LOCK_BUCKET=$RegistryBucket",
+    "ARIE_CLIENT_LOCKS_ENABLED=true",
+    "ARIE_RAW_ARCHIVE_BUCKET=$RawArchiveBucket",
+    "ARIE_WORK_MANIFEST_BUCKET=$RegistryBucket",
+    "ARIE_AI_BUDGET_BUCKET=$RegistryBucket",
+    "ARIE_DELIVERY_IDEMPOTENCY_BUCKET=$RegistryBucket",
+    "ARIE_INGEST_SOURCE_WORKERS=3",
+    "ARIE_INGEST_BATCH_ROWS=5000",
+    "ARIE_STREAMING_INGEST=true",
+    "ARIE_MODEL_BUDGET_FAIL_CLOSED=true",
+    "ARIE_DAILY_AI_USD_LIMIT=25",
+    "ARIE_MONTHLY_AI_USD_LIMIT=300",
+    "ATTRIBUTION_BENCHMARK_FINALIZER_JOB=$jobFinalizer"
 ) -join ","
+$commonEnv += ",GIT_SHA=$gitSha"
 
 $jobArgs = @(
     "run", "jobs", "deploy", $jobPipeline,
@@ -216,8 +258,9 @@ $jobArgs = @(
     "--add-volume", "name=registry,type=cloud-storage,bucket=$RegistryBucket",
     "--add-volume-mount", "volume=registry,mount-path=/mnt/registry",
     "--task-timeout", "3600",
-    "--max-retries", "0",
-    "--tasks", "1",
+    "--max-retries", "1",
+    "--tasks", "$PipelineTasks",
+    "--parallelism", "$PipelineParallelism",
     "--memory", "2Gi",
     "--cpu", "2",
     "--project", $ProjectId
@@ -229,14 +272,50 @@ Invoke-Gcloud @jobArgs
 
 Invoke-Gcloud run jobs add-iam-policy-binding $jobPipeline `
     --region $Region `
-    --member "serviceAccount:$schedulerSa" `
-    --role roles/run.invoker `
+    --member "serviceAccount:$runtimeSa" `
+    --role roles/run.developer `
     --project $ProjectId
-Invoke-Gcloud run jobs add-iam-policy-binding $jobPipeline `
+
+$supportJobs = @(
+    @{ Name = $jobFinalizer; Script = "flows/benchmark_finalizer.py"; Timeout = "3600"; Memory = "1Gi"; Retries = "1" },
+    @{ Name = $jobLauncher; Script = "flows/job_launcher.py"; Timeout = "9000"; Memory = "1Gi"; Retries = "0" },
+    @{ Name = $jobMaintenance; Script = "flows/delta_maintenance.py"; Timeout = "3600"; Memory = "1Gi"; Retries = "1" }
+)
+foreach ($job in $supportJobs) {
+    $supportArgs = @(
+        "run", "jobs", "deploy", $job.Name,
+        "--image", "$image`:$gitSha",
+        "--region", $Region,
+        "--service-account", $runtimeSa,
+        "--command", "python",
+        "--args", $job.Script,
+        "--set-env-vars", $commonEnv,
+        "--add-volume", "name=registry,type=cloud-storage,bucket=$RegistryBucket",
+        "--add-volume-mount", "volume=registry,mount-path=/mnt/registry",
+        "--task-timeout", $job.Timeout,
+        "--max-retries", $job.Retries,
+        "--tasks", "1",
+        "--memory", $job.Memory,
+        "--cpu", "1",
+        "--project", $ProjectId
+    )
+    if ($secretFlags) {
+        $supportArgs += @("--set-secrets", $secretFlags)
+    }
+    Invoke-Gcloud @supportArgs
+}
+Invoke-Gcloud run jobs add-iam-policy-binding $jobFinalizer `
     --region $Region `
     --member "serviceAccount:$runtimeSa" `
-    --role roles/run.invoker `
+    --role roles/run.developer `
     --project $ProjectId
+foreach ($schedulerTarget in @($jobLauncher, $jobMaintenance)) {
+    Invoke-Gcloud run jobs add-iam-policy-binding $schedulerTarget `
+        --region $Region `
+        --member "serviceAccount:$schedulerSa" `
+        --role roles/run.invoker `
+        --project $ProjectId
+}
 
 $uiAuthFlag = if ($AllowUnauthenticatedUi) { "--allow-unauthenticated" } else { "--no-allow-unauthenticated" }
 if ($AllowUnauthenticatedUi) {
@@ -289,7 +368,20 @@ Invoke-Gcloud scheduler jobs $schedulerVerb http $schedulerJob `
     --location $Region `
     --schedule $schedule `
     --time-zone "America/New_York" `
-    --uri "https://run.googleapis.com/v2/projects/$ProjectId/locations/$Region/jobs/$jobPipeline`:run" `
+    --uri "https://run.googleapis.com/v2/projects/$ProjectId/locations/$Region/jobs/$jobLauncher`:run" `
+    --http-method POST `
+    --oauth-service-account-email $schedulerSa `
+    --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform" `
+    --attempt-deadline "300s" `
+    --project $ProjectId
+
+$maintenanceSchedule = if ($env:MAINTENANCE_SCHEDULE) { $env:MAINTENANCE_SCHEDULE } else { "0 3 * * 0" }
+$maintenanceVerb = if ((Invoke-GcloudQuiet scheduler jobs describe $schedulerMaintenanceJob --location $Region --project $ProjectId) -eq 0) { "update" } else { "create" }
+Invoke-Gcloud scheduler jobs $maintenanceVerb http $schedulerMaintenanceJob `
+    --location $Region `
+    --schedule $maintenanceSchedule `
+    --time-zone "America/New_York" `
+    --uri "https://run.googleapis.com/v2/projects/$ProjectId/locations/$Region/jobs/$jobMaintenance`:run" `
     --http-method POST `
     --oauth-service-account-email $schedulerSa `
     --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform" `
@@ -302,5 +394,6 @@ Write-Host ""
 Write-Host "Deployed ARIE" -ForegroundColor Green
 Write-Host "Image:     $image`:$gitSha"
 Write-Host "UI:        $serviceUrl"
-Write-Host "Job:       gcloud run jobs execute $jobPipeline --project $ProjectId --region $Region --args `"flows/agency_flow.py,--agency,demo_agency,--dry-run`" --wait"
+Write-Host "Job:       gcloud run jobs execute $jobLauncher --project $ProjectId --region $Region --args `"flows/job_launcher.py,--dry-run,--expected-client-count,20`" --wait"
 Write-Host "Scheduler: $schedulerJob ($schedule America/New_York)"
+Write-Host "Maintenance: $schedulerMaintenanceJob ($maintenanceSchedule America/New_York)"

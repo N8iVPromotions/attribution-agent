@@ -1543,9 +1543,7 @@ def _status_chip(label: str, state: str = "ok") -> str:
 def _render_overview_page(active_agency_id: str) -> None:
     agency_ids = list_agencies()
     client_ids = (
-        _client_ids_for_agency(active_agency_id)
-        if active_agency_id
-        else list_clients()
+        _client_ids_for_agency(active_agency_id) if active_agency_id else list_clients()
     )
     cfgs = [get_client(cid) for cid in client_ids if cid in CLIENT_REGISTRY]
     open_alerts = _fetch_open_alert_count()
@@ -1567,15 +1565,30 @@ def _render_overview_page(active_agency_id: str) -> None:
             '<article class="source-card">'
             f'  <div class="source-name">{_esc(name)}</div>'
             f'  <div class="source-meta">{_esc(desc)}<br>{count} configured client{"s" if count != 1 else ""}</div>'
-            f'  {_status_chip("Ready" if count else "Not configured", state)}'
+            f"  {_status_chip('Ready' if count else 'Not configured', state)}"
             "</article>"
         )
 
     kpis = [
-        ("Agencies", len(agency_ids), f"{_safe_agency_name(active_agency_id)} active", "Portfolio registry"),
+        (
+            "Agencies",
+            len(agency_ids),
+            f"{_safe_agency_name(active_agency_id)} active",
+            "Portfolio registry",
+        ),
         ("Clients", len(cfgs), "Ready for command center runs", "Configured accounts"),
-        ("Sources", f"{ready_sources}/5", "Connected in selected scope", "Attribution inputs"),
-        ("Open alerts", open_alerts, "Needs review" if open_alerts else "No urgent issues", "Operator watch"),
+        (
+            "Sources",
+            f"{ready_sources}/5",
+            "Connected in selected scope",
+            "Attribution inputs",
+        ),
+        (
+            "Open alerts",
+            open_alerts,
+            "Needs review" if open_alerts else "No urgent issues",
+            "Operator watch",
+        ),
     ]
     kpi_html = "".join(
         '<article class="kpi-card">'
@@ -1585,7 +1598,9 @@ def _render_overview_page(active_agency_id: str) -> None:
         "</article>"
         for label, value, trend, detail in kpis
     )
-    st.markdown(f'<div class="operator-grid kpi">{kpi_html}</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="operator-grid kpi">{kpi_html}</div>', unsafe_allow_html=True
+    )
 
     st.markdown("<div style='height:1rem'></div>", unsafe_allow_html=True)
     left, right = st.columns([1.2, 0.8])
@@ -1595,8 +1610,8 @@ def _render_overview_page(active_agency_id: str) -> None:
             '  <div class="operator-card-header">'
             '    <div><div class="operator-card-title">Live pipeline board</div>'
             '    <div class="operator-card-desc">Configured clients move through ingest, validation, attribution, reporting, and delivery.</div></div>'
-            f'    {_status_chip(_backend_label(), "ok")}'
-            '  </div>'
+            f"    {_status_chip(_backend_label(), 'ok')}"
+            "  </div>"
             '  <div class="operator-card-body">',
             unsafe_allow_html=True,
         )
@@ -1606,9 +1621,24 @@ def _render_overview_page(active_agency_id: str) -> None:
     with right:
         alert_state = "warn" if open_alerts else "ok"
         events = [
-            ("ok", "Command center online", f"Serving {_backend_label()} controls from the local Streamlit app.", "Now"),
-            ("ok", "Client registry loaded", f"{len(cfgs)} client account{'s' if len(cfgs) != 1 else ''} in the active scope.", "Now"),
-            (alert_state, "Operator alerts", f"{open_alerts} open alert{'s' if open_alerts != 1 else ''} waiting for review.", "Live"),
+            (
+                "ok",
+                "Command center online",
+                f"Serving {_backend_label()} controls from the local Streamlit app.",
+                "Now",
+            ),
+            (
+                "ok",
+                "Client registry loaded",
+                f"{len(cfgs)} client account{'s' if len(cfgs) != 1 else ''} in the active scope.",
+                "Now",
+            ),
+            (
+                alert_state,
+                "Operator alerts",
+                f"{open_alerts} open alert{'s' if open_alerts != 1 else ''} waiting for review.",
+                "Live",
+            ),
         ]
         event_html = "".join(
             f'<article class="event-card {state}">'
@@ -1623,9 +1653,9 @@ def _render_overview_page(active_agency_id: str) -> None:
             '  <div class="operator-card-header">'
             '    <div><div class="operator-card-title">Recent activity</div>'
             '    <div class="operator-card-desc">Run readiness, alert state, and operator context.</div></div>'
-            '  </div>'
+            "  </div>"
             f'  <div class="operator-card-body"><div class="event-list">{event_html}</div></div>'
-            '</article>',
+            "</article>",
             unsafe_allow_html=True,
         )
 
@@ -1635,9 +1665,9 @@ def _render_overview_page(active_agency_id: str) -> None:
         '  <div class="operator-card-header">'
         '    <div><div class="operator-card-title">Configured source coverage</div>'
         '    <div class="operator-card-desc">What ARIE can use for attribution in the active agency scope.</div></div>'
-        '  </div>'
+        "  </div>"
         f'  <div class="operator-card-body"><div class="source-grid">{"".join(source_cards)}</div></div>'
-        '</article>',
+        "</article>",
         unsafe_allow_html=True,
     )
 
@@ -1664,19 +1694,23 @@ def _render_pipeline_board(client_ids: list[str]) -> None:
                 f'  <div class="job-client">{_esc(_client_label(cid))}</div>'
                 f'  <div class="job-meta"><span>{progress}% complete</span><span>{_esc(caption)}</span></div>'
                 f'  <div class="progress"><span style="width:{progress}%"></span></div>'
-                f'  {_status_chip("Active" if idx < 4 else "Ready", "ok")}'
-                '</article>'
+                f"  {_status_chip('Active' if idx < 4 else 'Ready', 'ok')}"
+                "</article>"
                 for cid in jobs[:4]
             )
         else:
-            job_html = '<div class="operator-card-desc">No active clients in this step.</div>'
+            job_html = (
+                '<div class="operator-card-desc">No active clients in this step.</div>'
+            )
         cards.append(
             '<section class="stage-card">'
             f'  <div class="stage-head"><div class="stage-title">{_esc(stage)}</div><div class="stage-count">{len(jobs)}</div></div>'
             f"  {job_html}"
             "</section>"
         )
-    st.markdown(f'<div class="pipeline-board">{"".join(cards)}</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="pipeline-board">{"".join(cards)}</div>', unsafe_allow_html=True
+    )
 
 
 def _has_permission(user: dict, permission: Permission) -> bool:
@@ -1843,7 +1877,9 @@ def _render_login_gate() -> dict:
         unsafe_allow_html=True,
     )
     with st.form("arie_login_form", clear_on_submit=False):
-        email = st.text_input("Email", value=os.environ.get("ARIE_BOOTSTRAP_ADMIN_EMAIL", ""))
+        email = st.text_input(
+            "Email", value=os.environ.get("ARIE_BOOTSTRAP_ADMIN_EMAIL", "")
+        )
         password = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Sign in", type="primary")
     if submitted:
@@ -1998,9 +2034,7 @@ def _render_client_manager() -> None:
                 value="",
                 type="password",
                 placeholder=(
-                    "Configured"
-                    if base.google_ads_refresh_token_secret_name
-                    else ""
+                    "Configured" if base.google_ads_refresh_token_secret_name else ""
                 ),
                 disabled=not google_ads_enabled,
                 key="google_refresh_token",
@@ -2186,8 +2220,7 @@ def _render_client_manager() -> None:
             save_client_config(config)
         except Exception as exc:
             st.error(
-                f"Save failed - client was not persisted: "
-                f"{redact_secrets(str(exc))}"
+                f"Save failed - client was not persisted: {redact_secrets(str(exc))}"
             )
             return
         secret_refs = [
@@ -2327,7 +2360,7 @@ with st.sidebar:
         '  <div class="sidebar-logo">AR</div>'
         '  <div><div class="sidebar-title">ARIE<br>Command Center</div>'
         '  <div class="sidebar-subtitle">N8iV revenue operations</div></div>'
-        '</div>',
+        "</div>",
         unsafe_allow_html=True,
     )
     role_label = str(current_user.get("role", "viewer")).replace("_", " ").title()
@@ -2336,7 +2369,7 @@ with st.sidebar:
         '<div class="sidebar-label">Signed in</div>'
         f'<div style="color:#f7f6f3;font-weight:760;margin-top:0.45rem;">{_esc(current_user.get("display_name") or current_user.get("email"))}</div>'
         f'<div style="color:rgba(247,246,243,0.48);font-size:0.72rem;margin-top:0.18rem;">{_esc(role_label)}</div>'
-        '</div>',
+        "</div>",
         unsafe_allow_html=True,
     )
     st.markdown(
@@ -2367,9 +2400,9 @@ with st.sidebar:
     )
     st.markdown(
         '<div class="sidebar-footer">'
-        'Operator workspace for attribution runs, client setup, outreach, alerts, and reporting.'
+        "Operator workspace for attribution runs, client setup, outreach, alerts, and reporting."
         '<div class="health-strip"><span class="health-dot"></span><span class="health-dot"></span><span class="health-dot warn"></span></div>'
-        '</div>',
+        "</div>",
         unsafe_allow_html=True,
     )
     if st.button("Sign out", use_container_width=True):
@@ -2607,9 +2640,7 @@ if selected_view == "Pipeline":
         )
     with bar_r:
         if st.button("Recent runs", type="secondary", use_container_width=True):
-            st.session_state["show_runs"] = not st.session_state.get(
-                "show_runs", False
-            )
+            st.session_state["show_runs"] = not st.session_state.get("show_runs", False)
 
     if st.session_state.get("show_runs"):
         st.markdown('<hr class="ruled">', unsafe_allow_html=True)
@@ -2709,7 +2740,9 @@ if selected_view == "Clients" and _has_permission(
 # ══════════════════════════════════════════════
 if selected_view == "Outreach":
     # ── ARIE status banner ─────────────────────
-    telegram_status = "online" if (_arie_enabled and arie_bot.is_running()) else "standby"
+    telegram_status = (
+        "online" if (_arie_enabled and arie_bot.is_running()) else "standby"
+    )
     if _CLOUD_RUN_RUNTIME:
         st.info(
             "**ARIE Outreach is running in Cloud Run.** Email sequence generation "
@@ -3096,9 +3129,7 @@ if selected_view == "Observability" and _has_permission(
                     "source",
                     "action_required",
                 ]
-                alert_df = alert_df[
-                    [c for c in visible_cols if c in alert_df.columns]
-                ]
+                alert_df = alert_df[[c for c in visible_cols if c in alert_df.columns]]
                 st.dataframe(alert_df, width="stretch", hide_index=True)
             else:
                 st.caption("No open operator alerts.")

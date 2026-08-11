@@ -140,6 +140,7 @@ def _call_agent(
     client_id: str = "",
     agency_id: str = "",
     response_schema: dict | None = None,
+    data_version: str = "",
 ) -> str:
     """Route agent call through ModelGateway. Returns raw text response.
 
@@ -161,6 +162,7 @@ def _call_agent(
         agency_id=agency_id,
         task_type=task_type,
         response_schema=response_schema,
+        data_version=data_version,
     )
     logger.info(
         f"[N8iV/{agent_name}] tokens — in: {resp.input_tokens}, "
@@ -185,6 +187,8 @@ def run_data_quality_agent(
     client_id: str,
     validation_reports: list,
     ingest_summary: dict,
+    agency_id: str = "",
+    run_id: str = "",
 ) -> dict:
     """
     Post-ingest hook. Summarizes validation findings through the data-quality agent lens.
@@ -222,6 +226,9 @@ def run_data_quality_agent(
             message,
             max_tokens=800,
             client_id=client_id,
+            agency_id=agency_id,
+            run_id=run_id,
+            data_version=run_id,
             response_schema=DATA_QUALITY_SCHEMA,
         )
         result = _parse_json_response(raw)
@@ -245,6 +252,9 @@ def run_revenue_analyst_agent(
     client_name: str,
     channel_data: list[dict],
     attribution_model: str,
+    agency_id: str = "",
+    run_id: str = "",
+    data_version: str = "",
 ) -> str:
     """
     Stage 1 of two-stage insight generation.
@@ -286,7 +296,15 @@ def run_revenue_analyst_agent(
         "to write the final client report."
     )
 
-    return _call_agent("revenue-analyst", message, max_tokens=1000, client_id=client_id)
+    return _call_agent(
+        "revenue-analyst",
+        message,
+        max_tokens=1000,
+        client_id=client_id,
+        agency_id=agency_id,
+        run_id=run_id,
+        data_version=data_version,
+    )
 
 
 # ─── EXECUTIVE REPORTING AGENT ────────────────────────────────
@@ -298,6 +316,9 @@ def run_executive_reporting_agent(
     analyst_output: str,
     channel_data: list[dict],
     attribution_model: str,
+    agency_id: str = "",
+    run_id: str = "",
+    data_version: str = "",
 ) -> dict:
     """
     Stage 2 of two-stage insight generation.
@@ -340,6 +361,9 @@ def run_executive_reporting_agent(
         message,
         max_tokens=1500,
         client_id=client_id,
+        agency_id=agency_id,
+        run_id=run_id,
+        data_version=data_version,
         response_schema=EXEC_REPORT_SCHEMA,
     )
     return _parse_json_response(raw)
@@ -353,6 +377,9 @@ def run_governance_review(
     client_name: str,
     report_narrative: str,
     report_json: dict,
+    agency_id: str = "",
+    run_id: str = "",
+    data_version: str = "",
 ) -> list[str]:
     """
     Pre-send governance check. Returns a list of advisory warning strings.
@@ -377,6 +404,9 @@ def run_governance_review(
             message,
             max_tokens=600,
             client_id=client_id,
+            agency_id=agency_id,
+            run_id=run_id,
+            data_version=data_version,
             response_schema=GOVERNANCE_SCHEMA,
         )
         result = _parse_json_response(raw)

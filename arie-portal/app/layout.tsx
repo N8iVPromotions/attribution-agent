@@ -3,9 +3,10 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ARIE Command Center | N8iV Promotions",
+  title: "ARIE Internal Command Center | N8iV Promotions",
   description:
-    "Operator portal for attribution runs, client readiness, revenue reporting, and urgent data quality alerts."
+    "Internal operations control plane for attribution execution, tenant readiness, reporting, cost governance, and incident response.",
+  robots: { index: false, follow: false }
 };
 
 export default function RootLayout({

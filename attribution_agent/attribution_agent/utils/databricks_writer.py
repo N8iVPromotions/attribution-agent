@@ -7,11 +7,15 @@ Runs via SQL Connector when local, Spark when inside Databricks.
 from __future__ import annotations
 import logging
 import os
+import re
 import time
 import uuid
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
+from itertools import islice
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +130,8 @@ CREATE TABLE IF NOT EXISTS {schema}.meta_ads_raw (
     conversions_offsite_conversion_fb_pixel_complete_registration BIGINT
 )
 USING DELTA
-PARTITIONED BY (date)
+CLUSTER BY (date, campaign_id)
+TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')
 """
 
 HUBSPOT_TABLE_DDL = """
@@ -201,7 +206,8 @@ CREATE TABLE IF NOT EXISTS {schema}.ad_spend_normalized (
     ingested_at         TIMESTAMP
 )
 USING DELTA
-PARTITIONED BY (date)
+CLUSTER BY (date, campaign_id)
+TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')
 """
 
 ATTRIBUTION_RESULTS_TABLE_DDL = """
@@ -570,6 +576,39 @@ CREATE TABLE IF NOT EXISTS {ops_schema}.client_registry (
 USING DELTA
 """
 
+AGENCY_REGISTRY_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.agency_registry (
+    agency_id       STRING,
+    agency_name     STRING,
+    config_json     STRING,
+    is_active       BOOLEAN,
+    created_at      TIMESTAMP,
+    updated_at      TIMESTAMP
+)
+USING DELTA
+"""
+
+TENANT_LIFECYCLE_OPERATIONS_DDL = """
+CREATE TABLE IF NOT EXISTS {ops_schema}.tenant_lifecycle_operations (
+    request_id          STRING,
+    command             STRING,
+    entity_type         STRING,
+    entity_id           STRING,
+    agency_id           STRING,
+    schema_name         STRING,
+    requested_by        STRING,
+    requested_at        TIMESTAMP,
+    started_at          TIMESTAMP,
+    completed_at        TIMESTAMP,
+    status              STRING,
+    databricks_run_id   STRING,
+    ddl_statement       STRING,
+    error_message       STRING,
+    result_json         STRING
+)
+USING DELTA
+"""
+
 _RAW_TABLES = [
     "meta_ads_raw",
     "hubspot_deals_raw",
@@ -577,6 +616,7 @@ _RAW_TABLES = [
     "ad_spend_normalized",
     "attribution_results",
 ]
+_HIGH_VOLUME_TABLES = ("ad_spend_normalized", "meta_ads_raw")
 _OPS_TABLES = [
     "pipeline_runs",
     "audit_log",
@@ -596,6 +636,9 @@ _OPS_TABLES = [
     "eval_results",
     "ab_experiments",
     "ab_assignments",
+    "client_registry",
+    "agency_registry",
+    "tenant_lifecycle_operations",
 ]
 
 
@@ -707,6 +750,58 @@ def set_table_retention_policies(schema: str) -> None:
             )
 
 
+def _validated_schema(schema: str) -> str:
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*", schema):
+        raise ValueError(f"Unsafe Databricks schema identifier: {schema!r}")
+    return schema
+
+
+def apply_liquid_clustering_v2(schema: str) -> list[str]:
+    """Migrate existing date-partitioned high-volume tables to liquid clustering.
+
+    ``REPLACE PARTITIONED BY WITH CLUSTER BY`` requires Databricks Runtime 18.1+
+    and is intentionally separate from normal table bootstrap.
+    """
+    safe_schema = _validated_schema(schema)
+    executed = []
+    for table in _HIGH_VOLUME_TABLES:
+        statements = (
+            f"ALTER TABLE {safe_schema}.{table} SET TBLPROPERTIES "
+            "('delta.enableDeletionVectors' = 'true')",
+            f"ALTER TABLE {safe_schema}.{table} REPLACE PARTITIONED BY "
+            "WITH CLUSTER BY (date, campaign_id)",
+        )
+        for statement in statements:
+            _run_sql(statement)
+            executed.append(statement)
+    return executed
+
+
+def run_delta_maintenance(
+    schema: str,
+    *,
+    tables: tuple[str, ...] = _HIGH_VOLUME_TABLES,
+    vacuum_hours: int = 168,
+) -> list[str]:
+    """Compact and vacuum allow-listed high-volume Delta tables."""
+    safe_schema = _validated_schema(schema)
+    if vacuum_hours < 168:
+        raise ValueError("VACUUM retention must be at least 168 hours")
+    unknown_tables = set(tables) - set(_HIGH_VOLUME_TABLES)
+    if unknown_tables:
+        raise ValueError(f"Unsupported maintenance tables: {sorted(unknown_tables)}")
+
+    executed = []
+    for table in tables:
+        for statement in (
+            f"OPTIMIZE {safe_schema}.{table}",
+            f"VACUUM {safe_schema}.{table} RETAIN {vacuum_hours} HOURS",
+        ):
+            _run_sql(statement)
+            executed.append(statement)
+    return executed
+
+
 def ensure_ops_tables() -> None:
     _run_sql(f"CREATE SCHEMA IF NOT EXISTS {_OPS_SCHEMA}")
     _run_sql(RUN_HISTORY_TABLE_DDL.format(ops_schema=_OPS_SCHEMA))
@@ -715,6 +810,9 @@ def ensure_ops_tables() -> None:
     _run_sql(AUTH_USERS_DDL.format(ops_schema=_OPS_SCHEMA))
     _run_sql(AUTH_SESSIONS_DDL.format(ops_schema=_OPS_SCHEMA))
     _run_sql(AUTH_EVENTS_DDL.format(ops_schema=_OPS_SCHEMA))
+    _run_sql(CLIENT_REGISTRY_TABLE_DDL.format(ops_schema=_OPS_SCHEMA))
+    _run_sql(AGENCY_REGISTRY_TABLE_DDL.format(ops_schema=_OPS_SCHEMA))
+    _run_sql(TENANT_LIFECYCLE_OPERATIONS_DDL.format(ops_schema=_OPS_SCHEMA))
     logger.info(f"[Databricks] Ops tables ready: {_OPS_SCHEMA}")
 
 
@@ -768,6 +866,55 @@ def upsert_client_registry_entry(
     _upsert_dataframe(df, _OPS_SCHEMA, "client_registry", ["client_id"])
     logger.info(
         f"[Databricks] client_registry upsert: {client_id} (active={is_active})"
+    )
+
+
+_agency_registry_table_ready = False
+
+
+def ensure_agency_registry_table() -> None:
+    global _agency_registry_table_ready
+    if _agency_registry_table_ready:
+        return
+    _run_sql(f"CREATE SCHEMA IF NOT EXISTS {_OPS_SCHEMA}")
+    _run_sql(AGENCY_REGISTRY_TABLE_DDL.format(ops_schema=_OPS_SCHEMA))
+    _agency_registry_table_ready = True
+    logger.debug(f"[Databricks] agency_registry ready: {_OPS_SCHEMA}.agency_registry")
+
+
+def fetch_agency_registry_rows() -> list[dict]:
+    """Return active agency registry rows."""
+    ensure_agency_registry_table()
+    return _fetch_rows(
+        "SELECT agency_id, agency_name, config_json "
+        f"FROM {_OPS_SCHEMA}.agency_registry WHERE is_active = TRUE"
+    )
+
+
+def upsert_agency_registry_entry(
+    agency_id: str,
+    agency_name: str,
+    config_json: str,
+    is_active: bool = True,
+) -> None:
+    """Insert or update one agency registry row (is_active=False soft-deletes)."""
+    ensure_agency_registry_table()
+    now = pd.Timestamp.utcnow()
+    df = pd.DataFrame(
+        [
+            {
+                "agency_id": agency_id,
+                "agency_name": agency_name,
+                "config_json": config_json,
+                "is_active": bool(is_active),
+                "created_at": now,
+                "updated_at": now,
+            }
+        ]
+    )
+    _upsert_dataframe(df, _OPS_SCHEMA, "agency_registry", ["agency_id"])
+    logger.info(
+        f"[Databricks] agency_registry upsert: {agency_id} (active={is_active})"
     )
 
 
@@ -899,7 +1046,9 @@ def write_auth_event(record: dict) -> None:
 
         row["event_id"] = uuid.uuid4().hex
     df = pd.DataFrame([row])
-    df["event_time"] = df["event_time"].astype(object).where(df["event_time"].notna(), None)
+    df["event_time"] = (
+        df["event_time"].astype(object).where(df["event_time"].notna(), None)
+    )
     _upsert_dataframe(df, _OPS_SCHEMA, "auth_events", ["event_id"])
 
 
@@ -953,14 +1102,14 @@ def _upsert_dataframe_via_sql_connector(
         ph = ", ".join(["?" for _ in columns])
         # The SQL connector can't infer pandas/numpy scalar types as parameters
         # (e.g. pd.Timestamp -> "Could not infer parameter type"); bind natives.
-        rows = [
-            tuple(_sql_param(v) for v in r)
-            for r in df.itertuples(index=False, name=None)
-        ]
-        for i in range(0, len(rows), 1000):
+        row_iter = (
+            tuple(_sql_param(value) for value in row)
+            for row in df.itertuples(index=False, name=None)
+        )
+        while batch := list(islice(row_iter, 1000)):
             cursor.executemany(
                 f"INSERT INTO {staging_table} ({col_str}) VALUES ({ph})",
-                rows[i : i + 1000],
+                batch,
             )
         merge_sql = f"""
             MERGE INTO {full_table} AS t
@@ -983,10 +1132,13 @@ def _upsert_dataframe(
     schema: str,
     table: str,
     merge_keys: list[str],
+    target_predicate: str | None = None,
 ) -> int:
     full_table = f"{schema}.{table}"
     non_key_cols = [c for c in df.columns if c not in merge_keys]
     merge_condition = " AND ".join([f"t.{k} = s.{k}" for k in merge_keys])
+    if target_predicate:
+        merge_condition = f"({merge_condition}) AND ({target_predicate})"
     update_set = ", ".join([f"t.{c} = s.{c}" for c in non_key_cols])
     insert_cols = ", ".join(df.columns)
     insert_vals = ", ".join([f"s.{c}" for c in df.columns])
@@ -1006,7 +1158,9 @@ def _upsert_dataframe(
         spark.sql(merge_sql)
         spark.catalog.dropTempView(staging_view)
     else:
-        max_attempts = int(os.environ.get("ATTRIBUTION_DATABRICKS_UPSERT_RETRIES", "3") or "3")
+        max_attempts = int(
+            os.environ.get("ATTRIBUTION_DATABRICKS_UPSERT_RETRIES", "3") or "3"
+        )
         for attempt in range(1, max_attempts + 1):
             try:
                 _upsert_dataframe_via_sql_connector(
@@ -1037,6 +1191,16 @@ def _upsert_dataframe(
     return len(df)
 
 
+def _date_target_predicate(df: pd.DataFrame, column: str) -> str | None:
+    """Build a target-side date bound for partition-pruned Delta MERGEs."""
+    values = pd.to_datetime(df[column], errors="coerce").dropna()
+    if values.empty:
+        return None
+    start = values.min().date().isoformat()
+    end = values.max().date().isoformat()
+    return f"t.{column} BETWEEN DATE '{start}' AND DATE '{end}'"
+
+
 def write_meta_data(df: pd.DataFrame, schema: str) -> int:
     if df.empty:
         logger.warning("[Databricks] Meta DataFrame empty — skipping")
@@ -1053,7 +1217,11 @@ def write_meta_data(df: pd.DataFrame, schema: str) -> int:
         if col not in df.columns:
             df[col] = 0
     rows = _upsert_dataframe(
-        df, schema, "meta_ads_raw", ["ad_account_id", "campaign_id", "adset_id", "date"]
+        df,
+        schema,
+        "meta_ads_raw",
+        ["ad_account_id", "campaign_id", "adset_id", "date"],
+        target_predicate=_date_target_predicate(df, "date"),
     )
     logger.info(f"[Databricks] Wrote {rows} Meta rows")
     return rows
@@ -1117,6 +1285,7 @@ def write_normalized_ad_data(df: pd.DataFrame, schema: str) -> int:
         schema,
         "ad_spend_normalized",
         ["client_id", "source_platform", "campaign_id", "ad_group_id", "ad_id", "date"],
+        target_predicate=_date_target_predicate(df, "date"),
     )
     logger.info(f"[Databricks] Wrote {rows} normalized ad rows")
     return rows
@@ -1145,6 +1314,34 @@ def write_attribution_results(df: pd.DataFrame, schema: str) -> int:
     )
     logger.info(f"[Databricks] Wrote {rows} attribution result rows")
     return rows
+
+
+def _write_record_batches(
+    batches: Iterable[pa.RecordBatch],
+    schema: str,
+    writer: Callable[[pd.DataFrame, str], int],
+) -> int:
+    total_rows = 0
+    for batch in batches:
+        if batch.num_rows:
+            total_rows += writer(batch.to_pandas(), schema)
+    return total_rows
+
+
+def write_meta_batches(batches: Iterable[pa.RecordBatch], schema: str) -> int:
+    return _write_record_batches(batches, schema, write_meta_data)
+
+
+def write_hubspot_batches(batches: Iterable[pa.RecordBatch], schema: str) -> int:
+    return _write_record_batches(batches, schema, write_hubspot_data)
+
+
+def write_stripe_batches(batches: Iterable[pa.RecordBatch], schema: str) -> int:
+    return _write_record_batches(batches, schema, write_stripe_data)
+
+
+def write_normalized_ad_batches(batches: Iterable[pa.RecordBatch], schema: str) -> int:
+    return _write_record_batches(batches, schema, write_normalized_ad_data)
 
 
 def write_telegram_event(record: dict) -> None:
