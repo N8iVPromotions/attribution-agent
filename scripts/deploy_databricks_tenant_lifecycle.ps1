@@ -61,6 +61,14 @@ function Invoke-DatabricksApi {
 }
 
 $content = [Convert]::ToBase64String([IO.File]::ReadAllBytes($sourcePath))
+$parentSeparator = $NotebookPath.LastIndexOf('/')
+if ($parentSeparator -le 0) {
+    throw "NotebookPath must include an absolute workspace parent folder"
+}
+$notebookParent = $NotebookPath.Substring(0, $parentSeparator)
+Invoke-DatabricksApi -Path "/api/2.0/workspace/mkdirs" -Method POST -Body @{
+    path = $notebookParent
+} | Out-Null
 Invoke-DatabricksApi -Path "/api/2.0/workspace/import" -Method POST -Body @{
     path = $NotebookPath
     format = "SOURCE"
