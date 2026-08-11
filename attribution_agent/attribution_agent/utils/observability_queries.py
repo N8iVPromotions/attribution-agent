@@ -1,7 +1,7 @@
 """
 utils/observability_queries.py
 -------------------------------
-SQL helper functions for the Observability tab in the Streamlit app.
+SQL helper functions for operator observability surfaces.
 Each function returns a list[dict] and swallows DB errors gracefully.
 """
 

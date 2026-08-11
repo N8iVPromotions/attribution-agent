@@ -1,24 +1,23 @@
 # Onboarding a New Client in ARIE
 
 Use this when adding a direct B2B client or an agency sub-account for the
-ARIE Cloud Run command center.
+ARIE Vercel Command Center.
 
 ## 1. Add the client
 
 Preferred path:
 
-- Open the Cloud Run Streamlit UI (`attribution-ui`).
-- Go to Clients.
+- Open the Vercel ARIE Command Center.
+- Go to Tenants.
 - Choose Add client.
 - Enter business identity, agency, default attribution model, lookback window,
-  Databricks schema, report email, source account IDs, and source credentials.
+  report email, source account IDs, and source credentials. The system derives
+  safe Databricks schema names from validated tenant IDs.
 - Save.
 
-The command center writes client config to the registry used by the pipeline.
-In the deployed GCP path, `deploy.sh` mounts a GCS bucket at
-`/mnt/registry` and stores the registry at `/mnt/registry/clients.json`.
-The REST API (`POST /clients`, admin key required) writes through the same
-client-config path.
+The Command Center submits tenant lifecycle requests to Databricks. The
+pipeline reads the resulting tenant/client registry records from the durable
+ops schema.
 
 Base clients can still be added in code through `BASE_CLIENT_REGISTRY` in
 `attribution_agent/attribution_agent/config/client_config.py`, but that should
@@ -34,7 +33,7 @@ be reserved for demo/internal defaults.
 | HubSpot | `hubspot_enabled` | `hubspot_pipeline_id` | Access token |
 | Stripe | `stripe_enabled` | `stripe_account_id` | Secret key |
 
-Credential values entered in the UI or API are never stored in the client
+Credential values entered in the UI are never stored in the client
 registry. On save, the app creates or updates a per-client GCP Secret Manager
 secret and stores only the secret ID on `ClientConfig`.
 
@@ -102,9 +101,9 @@ Agency metadata still lives in `config/agency_config.py` for v1:
 Cloud Run dry run:
 
 ```bash
-gcloud run jobs execute attribution-pipeline \
+gcloud run jobs execute attribution-launcher \
   --region us-central1 \
-  --args "flows/agency_flow.py,--agency,acme_media,--dry-run" \
+  --args "flows/job_launcher.py,--agency,acme_media,--dry-run" \
   --wait
 ```
 

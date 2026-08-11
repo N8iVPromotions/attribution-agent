@@ -30,6 +30,20 @@ jobs:
       # then `gcloud builds submit` + `gcloud run jobs deploy` + `gcloud run
       # deploy` (see deploy.sh). Until then, deploys run manually: ./deploy.sh
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: arie-portal/package-lock.json
+
+      - name: Install portal dependencies
+        working-directory: arie-portal
+        run: npm ci
+
+      - name: Check Vercel portal
+        working-directory: arie-portal
+        run: npm run check
+
       - name: Notify success
         if: success()
         run: |

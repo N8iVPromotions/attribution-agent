@@ -115,5 +115,5 @@ Instagram return → consultation form → $15,000 deal-won webhook), a
 and the backfilled attribution timeline with a model selector. Reset between
 demos with the "Reset demo data" button.
 
-The demo app is deliberately separate from the internal Command Center
-(`app.py`) so a prospect never sees internal client data.
+The demo app is deliberately separate from the internal Vercel Command Center
+so a prospect never sees internal client data.

@@ -4,7 +4,7 @@ arie_bot.py — Automatic Revenue Intelligence Engine (ARIE)
 Telegram bot for voice/text control of the attribution pipeline.
 All destructive actions require your explicit approval via inline buttons.
 
-Start via app.py (auto-starts as a background thread) or standalone:
+Start the standalone listener:
     python agents/control/arie_bot.py
 """
 

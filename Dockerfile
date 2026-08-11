@@ -22,7 +22,6 @@ USER appuser
 
 EXPOSE 8080
 
-# Default command = UI service (Cloud Run Service).
-# The pipeline Job overrides this at deploy time:
-#   --command python --args flows/agency_flow.py[,--agency,<name>,...]
-CMD ["streamlit", "run", "app.py", "--server.port", "8080", "--server.address", "0.0.0.0", "--server.headless", "true"]
+# Default command = FastAPI control service.
+# Cloud Run Jobs override this at deploy time with the specific flow module.
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"]

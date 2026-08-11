@@ -4,7 +4,7 @@ Automatic Revenue Intelligence Engine. ARIE is a managed B2B attribution
 service for connecting paid media touchpoints to closed-won CRM revenue. The v1
 production path is:
 
-- Cloud Run Streamlit command center for operator runs and client onboarding.
+- Vercel-hosted ARIE Command Center for operator runs and client onboarding.
 - Cloud Run Job for scheduled/one-off attribution execution.
 - GCP Secret Manager for global platform secrets and per-client source
   credentials.
@@ -14,8 +14,8 @@ production path is:
 ## What Runs
 
 ```text
-app.py                    Streamlit command center
 api/                      FastAPI admin/reporting surface
+flows/job_launcher.py     Cloud Run launcher for task-array executions
 flows/agency_flow.py      Agency/client pipeline orchestration
 flows/ingest_flow.py      Source ingest, validation, normalization, attribution
 attribution_engine.py     First, last, linear, time-decay, U, and W models
@@ -38,9 +38,10 @@ fall back to matching `.env` keys such as `META_ACCESS_TOKEN`.
 
 ## Add a Client
 
-Use the command center Clients tab. The form captures account IDs, report
-settings, default attribution model, and source credentials. Credential values
-are written to GCP Secret Manager; only secret IDs are stored in client config.
+Use the Vercel Command Center Tenants flow. The form captures account IDs,
+report settings, default attribution model, and source credentials. Credential
+values are written to GCP Secret Manager; only secret IDs are stored in client
+config.
 
 See [docs/ONBOARDING_CLIENT.md](../../docs/ONBOARDING_CLIENT.md) for the full
 operator flow.
@@ -67,6 +68,7 @@ PROJECT_ID=<project> ./deploy.sh --seed-secrets
 PROJECT_ID=<project> ./deploy.sh
 ```
 
-`deploy.sh` builds the image, deploys `attribution-ui`, deploys the
-`attribution-pipeline` Cloud Run Job, mounts the GCS-backed client registry,
-and creates the Cloud Scheduler monthly trigger.
+`deploy.sh` builds the image, deploys the `attribution-api` control service,
+deploys the launcher/pipeline Cloud Run Jobs, mounts the GCS-backed client
+registry, and creates the Cloud Scheduler monthly trigger. The operator UI is
+deployed separately from `arie-portal` to Vercel.

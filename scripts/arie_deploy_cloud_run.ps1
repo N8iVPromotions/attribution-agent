@@ -8,8 +8,7 @@ param(
     [string]$RawArchiveBucket = "",
     [int]$PipelineTasks = 20,
     [int]$PipelineParallelism = 5,
-    [string]$OperatorPrincipal = "",
-    [switch]$AllowUnauthenticatedUi
+    [string]$CommandCenterServiceAccount = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,7 +29,7 @@ if (-not $RawArchiveBucket) {
 }
 
 $image = "$Region-docker.pkg.dev/$ProjectId/$Repo/attribution-agent"
-$serviceUi = "attribution-ui"
+$serviceApi = "attribution-api"
 $jobPipeline = "attribution-pipeline"
 $jobLauncher = "attribution-launcher"
 $jobFinalizer = "attribution-benchmark-finalizer"
@@ -228,9 +227,6 @@ $commonEnv = @(
     "GOOGLE_CLOUD_PROJECT=$ProjectId",
     "ATTRIBUTION_CLOUD_RUN_JOB=$jobPipeline",
     "ATTRIBUTION_CLOUD_RUN_REGION=$Region",
-    "ARIE_AUTH_ENABLED=true",
-    "ARIE_BOOTSTRAP_ADMIN_EMAIL=zajen@n8ivpromotions.com",
-    "ARIE_SESSION_TTL_HOURS=12",
     "ARIE_CLIENT_LOCK_BUCKET=$RegistryBucket",
     "ARIE_CLIENT_LOCKS_ENABLED=true",
     "ARIE_RAW_ARCHIVE_BUCKET=$RawArchiveBucket",
@@ -317,28 +313,22 @@ foreach ($schedulerTarget in @($jobLauncher, $jobMaintenance)) {
         --project $ProjectId
 }
 
-$uiAuthFlag = if ($AllowUnauthenticatedUi) { "--allow-unauthenticated" } else { "--no-allow-unauthenticated" }
-if ($AllowUnauthenticatedUi) {
-    Write-Host "WARN: attribution-ui will be public because -AllowUnauthenticatedUi was provided" -ForegroundColor Yellow
-}
-
 $serviceArgs = @(
-    "run", "deploy", $serviceUi,
+    "run", "deploy", $serviceApi,
     "--image", "$image`:$gitSha",
     "--region", $Region,
     "--service-account", $runtimeSa,
     "--port", "8080",
-    $uiAuthFlag,
+    "--command", "uvicorn",
+    "--args", "api.main:app,--host,0.0.0.0,--port,8080",
+    "--no-allow-unauthenticated",
     "--set-env-vars", $commonEnv,
     "--add-volume", "name=registry,type=cloud-storage,bucket=$RegistryBucket",
     "--add-volume-mount", "volume=registry,mount-path=/mnt/registry",
-    "--timeout", "3600",
-    "--session-affinity",
-    "--min-instances", "1",
-    "--max-instances", "1",
-    "--no-cpu-throttling",
-    "--memory", "2Gi",
-    "--cpu", "2",
+    "--timeout", "300",
+    "--max-instances", "3",
+    "--memory", "1Gi",
+    "--cpu", "1",
     "--project", $ProjectId
 )
 if ($secretFlags) {
@@ -346,15 +336,15 @@ if ($secretFlags) {
 }
 Invoke-Gcloud @serviceArgs
 
-if ($OperatorPrincipal) {
-    Invoke-Gcloud run services add-iam-policy-binding $serviceUi `
+if ($CommandCenterServiceAccount) {
+    Invoke-Gcloud run services add-iam-policy-binding $serviceApi `
         --region $Region `
-        --member $OperatorPrincipal `
+        --member "serviceAccount:$CommandCenterServiceAccount" `
         --role roles/run.invoker `
         --project $ProjectId
-    Write-Host "Granted $OperatorPrincipal access to $serviceUi" -ForegroundColor Green
-} elseif (-not $AllowUnauthenticatedUi) {
-    Write-Host "NOTE: attribution-ui is private. Pass -OperatorPrincipal user:you@example.com to grant access." -ForegroundColor Yellow
+    Write-Host "Granted $CommandCenterServiceAccount invoker access to $serviceApi" -ForegroundColor Green
+} else {
+    Write-Host "NOTE: attribution-api is private. Pass -CommandCenterServiceAccount name@project.iam.gserviceaccount.com if a trusted command-center service account needs access." -ForegroundColor Yellow
 }
 
 $localRegistry = "attribution_agent/attribution_agent/config/client_registry.local.json"
@@ -388,12 +378,12 @@ Invoke-Gcloud scheduler jobs $maintenanceVerb http $schedulerMaintenanceJob `
     --attempt-deadline "300s" `
     --project $ProjectId
 
-$serviceUrl = (& $gcloud.Source run services describe $serviceUi --region $Region --project $ProjectId --format="value(status.url)").Trim()
+$serviceUrl = (& $gcloud.Source run services describe $serviceApi --region $Region --project $ProjectId --format="value(status.url)").Trim()
 
 Write-Host ""
 Write-Host "Deployed ARIE" -ForegroundColor Green
 Write-Host "Image:     $image`:$gitSha"
-Write-Host "UI:        $serviceUrl"
+Write-Host "API:       $serviceUrl"
 Write-Host "Job:       gcloud run jobs execute $jobLauncher --project $ProjectId --region $Region --args `"flows/job_launcher.py,--dry-run,--expected-client-count,20`" --wait"
 Write-Host "Scheduler: $schedulerJob ($schedule America/New_York)"
 Write-Host "Maintenance: $schedulerMaintenanceJob ($maintenanceSchedule America/New_York)"

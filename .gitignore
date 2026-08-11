@@ -38,7 +38,6 @@ reports/usability/
 # ARIE runtime
 arie.pid
 cloudrun_proxy*.pid
-streamlit.pid
 attribution_agent/arie_bot.lock
 
 # Local workspaces and prototypes
@@ -54,9 +53,6 @@ website-work/
 !.claude/agents/
 !.claude/agents/**
 
-# Command Center (Node app) — installed/built locally or by Replit, not tracked
-command_center/node_modules/
-command_center/client/node_modules/
-command_center/server/public/
+# Retired command-center credentials
 command_center-key.json
 command-center-key.json
