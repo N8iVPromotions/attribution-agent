@@ -46,18 +46,34 @@ jobs:
     name: Eval Gate
     runs-on: ubuntu-latest
     needs: [test]
-    if: |
-      github.event_name == 'pull_request' &&
-      contains(toJson(github.event.pull_request.changed_files), '.claude/agents/')
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect AI behavior changes
+        id: ai-changes
+        shell: bash
+        run: |
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | \
+            grep -Eq '^(\.claude/agents/|attribution_agent/attribution_agent/(utils/model_gateway.py|agents/(insight|intelligence)/|evals/))'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-python@v5
+        if: steps.ai-changes.outputs.run == 'true'
         with:
           python-version: "3.11"
       - name: Install dependencies
+        if: steps.ai-changes.outputs.run == 'true'
         run: pip install -r attribution_agent/attribution_agent/requirements.txt
       - name: Run eval gate
-        run: python attribution_agent/attribution_agent/evals/eval_runner.py --all-agents --ci-mode
+        if: steps.ai-changes.outputs.run == 'true'
+        run: >-
+          python attribution_agent/attribution_agent/evals/eval_runner.py
+          --seed-file attribution_agent/attribution_agent/evals/seeds/multichannel_reporting.json
+          --all-agents --ci-mode --require-samples
         env:
           DATABRICKS_SERVER_HOSTNAME: ${{ secrets.DATABRICKS_SERVER_HOSTNAME }}
           DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}

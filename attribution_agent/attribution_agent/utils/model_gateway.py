@@ -55,12 +55,32 @@ def select_model(task_type: str) -> str:
     return _MODEL_ROUTING.get(task_type, _DEFAULT_MODEL)
 
 
-def _cache_key(model: str, agent_name: str, message: str) -> str:
+def _cache_key(
+    model: str,
+    agent_name: str,
+    message: str,
+    *,
+    system_prompt: str = "",
+    prompt_version: str = "",
+    data_version: str = "",
+    tenant_id: str = "",
+    response_schema: dict | None = None,
+) -> str:
     # Hash the FULL message — cacheable tasks (data_quality, governance_review)
     # build messages that share a long fixed prefix, so truncating to the first
     # N chars would collide distinct inputs onto the same key and serve a wrong
     # cached response. SHA-256 handles arbitrary length; key stays 32 hex chars.
-    raw = f"{model}:{agent_name}:{message}"
+    material = {
+        "model": model,
+        "agent_name": agent_name,
+        "message": message,
+        "system_prompt": system_prompt,
+        "prompt_version": prompt_version,
+        "data_version": data_version,
+        "tenant_id": tenant_id,
+        "response_schema": response_schema,
+    }
+    raw = json.dumps(material, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
@@ -154,7 +174,11 @@ def _write_cost_ledger(
                     "cache_read_tokens": cache_read_tokens,
                     "cache_write_tokens": cache_write_tokens,
                     "cost_usd_estimate": cost_usd,
-                    "prompt_version": os.environ.get("GIT_PROMPT_TAG", "dev"),
+                    "prompt_version": (
+                        os.environ.get("GIT_PROMPT_TAG")
+                        or os.environ.get("GIT_SHA")
+                        or "dev"
+                    ),
                     "task_type": task_type,
                 }
             ]
@@ -164,55 +188,147 @@ def _write_cost_ledger(
         logger.debug(f"[ModelGateway] cost_ledger write failed: {exc}")
 
 
-def _check_budget(agency_id: str, new_tokens: int) -> None:
-    """Sends a Telegram alert if monthly token usage crosses 80% after this call."""
+def _check_budget(
+    agency_id: str,
+    run_id: str,
+    estimated_input_tokens: int,
+    max_output_tokens: int,
+    model_id: str,
+) -> None:
+    """Enforce agency and run limits before a model call."""
     try:
         from config.budget_config import get_budget, send_budget_alert
         from utils.databricks_writer import _get_connection, _is_databricks, _get_spark
 
         budget = get_budget(agency_id)
-
-        first_of_month = (
-            datetime.now(timezone.utc)
-            .replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            .isoformat()
-        )
+        now = datetime.now(timezone.utc)
+        first_of_month = now.replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0
+        ).isoformat()
+        start_of_day = now.replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ).isoformat()
+        run_filter = f"run_id = '{run_id}'" if run_id else "1 = 0"
         query = (
-            f"SELECT COALESCE(SUM(input_tokens + output_tokens), 0) "
+            "SELECT "
+            f"COALESCE(SUM(CASE WHEN event_time >= CAST('{start_of_day}' AS TIMESTAMP) "
+            "THEN cost_usd_estimate ELSE 0 END), 0), "
+            f"COALESCE(SUM(CASE WHEN event_time >= CAST('{first_of_month}' AS TIMESTAMP) "
+            "THEN cost_usd_estimate ELSE 0 END), 0), "
+            f"COALESCE(SUM(CASE WHEN {run_filter} "
+            "THEN input_tokens + output_tokens ELSE 0 END), 0), "
+            "COALESCE(SUM(input_tokens + output_tokens), 0) "
             f"FROM {_OPS_SCHEMA}.cost_ledger "
             f"WHERE agency_id = '{agency_id}' "
             f"AND event_time >= CAST('{first_of_month}' AS TIMESTAMP)"
         )
         if _is_databricks():
             rows = _get_spark().sql(query).collect()
-            used = int(rows[0][0]) if rows else 0
+            values = tuple(rows[0]) if rows else (0, 0, 0, 0)
         else:
             conn = _get_connection()
             cursor = conn.cursor()
             cursor.execute(query)
-            row = cursor.fetchone()
+            values = cursor.fetchone() or (0, 0, 0, 0)
             cursor.close()
             conn.close()
-            used = int(row[0]) if row and row[0] else 0
-
-        total = used + new_tokens
-        pct = total / budget.monthly_token_limit
+        daily_usd, monthly_usd, run_tokens, monthly_tokens = values
+        estimated_tokens = estimated_input_tokens + max_output_tokens
+        estimated_usd = _estimated_max_cost(
+            budget, estimated_input_tokens, max_output_tokens, model_id
+        )
+        total_tokens = int(monthly_tokens or 0) + estimated_tokens
+        pct = total_tokens / budget.monthly_token_limit
         if (
             pct >= budget.alert_threshold_pct
-            and (total - new_tokens) / budget.monthly_token_limit
+            and int(monthly_tokens or 0) / budget.monthly_token_limit
             < budget.alert_threshold_pct
         ):
-            send_budget_alert(agency_id, pct, total, budget.monthly_token_limit)
+            send_budget_alert(agency_id, pct, total_tokens, budget.monthly_token_limit)
 
-        if total > budget.monthly_token_limit:
+        if total_tokens > budget.monthly_token_limit:
             raise RuntimeError(
                 f"[ModelGateway] Monthly token budget exceeded for {agency_id}: "
-                f"{total:,} > {budget.monthly_token_limit:,}"
+                f"{total_tokens:,} > {budget.monthly_token_limit:,}"
+            )
+        if (
+            run_id
+            and int(run_tokens or 0) + estimated_tokens > budget.per_run_token_limit
+        ):
+            raise RuntimeError(
+                f"[ModelGateway] Per-run token budget exceeded for run {run_id}"
+            )
+        daily_limit = float(
+            os.environ.get("ARIE_DAILY_AI_USD_LIMIT", budget.daily_usd_limit)
+        )
+        monthly_limit = float(
+            os.environ.get("ARIE_MONTHLY_AI_USD_LIMIT", budget.monthly_usd_limit)
+        )
+        if float(daily_usd or 0) + estimated_usd > daily_limit:
+            raise RuntimeError(
+                f"[ModelGateway] Daily AI spend limit exceeded for {agency_id}"
+            )
+        if float(monthly_usd or 0) + estimated_usd > monthly_limit:
+            raise RuntimeError(
+                f"[ModelGateway] Monthly AI spend limit exceeded for {agency_id}"
             )
     except RuntimeError:
         raise
     except Exception as exc:
-        logger.debug(f"[ModelGateway] budget check failed: {exc}")
+        fail_closed = os.environ.get("ARIE_MODEL_BUDGET_FAIL_CLOSED")
+        if fail_closed is None:
+            fail_closed = "true" if os.environ.get("CLOUD_RUN_JOB") else "false"
+        if fail_closed.lower() == "true":
+            raise RuntimeError("[ModelGateway] Budget state is unavailable") from exc
+        logger.warning(f"[ModelGateway] budget check failed open: {exc}")
+
+
+def _estimated_max_cost(
+    budget, estimated_input_tokens: int, max_output_tokens: int, model_id: str
+) -> float:
+    return budget.tokens_to_usd(
+        0,
+        max_output_tokens,
+        model_id,
+        cache_write_tokens=estimated_input_tokens,
+    )
+
+
+def _reserve_or_check_budget(
+    agency_id: str,
+    run_id: str,
+    estimated_input_tokens: int,
+    max_output_tokens: int,
+    model_id: str,
+):
+    from config.budget_config import get_budget
+    from utils.budget_reservation import reserve_budget
+
+    budget = get_budget(agency_id)
+    daily_limit = float(
+        os.environ.get("ARIE_DAILY_AI_USD_LIMIT", budget.daily_usd_limit)
+    )
+    monthly_limit = float(
+        os.environ.get("ARIE_MONTHLY_AI_USD_LIMIT", budget.monthly_usd_limit)
+    )
+    reservation = reserve_budget(
+        agency_id=agency_id,
+        run_id=run_id,
+        estimated_usd=_estimated_max_cost(
+            budget, estimated_input_tokens, max_output_tokens, model_id
+        ),
+        daily_limit=daily_limit,
+        monthly_limit=monthly_limit,
+    )
+    if reservation is None:
+        _check_budget(
+            agency_id,
+            run_id,
+            estimated_input_tokens,
+            max_output_tokens,
+            model_id,
+        )
+    return reservation
 
 
 def call(
@@ -225,6 +341,8 @@ def call(
     agency_id: str = "",
     task_type: str = "",
     response_schema: dict | None = None,
+    data_version: str = "",
+    prompt_version: str = "",
 ) -> GatewayResponse:
     """
     Route an agent call through the model gateway.
@@ -241,7 +359,26 @@ def call(
 
     # Semantic cache check for eligible tasks
     use_cache = task_type in _CACHEABLE_TASKS
-    ck = _cache_key(model_id, agent_name, user_message) if use_cache else None
+    resolved_prompt_version = (
+        prompt_version
+        or os.environ.get("GIT_PROMPT_TAG")
+        or os.environ.get("GIT_SHA")
+        or "dev"
+    )
+    ck = (
+        _cache_key(
+            model_id,
+            agent_name,
+            user_message,
+            system_prompt=system_prompt,
+            prompt_version=resolved_prompt_version,
+            data_version=data_version,
+            tenant_id=f"{agency_id}:{client_id}",
+            response_schema=response_schema,
+        )
+        if use_cache
+        else None
+    )
     if ck:
         cached = _check_cache(ck)
         if cached:
@@ -271,7 +408,14 @@ def call(
         )
     sanitized_message = input_check.sanitized_text
 
-    _check_budget(agency_id or "global", max_tokens)
+    estimated_input_tokens = max((len(system_prompt) + len(sanitized_message)) // 4, 1)
+    budget_reservation = _reserve_or_check_budget(
+        agency_id or "global",
+        run_id,
+        estimated_input_tokens,
+        max_tokens,
+        model_id,
+    )
 
     create_kwargs: dict = dict(
         model=model_id,
@@ -308,7 +452,18 @@ def call(
         }
 
     client = anthropic.Anthropic()
-    resp = client.messages.create(**create_kwargs)
+    try:
+        resp = client.messages.create(**create_kwargs)
+    except Exception:
+        if budget_reservation:
+            try:
+                budget_reservation.cancel()
+            except Exception as cancel_exc:
+                logger.error(
+                    "[ModelGateway] Failed to cancel budget reservation: %s",
+                    cancel_exc,
+                )
+        raise
 
     if response_schema is not None:
         # Pull the forced tool_use block and serialize its (schema-valid) input.
@@ -334,7 +489,15 @@ def call(
     cache_read = getattr(resp.usage, "cache_read_input_tokens", 0) or 0
     cache_write = getattr(resp.usage, "cache_creation_input_tokens", 0) or 0
 
-    cost = budget.tokens_to_usd(in_tok, out_tok, model_id)
+    cost = budget.tokens_to_usd(
+        in_tok,
+        out_tok,
+        model_id,
+        cache_read_tokens=cache_read,
+        cache_write_tokens=cache_write,
+    )
+    if budget_reservation:
+        budget_reservation.settle(cost)
 
     logger.info(
         f"[ModelGateway] {agent_name} ({model_id}) "

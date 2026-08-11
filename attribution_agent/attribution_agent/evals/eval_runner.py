@@ -96,7 +96,11 @@ def _write_result(
         logger.warning(f"[Eval] Could not write eval result: {exc}")
 
 
-def run_eval_for_agent(agent_name: str, ci_mode: bool = False) -> tuple[bool, float]:
+def run_eval_for_agent(
+    agent_name: str,
+    ci_mode: bool = False,
+    require_samples: bool = False,
+) -> tuple[bool, float]:
     """
     Run all active golden samples for an agent.
     Returns (passed, avg_score). In CI mode, also checks for regression.
@@ -107,11 +111,13 @@ def run_eval_for_agent(agent_name: str, ci_mode: bool = False) -> tuple[bool, fl
     samples = manager.load_samples(agent_name)
 
     if not samples:
-        logger.info(f"[Eval] No golden samples for {agent_name} — skipping")
-        return True, 1.0
+        level = logger.error if require_samples else logger.info
+        level(f"[Eval] No golden samples for {agent_name}")
+        return (not require_samples), (0.0 if require_samples else 1.0)
 
     prior_score = _get_last_score(agent_name) if ci_mode else None
     scores = []
+    sample_passes = []
     any_regression = False
 
     for sample in samples:
@@ -141,12 +147,14 @@ def run_eval_for_agent(agent_name: str, ci_mode: bool = False) -> tuple[bool, fl
                 notes="",
             )
             scores.append(score)
+            sample_passes.append(passed)
         except Exception as exc:
             logger.warning(f"[Eval] Failed to evaluate {agent_name} sample: {exc}")
             scores.append(0.0)
+            sample_passes.append(False)
 
     avg_score = sum(scores) / len(scores) if scores else 0.0
-    overall_passed = avg_score >= 0.80 and not any_regression
+    overall_passed = all(sample_passes) and avg_score >= 0.80 and not any_regression
     logger.info(
         f"[Eval] {agent_name}: avg_score={avg_score:.2f}, passed={overall_passed}"
     )
@@ -181,11 +189,27 @@ def main() -> None:
     parser.add_argument("--agent", type=str, help="Agent name to evaluate")
     parser.add_argument("--all-agents", action="store_true")
     parser.add_argument("--ci-mode", action="store_true", help="Exit 1 on regression")
+    parser.add_argument(
+        "--require-samples",
+        action="store_true",
+        help="Fail when an evaluated agent has no active golden samples",
+    )
+    parser.add_argument(
+        "--seed-file",
+        type=str,
+        help="Upsert a PII-masked JSON/JSONL seed set before evaluation",
+    )
     args = parser.parse_args()
 
     from dotenv import load_dotenv
 
     load_dotenv()
+
+    if args.seed_file:
+        from evals.golden_dataset import GoldenDatasetManager
+
+        count = GoldenDatasetManager().seed_file(args.seed_file)
+        logger.info("[Eval] Seeded %s golden samples", count)
 
     agents = _ALL_AGENTS if args.all_agents else ([args.agent] if args.agent else [])
     if not agents:
@@ -193,7 +217,11 @@ def main() -> None:
 
     all_passed = True
     for agent_name in agents:
-        passed, score = run_eval_for_agent(agent_name, ci_mode=args.ci_mode)
+        passed, score = run_eval_for_agent(
+            agent_name,
+            ci_mode=args.ci_mode,
+            require_samples=args.require_samples,
+        )
         if not passed:
             all_passed = False
 

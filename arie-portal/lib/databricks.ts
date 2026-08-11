@@ -24,7 +24,7 @@ function clean(value: string | undefined) {
   return (value || "").trim();
 }
 
-function databricksHost() {
+export function databricksHost() {
   const raw = clean(process.env.DATABRICKS_SERVER_HOSTNAME || process.env.DATABRICKS_HOST);
   return raw.replace(/^https?:\/\//, "").replace(/\/$/, "");
 }
@@ -47,9 +47,16 @@ export function hasDatabricksConfig() {
   return Boolean(databricksHost() && warehouseId() && clean(process.env.DATABRICKS_TOKEN));
 }
 
-async function requestStatement(path: string, init?: RequestInit): Promise<StatementResponse> {
+export function hasDatabricksApiConfig() {
+  return Boolean(databricksHost() && clean(process.env.DATABRICKS_TOKEN));
+}
+
+export async function requestDatabricks<T>(path: string, init?: RequestInit): Promise<T> {
   const host = databricksHost();
   const token = clean(process.env.DATABRICKS_TOKEN);
+  if (!host || !token) {
+    throw new Error("Databricks API environment variables are not configured.");
+  }
   const response = await fetch(`https://${host}${path}`, {
     ...init,
     headers: {
@@ -59,13 +66,15 @@ async function requestStatement(path: string, init?: RequestInit): Promise<State
     },
     cache: "no-store"
   });
-
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Databricks SQL returned ${response.status}: ${text.slice(0, 300)}`);
+    const responseText = await response.text();
+    throw new Error(`Databricks API returned ${response.status}: ${responseText.slice(0, 300)}`);
   }
+  return response.json() as Promise<T>;
+}
 
-  return response.json() as Promise<StatementResponse>;
+async function requestStatement(path: string, init?: RequestInit): Promise<StatementResponse> {
+  return requestDatabricks<StatementResponse>(path, init);
 }
 
 async function waitForStatement(statementId: string) {

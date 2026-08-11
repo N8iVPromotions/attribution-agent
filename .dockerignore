@@ -21,14 +21,23 @@ env/
 ENV/
 
 # Not needed at runtime
+arie-portal/
+command_center/
 docs/
 prototypes/
 website-work/
 reports/
+scripts/
 attribution-agent/
 attribution_agent/attribution_agent/tests/
 attribution_agent/attribution_agent/evals/
 attribution_agent/attribution_agent/conftest.py
+
+# Agent/editor workspaces and local task output
+.agents/
+.codex-tmp/
+.github/
+.impeccable/
 
 # Local ARIE runner artifacts
 arie*.log

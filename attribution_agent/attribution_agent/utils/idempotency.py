@@ -12,11 +12,99 @@ import hashlib
 import json
 import logging
 import os
+import threading
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
 _OPS_SCHEMA = os.environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_ops")
+_LOCAL_DELIVERY_KEYS: set[str] = set()
+_LOCAL_DELIVERY_LOCK = threading.Lock()
+
+
+def report_delivery_key(
+    client_id: str, report_month: str, attribution_model: str
+) -> str:
+    """Return the stable external-delivery key required across job retries."""
+    return f"report:{client_id}:{report_month}:{attribution_model}"
+
+
+@dataclass
+class DeliveryClaim:
+    """At-most-once delivery claim created before the email provider is called."""
+
+    key: str
+    acquired: bool
+    blob: object | None = None
+    generation: int | None = None
+
+    def complete(self) -> None:
+        if not self.acquired or self.blob is None:
+            return
+        payload = {
+            "key": self.key,
+            "status": "sent",
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self.blob.upload_from_string(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")),
+            content_type="application/json",
+            if_generation_match=self.generation,
+        )
+        self.generation = int(self.blob.generation)
+
+    def release(self) -> None:
+        """Release only when the provider definitively failed before delivery."""
+        if not self.acquired:
+            return
+        if self.blob is None:
+            with _LOCAL_DELIVERY_LOCK:
+                _LOCAL_DELIVERY_KEYS.discard(self.key)
+            return
+        self.blob.delete(if_generation_match=self.generation)
+
+
+def claim_report_delivery(key: str) -> DeliveryClaim:
+    """Atomically claim a report delivery key using GCS generation zero.
+
+    Cloud deployments set ``ARIE_DELIVERY_IDEMPOTENCY_BUCKET``. The in-process
+    fallback preserves the dependency-free SQLite demo path.
+    """
+    bucket_name = os.environ.get("ARIE_DELIVERY_IDEMPOTENCY_BUCKET", "").strip()
+    if not bucket_name:
+        with _LOCAL_DELIVERY_LOCK:
+            acquired = key not in _LOCAL_DELIVERY_KEYS
+            if acquired:
+                _LOCAL_DELIVERY_KEYS.add(key)
+        return DeliveryClaim(key=key, acquired=acquired)
+
+    from google.api_core.exceptions import PreconditionFailed
+    from google.cloud import storage
+
+    object_hash = hashlib.sha256(key.encode()).hexdigest()
+    blob = (
+        storage.Client().bucket(bucket_name).blob(f"report-delivery/{object_hash}.json")
+    )
+    payload = {
+        "key": key,
+        "status": "claimed",
+        "claimed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        blob.upload_from_string(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")),
+            content_type="application/json",
+            if_generation_match=0,
+        )
+    except PreconditionFailed:
+        return DeliveryClaim(key=key, acquired=False, blob=blob)
+    return DeliveryClaim(
+        key=key,
+        acquired=True,
+        blob=blob,
+        generation=int(blob.generation),
+    )
 
 
 def _make_key(run_id: str, client_id: str, step_name: str) -> str:

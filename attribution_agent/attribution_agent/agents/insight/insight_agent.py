@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 def _clean_env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
+
 # ── path setup ────────────────────────────────────────────────
 try:
     _root = str(Path(__file__).parent.parent.parent)
@@ -67,6 +68,7 @@ class InsightReport:
     refund_rate: float = 0.0  # Refunds / collected revenue
     true_roi: float = 0.0  # collected_revenue / total_spend
     attribution_model: str = "last_touch"
+    data_version: str = ""
     generated_at: str = ""
 
     def to_dict(self) -> dict:
@@ -84,6 +86,7 @@ class InsightReport:
             "refund_rate": self.refund_rate,
             "true_roi": self.true_roi,
             "attribution_model": self.attribution_model,
+            "data_version": self.data_version,
             "generated_at": self.generated_at,
         }
 
@@ -126,7 +129,8 @@ def _fetch_channel_performance(config: ClientConfig) -> list[dict]:
             avg_days_to_close,
             total_spend,
             roi,
-            cost_per_deal
+            cost_per_deal,
+            ingested_at
             {v2_cols}
         FROM {config.databricks_schema}.{table}
         ORDER BY pipeline_value DESC
@@ -350,6 +354,7 @@ def _build_fallback_report(
 def generate_insight_report(
     client_id: str,
     attribution_model: str | None = None,
+    run_id: str = "",
 ) -> InsightReport:
     """
     Full pipeline:
@@ -375,6 +380,12 @@ def generate_insight_report(
             generated_at=datetime.utcnow().isoformat(),
         )
 
+    data_version = max(
+        (str(row.get("ingested_at") or "") for row in data),
+        default="",
+    )
+    agency_id = getattr(config, "agency_id", "")
+
     # 2. Build prompt and call Claude (two-stage via N8iV agents, fallback to single-stage)
     logger.info(
         "[Insight] Generating report via N8iV revenue-analyst + executive-reporting agents..."
@@ -390,6 +401,9 @@ def generate_insight_report(
             client_name=config.client_name,
             channel_data=data,
             attribution_model=selected_model,
+            agency_id=agency_id,
+            run_id=run_id,
+            data_version=data_version,
         )
         claude_response = run_executive_reporting_agent(
             client_id=client_id,
@@ -397,6 +411,9 @@ def generate_insight_report(
             analyst_output=analyst_output,
             channel_data=data,
             attribution_model=selected_model,
+            agency_id=agency_id,
+            run_id=run_id,
+            data_version=data_version,
         )
     except Exception as exc:
         logger.warning(
@@ -408,7 +425,8 @@ def generate_insight_report(
             claude_response = _call_claude(
                 prompt,
                 client_id=client_id,
-                agency_id=getattr(config, "agency_id", ""),
+                agency_id=agency_id,
+                run_id=run_id,
             )
         except Exception as exc2:
             logger.warning(
@@ -433,6 +451,7 @@ def generate_insight_report(
         refund_rate=claude_response.get("refund_rate", 0.0),
         true_roi=claude_response.get("true_roi", 0.0),
         attribution_model=selected_model,
+        data_version=data_version,
         generated_at=datetime.utcnow().isoformat(),
     )
 

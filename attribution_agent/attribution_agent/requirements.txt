@@ -7,6 +7,7 @@ sendgrid>=6.11.0,<7
 hubspot-api-client>=8.1.0,<13
 databricks-sql-connector>=3.0.0,<4
 pandas>=2.0.0,<2.3
+pyarrow>=14.0.0,<26
 numpy>=1.26,<2.2
 python-dotenv>=1.0.0,<2
 pydantic>=2.5.0,<3
@@ -18,6 +19,7 @@ stripe>=7.0.0,<15
 google-ads==31.0.0
 google-auth>=2.29.0,<3
 google-cloud-secret-manager>=2.20.0,<3
+google-cloud-storage>=2.18.0,<4
 streamlit>=1.35.0,<1.50
 databricks-sdk>=0.28.0,<1.0
 fastapi>=0.115.0,<1.0

@@ -284,7 +284,8 @@ def _write_event(
                 "event_time": _now(),
                 "event_type": event_type,
                 "email": email or (user.email if user else row.get("email", "")),
-                "user_id": user_id or (user.user_id if user else row.get("user_id", "")),
+                "user_id": user_id
+                or (user.user_id if user else row.get("user_id", "")),
                 "role": role or (user.role.value if user else row.get("role", "")),
                 "agency_id": agency_id
                 or (user.agency_id if user else row.get("agency_id", "")),

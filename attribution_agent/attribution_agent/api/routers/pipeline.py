@@ -90,7 +90,9 @@ async def submit_pipeline_run(
         from databricks.sdk import WorkspaceClient
 
         w = WorkspaceClient()
-        run = w.jobs.run_now(job_id=int(job_id_str), python_params=_pipeline_args(req)[1:])
+        run = w.jobs.run_now(
+            job_id=int(job_id_str), python_params=_pipeline_args(req)[1:]
+        )
         return PipelineRunResponse(
             run_id=local_run_id,
             databricks_run_id=run.run_id,

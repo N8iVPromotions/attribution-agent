@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import date, timedelta
-import pandas as pd
-import requests
-from tenacity import retry, stop_after_attempt, wait_exponential
 import logging
 
+import pandas as pd
+import pyarrow as pa
+import requests
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+from agents.ingest.batches import batches_to_dataframe, records_to_batches
 from utils.secrets import redact_secrets
+from utils.raw_archive import archive_raw_page
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +45,16 @@ CONVERSION_ACTIONS = {
 
 
 class MetaConnector:
-    def __init__(self, access_token: str = "") -> None:
+    def __init__(
+        self,
+        access_token: str = "",
+        client_id: str = "",
+        run_id: str = "",
+    ) -> None:
         self.access_token = access_token
+        self.client_id = client_id
+        self.run_id = run_id
+        self.page_number = 0
         self.session = requests.Session()
 
     @retry(
@@ -58,11 +71,32 @@ class MetaConnector:
             response.raise_for_status()
         except requests.RequestException as exc:
             raise type(exc)(redact_secrets(str(exc))) from None
+        self.page_number += 1
+        archive_raw_page(
+            source="meta",
+            client_id=self.client_id,
+            run_id=self.run_id,
+            page_number=self.page_number,
+            body=response.content,
+            endpoint="insights",
+        )
         return response.json()
 
     def pull_campaign_insights(
         self, ad_account_id, start_date, end_date, level="campaign"
-    ):
+    ) -> pd.DataFrame:
+        return batches_to_dataframe(
+            self.iter_campaign_insight_batches(
+                ad_account_id=ad_account_id,
+                start_date=start_date,
+                end_date=end_date,
+                level=level,
+            )
+        )
+
+    def iter_campaign_insight_batches(
+        self, ad_account_id, start_date, end_date, level="campaign"
+    ) -> Iterator[pa.RecordBatch]:
         logger.info(
             f"[Meta] Pulling insights for {ad_account_id} | {start_date} to {end_date}"
         )
@@ -79,19 +113,23 @@ class MetaConnector:
             "level": level,
             "limit": 500,
         }
-        rows = []
-        while url:
-            data = self._get(url, params)
-            rows.extend(data.get("data", []))
-            url = data.get("paging", {}).get("next")
-            params = {}
-        logger.info(f"[Meta] Retrieved {len(rows)} rows")
-        if not rows:
-            return pd.DataFrame()
-        return self._normalize(rows, ad_account_id)
 
-    def _normalize(self, rows, ad_account_id):
-        normalized = []
+        def iter_records():
+            nonlocal url, params
+            while url:
+                data = self._get(url, params)
+                yield from self._normalize_rows(data.get("data", []), ad_account_id)
+                url = data.get("paging", {}).get("next")
+                params = {}
+
+        total_rows = 0
+        for batch in records_to_batches(iter_records()):
+            total_rows += batch.num_rows
+            yield batch
+        logger.info(f"[Meta] Retrieved {total_rows} rows")
+
+    @staticmethod
+    def _normalize_rows(rows, ad_account_id) -> Iterator[dict]:
         for row in rows:
             base = {
                 "ad_account_id": ad_account_id,
@@ -99,7 +137,7 @@ class MetaConnector:
                 "campaign_name": row.get("campaign_name"),
                 "adset_id": row.get("adset_id"),
                 "adset_name": row.get("adset_name"),
-                "date": row.get("date_start"),
+                "date": pd.to_datetime(row.get("date_start")),
                 "spend": float(row.get("spend", 0)),
                 "impressions": int(row.get("impressions", 0)),
                 "clicks": int(row.get("clicks", 0)),
@@ -115,19 +153,42 @@ class MetaConnector:
                     base[f"conversions_{atype.replace('.', '_')}"] = int(
                         action.get("value", 0)
                     )
-            normalized.append(base)
-        df = pd.DataFrame(normalized)
-        df["date"] = pd.to_datetime(df["date"])
-        return df
+            yield base
 
 
 def pull_meta_data(
-    ad_account_id: str, lookback_days: int = 30, access_token: str = ""
+    ad_account_id: str,
+    lookback_days: int = 30,
+    access_token: str = "",
+    client_id: str = "",
+    run_id: str = "",
 ) -> pd.DataFrame:
+    return batches_to_dataframe(
+        iter_meta_data_batches(
+            ad_account_id=ad_account_id,
+            lookback_days=lookback_days,
+            access_token=access_token,
+            client_id=client_id,
+            run_id=run_id,
+        )
+    )
+
+
+def iter_meta_data_batches(
+    ad_account_id: str,
+    lookback_days: int = 30,
+    access_token: str = "",
+    client_id: str = "",
+    run_id: str = "",
+) -> Iterator[pa.RecordBatch]:
     end_date = date.today() - timedelta(days=1)
     start_date = end_date - timedelta(days=lookback_days - 1)
-    connector = MetaConnector(access_token=access_token)
-    return connector.pull_campaign_insights(
+    connector = MetaConnector(
+        access_token=access_token,
+        client_id=client_id,
+        run_id=run_id,
+    )
+    yield from connector.iter_campaign_insight_batches(
         ad_account_id=ad_account_id,
         start_date=start_date,
         end_date=end_date,

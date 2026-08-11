@@ -10,6 +10,8 @@ import json
 import sys
 import types
 
+import pytest
+
 # Stub the anthropic SDK if it isn't installed in this env, so importing the
 # gateway never fails at collection time. Must run before importing the gateway.
 if "anthropic" not in sys.modules:
@@ -20,6 +22,12 @@ if "anthropic" not in sys.modules:
 
 from utils import model_gateway as gw
 from agents.intelligence import n8iv_agents as n8
+
+
+@pytest.fixture(autouse=True)
+def isolate_gateway_storage(monkeypatch):
+    monkeypatch.setattr(gw, "_check_budget", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gw, "_write_cost_ledger", lambda *_args, **_kwargs: None)
 
 
 class _Usage:
@@ -108,6 +116,37 @@ def test_cache_key_distinguishes_long_messages_with_shared_prefix():
     assert len(key_a) == 32
 
 
+def test_cache_key_changes_with_prompt_and_dataset_versions():
+    base = gw._cache_key(
+        "claude-haiku",
+        "data-quality",
+        "same input",
+        system_prompt="prompt-a",
+        prompt_version="v1",
+        data_version="dataset-1",
+        tenant_id="agency:client",
+    )
+
+    assert base != gw._cache_key(
+        "claude-haiku",
+        "data-quality",
+        "same input",
+        system_prompt="prompt-b",
+        prompt_version="v1",
+        data_version="dataset-1",
+        tenant_id="agency:client",
+    )
+    assert base != gw._cache_key(
+        "claude-haiku",
+        "data-quality",
+        "same input",
+        system_prompt="prompt-a",
+        prompt_version="v1",
+        data_version="dataset-2",
+        tenant_id="agency:client",
+    )
+
+
 def test_no_schema_returns_plain_text_block(monkeypatch):
     calls: list[dict] = []
     monkeypatch.setattr(gw.anthropic, "Anthropic", _fake_client_factory(calls, {}))
@@ -121,3 +160,24 @@ def test_no_schema_returns_plain_text_block(monkeypatch):
 
     assert "tools" not in calls[-1]
     assert resp.text == '{"narrative": "plain"}'
+
+
+def test_gateway_settles_atomic_budget_reservation(monkeypatch):
+    calls: list[dict] = []
+    settled = []
+    reservation = types.SimpleNamespace(
+        settle=lambda cost: settled.append(cost), cancel=lambda: None
+    )
+    monkeypatch.setattr(
+        gw, "_reserve_or_check_budget", lambda *_args, **_kwargs: reservation
+    )
+    monkeypatch.setattr(gw.anthropic, "Anthropic", _fake_client_factory(calls, {}))
+
+    response = gw.call(
+        agent_name="revenue-analyst",
+        system_prompt="sys",
+        user_message="msg",
+        task_type="revenue_analyst",
+    )
+
+    assert settled == [response.cost_usd]

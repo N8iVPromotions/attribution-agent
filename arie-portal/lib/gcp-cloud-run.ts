@@ -21,7 +21,7 @@ function gcpConfig() {
     workloadIdentityPoolId: clean(process.env.GCP_WORKLOAD_IDENTITY_POOL_ID),
     workloadIdentityPoolProviderId: clean(process.env.GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID),
     region: clean(process.env.ARIE_CLOUD_RUN_REGION) || "us-central1",
-    jobName: clean(process.env.ARIE_CLOUD_RUN_JOB) || "attribution-pipeline"
+    jobName: clean(process.env.ARIE_CLOUD_RUN_JOB) || "attribution-launcher"
   };
 }
 
@@ -39,14 +39,14 @@ export function hasGcpCloudRunOidcConfig() {
 }
 
 function pipelineArgs(input: PipelineTriggerInput) {
-  const args = ["flows/agency_flow.py", "--agency", input.agencyId];
-  if (input.clientIds.length) {
-    args.push("--client-filter", ...input.clientIds);
+  const args = ["flows/job_launcher.py", "--agency", input.agencyId];
+  for (const clientId of input.clientIds) {
+    args.push("--client", clientId);
   }
   if (input.dryRun) {
     args.push("--dry-run");
   }
-  args.push("--attribution-model", input.attributionModel, "--run-mode", input.runMode);
+  args.push("--attribution-model", input.attributionModel);
   return args;
 }
 

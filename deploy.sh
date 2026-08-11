@@ -28,8 +28,15 @@ IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/attribution-agent"
 SERVICE_UI="attribution-ui"
 SERVICE_API="attribution-api"
 JOB_PIPELINE="attribution-pipeline"
+JOB_LAUNCHER="attribution-launcher"
+JOB_FINALIZER="attribution-benchmark-finalizer"
+JOB_MAINTENANCE="attribution-delta-maintenance"
 SCHEDULER_JOB="attribution-monthly"
+SCHEDULER_MAINTENANCE_JOB="attribution-weekly-maintenance"
 REGISTRY_BUCKET="${REGISTRY_BUCKET:-${PROJECT_ID}-attribution-registry}"
+RAW_ARCHIVE_BUCKET="${RAW_ARCHIVE_BUCKET:-${PROJECT_ID}-attribution-raw}"
+PIPELINE_TASKS="${PIPELINE_TASKS:-20}"
+PIPELINE_PARALLELISM="${PIPELINE_PARALLELISM:-5}"
 ALLOW_UNAUTHENTICATED_UI="${ALLOW_UNAUTHENTICATED_UI:-false}"
 ALLOW_UNAUTHENTICATED_API="${ALLOW_UNAUTHENTICATED_API:-false}"
 OPERATOR_PRINCIPAL="${OPERATOR_PRINCIPAL:-}"
@@ -68,9 +75,9 @@ SECRET_KEYS=(
 )
 
 # Non-secret runtime config shared by the Job and the UI service.
-# Registry lives on a GCS FUSE mount so it survives restarts; backend=local
-# makes client_config read/write the JSON file instead of the Delta table.
-COMMON_ENV="ATTRIBUTION_CLIENT_REGISTRY_BACKEND=local"
+# Delta is the production system of record. The mounted JSON registry remains
+# available as a read-only recovery/demo fallback if Databricks is unavailable.
+COMMON_ENV="ATTRIBUTION_CLIENT_REGISTRY_BACKEND=delta"
 COMMON_ENV+=",ATTRIBUTION_CLIENT_REGISTRY_PATH=/mnt/registry/clients.json"
 COMMON_ENV+=",ATTRIBUTION_CATALOG=workspace"
 COMMON_ENV+=",ATTRIBUTION_OPS_SCHEMA=workspace.attribution_ops"
@@ -81,6 +88,19 @@ COMMON_ENV+=",ATTRIBUTION_CLOUD_RUN_REGION=${REGION}"
 COMMON_ENV+=",ARIE_AUTH_ENABLED=true"
 COMMON_ENV+=",ARIE_BOOTSTRAP_ADMIN_EMAIL=${ARIE_BOOTSTRAP_ADMIN_EMAIL:-zajen@n8ivpromotions.com}"
 COMMON_ENV+=",ARIE_SESSION_TTL_HOURS=${ARIE_SESSION_TTL_HOURS:-12}"
+COMMON_ENV+=",ARIE_CLIENT_LOCK_BUCKET=${REGISTRY_BUCKET}"
+COMMON_ENV+=",ARIE_CLIENT_LOCKS_ENABLED=true"
+COMMON_ENV+=",ARIE_RAW_ARCHIVE_BUCKET=${RAW_ARCHIVE_BUCKET}"
+COMMON_ENV+=",ARIE_WORK_MANIFEST_BUCKET=${REGISTRY_BUCKET}"
+COMMON_ENV+=",ARIE_AI_BUDGET_BUCKET=${REGISTRY_BUCKET}"
+COMMON_ENV+=",ARIE_DELIVERY_IDEMPOTENCY_BUCKET=${REGISTRY_BUCKET}"
+COMMON_ENV+=",ARIE_INGEST_SOURCE_WORKERS=${ARIE_INGEST_SOURCE_WORKERS:-3}"
+COMMON_ENV+=",ARIE_INGEST_BATCH_ROWS=${ARIE_INGEST_BATCH_ROWS:-5000}"
+COMMON_ENV+=",ARIE_STREAMING_INGEST=true"
+COMMON_ENV+=",ARIE_MODEL_BUDGET_FAIL_CLOSED=true"
+COMMON_ENV+=",ARIE_DAILY_AI_USD_LIMIT=${ARIE_DAILY_AI_USD_LIMIT:-25}"
+COMMON_ENV+=",ARIE_MONTHLY_AI_USD_LIMIT=${ARIE_MONTHLY_AI_USD_LIMIT:-300}"
+COMMON_ENV+=",ATTRIBUTION_BENCHMARK_FINALIZER_JOB=${JOB_FINALIZER}"
 # NOTE: deliberately NOT set: ATTRIBUTION_JOB_NAME / ATTRIBUTION_JOB_ID /
 # ATTRIBUTION_JOBS_API_ENABLED — these keep the old Databricks Jobs-API
 # trigger paths dark.
@@ -203,14 +223,26 @@ gcloud storage buckets describe "gs://${REGISTRY_BUCKET}" >/dev/null 2>&1 \
 gcloud storage buckets add-iam-policy-binding "gs://${REGISTRY_BUCKET}" \
   --member "serviceAccount:${RUNTIME_SA}" --role roles/storage.objectAdmin >/dev/null
 
+# Immutable raw vendor pages for replay and audit. Default retention is 90 days.
+gcloud storage buckets describe "gs://${RAW_ARCHIVE_BUCKET}" >/dev/null 2>&1 \
+  || gcloud storage buckets create "gs://${RAW_ARCHIVE_BUCKET}" \
+       --location "$REGION" --uniform-bucket-level-access
+gcloud storage buckets update "gs://${RAW_ARCHIVE_BUCKET}" \
+  --lifecycle-file attribution_agent/attribution_agent/config/raw_archive_lifecycle.json
+gcloud storage buckets add-iam-policy-binding "gs://${RAW_ARCHIVE_BUCKET}" \
+  --member "serviceAccount:${RUNTIME_SA}" --role roles/storage.objectCreator >/dev/null
+gcloud storage buckets add-iam-policy-binding "gs://${RAW_ARCHIVE_BUCKET}" \
+  --member "serviceAccount:${RUNTIME_SA}" --role roles/storage.objectViewer >/dev/null
+
 # ── 4. Build & push (Cloud Build — no local Docker needed) ───────────────────
 GIT_SHA="$(git rev-parse --short HEAD)"
+COMMON_ENV+=",GIT_SHA=${GIT_SHA}"
 gcloud builds submit --tag "${IMAGE}:${GIT_SHA}" .
 gcloud artifacts docker tags add "${IMAGE}:${GIT_SHA}" "${IMAGE}:latest"
 
 # ── 5. Cloud Run Job (pipeline) ──────────────────────────────────────────────
 # --task-timeout 3600 matches the old bundle's timeout_seconds (default is 10m).
-# --max-retries 0: a retry after partial success would double-send emails.
+# Email claims and Delta MERGEs make one infrastructure retry safe.
 gcloud run jobs deploy "$JOB_PIPELINE" \
   --image "${IMAGE}:${GIT_SHA}" \
   --region "$REGION" \
@@ -222,15 +254,56 @@ gcloud run jobs deploy "$JOB_PIPELINE" \
   --add-volume "name=registry,type=cloud-storage,bucket=${REGISTRY_BUCKET}" \
   --add-volume-mount "volume=registry,mount-path=/mnt/registry" \
   --task-timeout 3600 \
-  --max-retries 0 \
-  --tasks 1 \
+  --max-retries 1 \
+  --tasks "$PIPELINE_TASKS" \
+  --parallelism "$PIPELINE_PARALLELISM" \
   --memory 2Gi --cpu 2
 
-# Scheduler SA may execute the job (job-scoped, not project-wide)
+# The launcher uses execution overrides, which require run.jobs.runWithOverrides.
 gcloud run jobs add-iam-policy-binding "$JOB_PIPELINE" --region "$REGION" \
+  --member "serviceAccount:${RUNTIME_SA}" --role roles/run.developer >/dev/null
+
+gcloud run jobs deploy "$JOB_FINALIZER" \
+  --image "${IMAGE}:${GIT_SHA}" \
+  --region "$REGION" \
+  --service-account "$RUNTIME_SA" \
+  --command python \
+  --args "flows/benchmark_finalizer.py" \
+  --set-secrets "$SECRET_FLAGS" \
+  --set-env-vars "$COMMON_ENV" \
+  --add-volume "name=registry,type=cloud-storage,bucket=${REGISTRY_BUCKET}" \
+  --add-volume-mount "volume=registry,mount-path=/mnt/registry" \
+  --task-timeout 3600 --max-retries 1 --tasks 1 --memory 1Gi --cpu 1
+gcloud run jobs add-iam-policy-binding "$JOB_FINALIZER" --region "$REGION" \
+  --member "serviceAccount:${RUNTIME_SA}" --role roles/run.developer >/dev/null
+
+gcloud run jobs deploy "$JOB_LAUNCHER" \
+  --image "${IMAGE}:${GIT_SHA}" \
+  --region "$REGION" \
+  --service-account "$RUNTIME_SA" \
+  --command python \
+  --args "flows/job_launcher.py" \
+  --set-secrets "$SECRET_FLAGS" \
+  --set-env-vars "$COMMON_ENV" \
+  --add-volume "name=registry,type=cloud-storage,bucket=${REGISTRY_BUCKET}" \
+  --add-volume-mount "volume=registry,mount-path=/mnt/registry" \
+  --task-timeout 9000 --max-retries 0 --tasks 1 --memory 1Gi --cpu 1
+gcloud run jobs add-iam-policy-binding "$JOB_LAUNCHER" --region "$REGION" \
   --member "serviceAccount:${SCHED_SA}" --role roles/run.invoker >/dev/null
-gcloud run jobs add-iam-policy-binding "$JOB_PIPELINE" --region "$REGION" \
-  --member "serviceAccount:${RUNTIME_SA}" --role roles/run.invoker >/dev/null
+
+gcloud run jobs deploy "$JOB_MAINTENANCE" \
+  --image "${IMAGE}:${GIT_SHA}" \
+  --region "$REGION" \
+  --service-account "$RUNTIME_SA" \
+  --command python \
+  --args "flows/delta_maintenance.py" \
+  --set-secrets "$SECRET_FLAGS" \
+  --set-env-vars "$COMMON_ENV" \
+  --add-volume "name=registry,type=cloud-storage,bucket=${REGISTRY_BUCKET}" \
+  --add-volume-mount "volume=registry,mount-path=/mnt/registry" \
+  --task-timeout 3600 --max-retries 1 --tasks 1 --memory 1Gi --cpu 1
+gcloud run jobs add-iam-policy-binding "$JOB_MAINTENANCE" --region "$REGION" \
+  --member "serviceAccount:${SCHED_SA}" --role roles/run.invoker >/dev/null
 
 # ── 6. Cloud Run Service (Streamlit UI) ──────────────────────────────────────
 # Streamlit needs: long request timeout (websocket), sticky single instance
@@ -317,7 +390,23 @@ gcloud scheduler jobs "$SCHED_VERB" http "$SCHEDULER_JOB" \
   --location "$REGION" \
   --schedule "$SCHEDULE" \
   --time-zone "America/New_York" \
-  --uri "https://run.googleapis.com/v2/projects/${PROJECT_ID}/locations/${REGION}/jobs/${JOB_PIPELINE}:run" \
+  --uri "https://run.googleapis.com/v2/projects/${PROJECT_ID}/locations/${REGION}/jobs/${JOB_LAUNCHER}:run" \
+  --http-method POST \
+  --oauth-service-account-email "$SCHED_SA" \
+  --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform" \
+  --attempt-deadline 300s
+
+MAINTENANCE_SCHEDULE="${MAINTENANCE_SCHEDULE:-0 3 * * 0}"
+if gcloud scheduler jobs describe "$SCHEDULER_MAINTENANCE_JOB" --location "$REGION" >/dev/null 2>&1; then
+  MAINTENANCE_SCHED_VERB="update"
+else
+  MAINTENANCE_SCHED_VERB="create"
+fi
+gcloud scheduler jobs "$MAINTENANCE_SCHED_VERB" http "$SCHEDULER_MAINTENANCE_JOB" \
+  --location "$REGION" \
+  --schedule "$MAINTENANCE_SCHEDULE" \
+  --time-zone "America/New_York" \
+  --uri "https://run.googleapis.com/v2/projects/${PROJECT_ID}/locations/${REGION}/jobs/${JOB_MAINTENANCE}:run" \
   --http-method POST \
   --oauth-service-account-email "$SCHED_SA" \
   --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform" \
@@ -328,5 +417,6 @@ echo "── Deployed ───────────────────�
 echo "Image:     ${IMAGE}:${GIT_SHA}"
 echo "UI:        $(gcloud run services describe "$SERVICE_UI" --region "$REGION" --format 'value(status.url)')"
 echo "API:       $(gcloud run services describe "$SERVICE_API" --region "$REGION" --format 'value(status.url)')"
-echo "Job:       gcloud run jobs execute $JOB_PIPELINE --region $REGION --args 'flows/agency_flow.py,--agency,demo_agency,--dry-run' --wait"
+echo "Job:       gcloud run jobs execute $JOB_LAUNCHER --region $REGION --args 'flows/job_launcher.py,--dry-run,--expected-client-count,20' --wait"
 echo "Scheduler: $SCHEDULER_JOB ($SCHEDULE America/New_York)"
+echo "Maintenance: $SCHEDULER_MAINTENANCE_JOB ($MAINTENANCE_SCHEDULE America/New_York)"

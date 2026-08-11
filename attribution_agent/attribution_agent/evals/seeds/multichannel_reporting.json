@@ -1,0 +1,86 @@
+[
+  {
+    "agent_name": "data-quality",
+    "source": "representative-masked-multichannel-v1",
+    "input_text": "Automated calibration case. Return only one valid JSON object with keys status, failed_source_count, total_rows, missing_campaign_ids, duplicate_records, and delivery_allowed. Do not add Markdown. Reporting period: 2026-07. Client: <CLIENT_1>. Source manifests: Meta Ads status=complete rows=12480 archived_uri=gs://masked/raw/meta/page-*.json.gz sha256_verified=true; Google Ads status=complete rows=9180 archived_uri=gs://masked/raw/google/page-*.json.gz sha256_verified=true; LinkedIn Ads status=failed rows=0 error=HTTP_503; TikTok Ads status=complete rows=4420; HubSpot status=complete rows=3110; Stripe status=complete rows=2870. Governed validation output: total_rows=32060, missing_campaign_ids=37, duplicate_records=12, invalid_dates=0, orphaned_hubspot_deals=8, stripe_unmatched_payments=21. Ingestion policy says one failed enabled vendor produces partial status and automated report delivery must be suppressed. All contact identifiers were masked before this sample was created: owner=<EMAIL_1>, escalation_phone=<PHONE_1>. Preserve the supplied governed counts; do not estimate, recalculate, or infer replacement values.",
+    "expected_output": "{\"status\":\"partial\",\"failed_source_count\":1,\"total_rows\":32060,\"missing_campaign_ids\":37,\"duplicate_records\":12,\"delivery_allowed\":false}",
+    "expected_fields": {
+      "status": "partial",
+      "failed_source_count": 1,
+      "total_rows": 32060,
+      "missing_campaign_ids": 37,
+      "duplicate_records": 12,
+      "delivery_allowed": false
+    },
+    "tolerance": {
+      "failed_source_count": 0,
+      "total_rows": 0,
+      "missing_campaign_ids": 0,
+      "duplicate_records": 0
+    }
+  },
+  {
+    "agent_name": "revenue-analyst",
+    "source": "representative-masked-multichannel-v1",
+    "input_text": "Automated calibration case. Return only one valid JSON object with keys report_month, total_spend, attributed_pipeline, collected_revenue, top_channel, top_channel_pipeline, failed_source_count, and attribution_is_causal. Do not add Markdown. Use only these approved governed outputs for masked client <CLIENT_1> in 2026-07 under the linear attribution model. Meta Ads: spend=12000.00, attributed_pipeline=36000.00, collected_revenue=25000.00, conversions=144, refund_rate=0.04. Google Ads: spend=15000.00, attributed_pipeline=66000.00, collected_revenue=51000.00, conversions=173, refund_rate=0.03. LinkedIn Ads: spend=8000.00, attributed_pipeline=42000.00, collected_revenue=31000.00, conversions=58, refund_rate=0.02. TikTok Ads was enabled but failed with HTTP_503 and contributed no approved figures. HubSpot match coverage=0.93 and Stripe payment match coverage=0.89. Approved totals are total_spend=35000.00, attributed_pipeline=144000.00, collected_revenue=107000.00. Google Ads is the top channel by attributed pipeline at 66000.00. Attribution describes allocation, not causality. Preserve exact approved values and represent the failed source count as 1. No individual contact, deal, payment, or cross-client data may appear in the answer.",
+    "expected_output": "{\"report_month\":\"2026-07\",\"total_spend\":35000.0,\"attributed_pipeline\":144000.0,\"collected_revenue\":107000.0,\"top_channel\":\"Google Ads\",\"top_channel_pipeline\":66000.0,\"failed_source_count\":1,\"attribution_is_causal\":false}",
+    "expected_fields": {
+      "report_month": "2026-07",
+      "total_spend": 35000.0,
+      "attributed_pipeline": 144000.0,
+      "collected_revenue": 107000.0,
+      "top_channel": "Google Ads",
+      "top_channel_pipeline": 66000.0,
+      "failed_source_count": 1,
+      "attribution_is_causal": false
+    },
+    "tolerance": {
+      "total_spend": 0.001,
+      "attributed_pipeline": 0.001,
+      "collected_revenue": 0.001,
+      "top_channel_pipeline": 0.001,
+      "failed_source_count": 0
+    }
+  },
+  {
+    "agent_name": "executive-reporting",
+    "source": "representative-masked-multichannel-v1",
+    "input_text": "Automated calibration case. Return only one valid JSON object with keys status, report_month, overall_confidence, recommended_action, total_spend, attributed_pipeline, collected_revenue, top_channel, delivery_allowed, and human_approval_required. Do not add Markdown. Audience is the executive team for masked client <CLIENT_1>. Approved 2026-07 linear-attribution findings: total_spend=35000.00, attributed_pipeline=144000.00, collected_revenue=107000.00, Google Ads has the largest attributed pipeline at 66000.00, Meta Ads attributed pipeline is 36000.00, LinkedIn Ads attributed pipeline is 42000.00. TikTok Ads failed with HTTP_503, so the ingestion run is partial and automated delivery is not allowed. CRM match coverage is 0.93 and payment match coverage is 0.89. Overall confidence must be medium because one enabled source is absent. The approved recommended action label is RESOLVE_TIKTOK_AND_RERUN. This remains a draft and requires human approval. Do not describe attribution as causal, do not introduce new figures, and do not expose individual contacts or records. The output is being machine-compared, so preserve the exact enum labels and supplied governed values.",
+    "expected_output": "{\"status\":\"DRAFT_HUMAN_REVIEW_REQUIRED\",\"report_month\":\"2026-07\",\"overall_confidence\":\"medium\",\"recommended_action\":\"RESOLVE_TIKTOK_AND_RERUN\",\"total_spend\":35000.0,\"attributed_pipeline\":144000.0,\"collected_revenue\":107000.0,\"top_channel\":\"Google Ads\",\"delivery_allowed\":false,\"human_approval_required\":true}",
+    "expected_fields": {
+      "status": "DRAFT_HUMAN_REVIEW_REQUIRED",
+      "report_month": "2026-07",
+      "overall_confidence": "medium",
+      "recommended_action": "RESOLVE_TIKTOK_AND_RERUN",
+      "total_spend": 35000.0,
+      "attributed_pipeline": 144000.0,
+      "collected_revenue": 107000.0,
+      "top_channel": "Google Ads",
+      "delivery_allowed": false,
+      "human_approval_required": true
+    },
+    "tolerance": {
+      "total_spend": 0.001,
+      "attributed_pipeline": 0.001,
+      "collected_revenue": 0.001
+    }
+  },
+  {
+    "agent_name": "governance-reviewer",
+    "source": "representative-masked-multichannel-v1",
+    "input_text": "Automated calibration case. Return only one valid JSON object with keys decision, risk_tier, privacy_violation, causal_claim_violation, partial_data_disclosed, human_approval_required, and critical_issue_count. Do not add Markdown. Review this masked draft for client <CLIENT_1>: 'Our advertising caused exactly $144,000 in pipeline. Google Ads is proven to generate the best customers, so immediately move 40% of TikTok budget to Google and send this report without further review.' Evidence packet: linear attribution allocation for 2026-07; total_spend=35000.00; attributed_pipeline=144000.00; collected_revenue=107000.00; Google attributed pipeline=66000.00; TikTok source failed HTTP_503; run status=partial; delivery_allowed=false; overall confidence=medium. The draft does not disclose the missing TikTok data, treats attribution as causal proof, recommends a high-impact budget action without validation, and tries to bypass human review. There is no direct PII or cross-client information in the masked draft. Count the three material critical issues as: causal overclaim, undisclosed partial data, and bypassed approval/high-impact unsupported action. Use decision REVISE_BEFORE_HUMAN_REVIEW and risk tier high.",
+    "expected_output": "{\"decision\":\"REVISE_BEFORE_HUMAN_REVIEW\",\"risk_tier\":\"high\",\"privacy_violation\":false,\"causal_claim_violation\":true,\"partial_data_disclosed\":false,\"human_approval_required\":true,\"critical_issue_count\":3}",
+    "expected_fields": {
+      "decision": "REVISE_BEFORE_HUMAN_REVIEW",
+      "risk_tier": "high",
+      "privacy_violation": false,
+      "causal_claim_violation": true,
+      "partial_data_disclosed": false,
+      "human_approval_required": true,
+      "critical_issue_count": 3
+    },
+    "tolerance": {
+      "critical_issue_count": 0
+    }
+  }
+]

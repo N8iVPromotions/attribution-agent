@@ -9,13 +9,18 @@ API Docs: https://developers.hubspot.com/docs/api/crm/deals
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pandas as pd
+import pyarrow as pa
 import requests
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
+
+from agents.ingest.batches import batches_to_dataframe, records_to_batches
+from utils.raw_archive import archive_raw_page
 
 # ─── CONSTANTS ────────────────────────────────────────────────────────────────
 HS_BASE_URL = "https://api.hubapi.com"
@@ -79,8 +84,16 @@ class HubSpotConnector:
         df = connector.pull_deals(lookback_days=30, pipeline_id="")
     """
 
-    def __init__(self, access_token: str = "") -> None:
+    def __init__(
+        self,
+        access_token: str = "",
+        client_id: str = "",
+        run_id: str = "",
+    ) -> None:
         self.access_token = access_token
+        self.client_id = client_id
+        self.run_id = run_id
+        self.page_number = 0
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -98,6 +111,7 @@ class HubSpotConnector:
         url = f"{HS_BASE_URL}{endpoint}"
         response = self.session.post(url, json=payload, timeout=30)
         response.raise_for_status()
+        self._archive_response(endpoint, response.content)
         return response.json()
 
     @retry(
@@ -109,7 +123,19 @@ class HubSpotConnector:
         url = f"{HS_BASE_URL}{endpoint}"
         response = self.session.get(url, params=params or {}, timeout=30)
         response.raise_for_status()
+        self._archive_response(endpoint, response.content)
         return response.json()
+
+    def _archive_response(self, endpoint: str, body: bytes) -> None:
+        self.page_number += 1
+        archive_raw_page(
+            source="hubspot",
+            client_id=self.client_id,
+            run_id=self.run_id,
+            page_number=self.page_number,
+            body=body,
+            endpoint=endpoint.strip("/").replace("/", "-"),
+        )
 
     # ── DEALS ──────────────────────────────────────────────────────────────────
 
@@ -119,6 +145,19 @@ class HubSpotConnector:
         pipeline_id: str = "",
     ) -> list[dict]:
         """Search deals modified after a given timestamp using the CRM Search API."""
+        deals = [
+            deal
+            for page in self._iter_deal_pages(after_timestamp_ms, pipeline_id)
+            for deal in page
+        ]
+        logger.info(f"[HubSpot] Retrieved {len(deals)} deals")
+        return deals
+
+    def _iter_deal_pages(
+        self,
+        after_timestamp_ms: int,
+        pipeline_id: str = "",
+    ) -> Iterator[list[dict]]:
         filters = [
             {
                 "propertyName": "hs_lastmodifieddate",
@@ -135,7 +174,6 @@ class HubSpotConnector:
                 }
             )
 
-        deals = []
         after_cursor = None
 
         while True:
@@ -152,15 +190,14 @@ class HubSpotConnector:
                 payload["after"] = after_cursor
 
             data = self._post("/crm/v3/objects/deals/search", payload)
-            deals.extend(data.get("results", []))
+            results = data.get("results", [])
+            if results:
+                yield results
 
             paging = data.get("paging", {})
             after_cursor = paging.get("next", {}).get("after")
             if not after_cursor:
                 break
-
-        logger.info(f"[HubSpot] Retrieved {len(deals)} deals")
-        return deals
 
     # ── CONTACTS ───────────────────────────────────────────────────────────────
 
@@ -195,36 +232,53 @@ class HubSpotConnector:
         Pull all deals modified in the last N days + their associated
         contact source data. Returns a single flat DataFrame.
         """
+        return batches_to_dataframe(
+            self.iter_deal_batches(
+                lookback_days=lookback_days,
+                pipeline_id=pipeline_id,
+            )
+        )
+
+    def iter_deal_batches(
+        self,
+        lookback_days: int = 30,
+        pipeline_id: str = "",
+    ) -> Iterator[pa.RecordBatch]:
         cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
         cutoff_ms = int(cutoff.timestamp() * 1000)
-
         logger.info(
             f"[HubSpot] Pulling deals modified since "
             f"{cutoff.strftime('%Y-%m-%d')} | pipeline='{pipeline_id or 'all'}'"
         )
 
-        deals = self._search_deals(cutoff_ms, pipeline_id)
-        if not deals:
-            logger.warning("[HubSpot] No deals returned")
-            return pd.DataFrame()
+        def iter_records():
+            for deals in self._iter_deal_pages(cutoff_ms, pipeline_id):
+                contact_ids = {
+                    contact["id"]
+                    for deal in deals
+                    for contact in deal.get("associations", {})
+                    .get("contacts", {})
+                    .get("results", [])
+                }
+                contact_map = self._batch_get_contacts(sorted(contact_ids))
+                yield from self._normalize_rows(deals, contact_map)
 
-        # Collect all unique contact IDs across all deals
-        contact_ids: list[str] = []
-        for deal in deals:
-            associations = deal.get("associations", {})
-            for contact in associations.get("contacts", {}).get("results", []):
-                contact_ids.append(contact["id"])
-        contact_ids = list(set(contact_ids))
-
-        contact_map = self._batch_get_contacts(contact_ids)
-        return self._normalize(deals, contact_map)
+        total_rows = 0
+        for batch in records_to_batches(iter_records()):
+            total_rows += batch.num_rows
+            yield batch
+        logger.info(f"[HubSpot] Retrieved {total_rows} deals")
 
     # ── NORMALIZATION ──────────────────────────────────────────────────────────
 
     def _normalize(
         self, deals: list[dict], contact_map: dict[str, dict]
     ) -> pd.DataFrame:
-        rows = []
+        return pd.DataFrame(self._normalize_rows(deals, contact_map))
+
+    def _normalize_rows(
+        self, deals: list[dict], contact_map: dict[str, dict]
+    ) -> Iterator[dict]:
         for deal in deals:
             props = deal.get("properties", {})
 
@@ -267,25 +321,14 @@ class HubSpotConnector:
                 # Meta
                 "source": "hubspot",
             }
-            rows.append(row)
-
-        df = pd.DataFrame(rows)
-
-        # Derived: days from lead creation to deal creation
-        if "lead_create_date" in df.columns and "create_date" in df.columns:
-            try:
-                df["create_date"] = pd.to_datetime(df["create_date"], errors="coerce")
-                df["lead_create_date"] = pd.to_datetime(
-                    df["lead_create_date"], errors="coerce"
-                )
-                df["days_to_deal"] = (
-                    df["create_date"] - df["lead_create_date"]
-                ).dt.days
-            except Exception:
-                df["days_to_deal"] = None
-
-        logger.info(f"[HubSpot] Normalized DataFrame shape: {df.shape}")
-        return df
+            create_date = row["create_date"]
+            lead_create_date = row["lead_create_date"]
+            row["days_to_deal"] = (
+                (create_date - lead_create_date).days
+                if create_date is not None and lead_create_date is not None
+                else None
+            )
+            yield row
 
 
 # ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -312,9 +355,33 @@ def pull_hubspot_data(
     lookback_days: int = 30,
     pipeline_id: str = "",
     access_token: str = "",
+    client_id: str = "",
+    run_id: str = "",
 ) -> pd.DataFrame:
-    connector = HubSpotConnector(access_token=access_token)
-    return connector.pull_deals(
+    return batches_to_dataframe(
+        iter_hubspot_batches(
+            lookback_days=lookback_days,
+            pipeline_id=pipeline_id,
+            access_token=access_token,
+            client_id=client_id,
+            run_id=run_id,
+        )
+    )
+
+
+def iter_hubspot_batches(
+    lookback_days: int = 30,
+    pipeline_id: str = "",
+    access_token: str = "",
+    client_id: str = "",
+    run_id: str = "",
+) -> Iterator[pa.RecordBatch]:
+    connector = HubSpotConnector(
+        access_token=access_token,
+        client_id=client_id,
+        run_id=run_id,
+    )
+    yield from connector.iter_deal_batches(
         lookback_days=lookback_days,
         pipeline_id=pipeline_id,
     )
