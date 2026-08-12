@@ -44,6 +44,15 @@ CONVERSION_ACTIONS = {
 }
 
 
+def _error_detail(response: requests.Response | None) -> str:
+    if response is None:
+        return ""
+    body = (response.text or "").strip()
+    if not body:
+        return ""
+    return f" | response={redact_secrets(body[:1200])}"
+
+
 class MetaConnector:
     def __init__(
         self,
@@ -70,7 +79,9 @@ class MetaConnector:
             response = self.session.get(url, params=params, timeout=30)
             response.raise_for_status()
         except requests.RequestException as exc:
-            raise type(exc)(redact_secrets(str(exc))) from None
+            message = redact_secrets(str(exc))
+            message += _error_detail(getattr(exc, "response", None))
+            raise type(exc)(message) from None
         self.page_number += 1
         archive_raw_page(
             source="meta",

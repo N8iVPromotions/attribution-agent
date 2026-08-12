@@ -82,3 +82,25 @@ class TestMetaConnectorRedaction:
             )
         assert "EAABtopsecrettoken" not in str(excinfo.value)
         assert "access_token=REDACTED" in str(excinfo.value)
+
+    def test_http_error_message_includes_redacted_meta_body(self, monkeypatch):
+        connector = MetaConnector(access_token="EAABtopsecrettoken")
+
+        def fake_get(url, params=None, timeout=None):
+            resp = requests.Response()
+            resp.status_code = 400
+            resp.url = f"{url}?access_token={params['access_token']}&limit=500"
+            resp._content = b'{"error":{"message":"Session has expired","code":190}}'
+            return resp
+
+        monkeypatch.setattr(connector.session, "get", fake_get)
+
+        with pytest.raises(requests.HTTPError) as excinfo:
+            MetaConnector._get.__wrapped__(
+                connector, "https://graph.facebook.com/v19.0/act_1/insights", {}
+            )
+
+        message = str(excinfo.value)
+        assert "Session has expired" in message
+        assert "EAABtopsecrettoken" not in message
+        assert "access_token=REDACTED" in message
