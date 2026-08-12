@@ -172,6 +172,10 @@ Invoke-Gcloud projects add-iam-policy-binding $ProjectId `
     --member "serviceAccount:$runtimeSa" `
     --role roles/secretmanager.admin `
     --quiet
+Invoke-Gcloud projects add-iam-policy-binding $ProjectId `
+    --member "serviceAccount:$runtimeSa" `
+    --role roles/run.viewer `
+    --quiet
 
 foreach ($key in $secretKeys) {
     if ((Invoke-GcloudQuiet secrets describe $key --project $ProjectId) -eq 0) {

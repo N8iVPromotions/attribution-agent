@@ -187,6 +187,8 @@ gcloud iam service-accounts describe "$SCHED_SA" >/dev/null 2>&1 \
 # role before opening self-service agency access.
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member "serviceAccount:${RUNTIME_SA}" --role roles/secretmanager.admin --quiet >/dev/null
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member "serviceAccount:${RUNTIME_SA}" --role roles/run.viewer --quiet >/dev/null
 
 # Known global secrets still bind explicitly so deployments remain compatible
 # if the runtime role is narrowed later.
