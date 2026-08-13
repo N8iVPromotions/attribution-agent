@@ -311,6 +311,7 @@ option { color: #151716; background: white; }
 .action-copy { display: block; margin-top: .7rem; color: var(--paper); font-size: .66rem; }
 .alert-context { display: grid; grid-template-columns: 3.5rem 1fr; align-content: center; gap: .35rem; font-size: .61rem; }
 .alert-context span { color: var(--faint); }
+.alert-resolve { grid-column: 1 / -1; width: 100%; margin-top: .45rem; justify-content: center; }
 
 .governance-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
 .governance-grid .panel:last-child { grid-column: 1 / -1; }
