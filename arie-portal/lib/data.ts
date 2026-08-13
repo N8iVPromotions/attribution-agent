@@ -119,6 +119,7 @@ function parseRun(row: Record<string, unknown>): PipelineRun {
   const status = safeStatus(row.status);
   const emailSent = bool(row.email_sent);
   const dryRun = bool(row.dry_run);
+  const normalizedRows = number(row.normalized_ad_rows);
   return {
     runId: text(row.run_id),
     agencyId: text(row.agency_id),
@@ -128,7 +129,10 @@ function parseRun(row: Record<string, unknown>): PipelineRun {
     status,
     dryRun,
     totalPipeline: number(row.total_pipeline),
-    topChannel: text(row.top_channel, "Pending"),
+    topChannel: text(
+      row.top_channel,
+      normalizedRows > 0 ? "Revenue pending" : "Pending"
+    ),
     emailSent,
     deliverySuppressed: !dryRun && !emailSent && (status === "partial" || Boolean(text(row.warnings))),
     warnings: text(row.warnings),
@@ -142,7 +146,7 @@ function parseRun(row: Record<string, unknown>): PipelineRun {
       linkedin: number(row.linkedin_rows),
       hubspot: number(row.hubspot_rows),
       stripe: number(row.stripe_rows),
-      normalized: number(row.normalized_ad_rows)
+      normalized: normalizedRows
     }
   };
 }

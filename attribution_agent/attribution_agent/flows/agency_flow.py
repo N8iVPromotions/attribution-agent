@@ -237,7 +237,11 @@ def run_agency_pipeline(
                 # 1. Ingest
                 if "ingest" not in completed_steps:
                     checkpointer.start_step(run_id, agency_id, client_id, "ingest")
-                    ingest_result = ingest_flow(client_id, run_id=run_id)
+                    ingest_result = ingest_flow(
+                        client_id,
+                        run_id=run_id,
+                        attribution_model=selected_model,
+                    )
                     checkpointer.complete_step(
                         run_id, agency_id, client_id, "ingest", ingest_result
                     )

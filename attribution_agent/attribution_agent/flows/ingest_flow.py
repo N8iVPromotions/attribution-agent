@@ -61,6 +61,7 @@ from agents.ingest.validator import (
     validate_stripe,
 )
 from attribution_engine import run_attribution
+from attribution_models import normalize_model
 from utils.secrets import redact_secrets
 from utils.databricks_writer import (
     ensure_schema,
@@ -389,7 +390,11 @@ def step_write_normalized_ads(normalized, config: ClientConfig) -> int:
 
 
 def step_build_attribution(
-    normalized_ads, hubspot_df, stripe_df, config: ClientConfig
+    normalized_ads,
+    hubspot_df,
+    stripe_df,
+    config: ClientConfig,
+    attribution_model: str | None = None,
 ) -> dict:
     """Closed-loop join: connect ad touchpoints to closed/won revenue.
 
@@ -397,13 +402,14 @@ def step_build_attribution(
     not fail the ingest. Returns a small summary dict for the run record.
     """
     try:
+        selected_model = normalize_model(attribution_model or config.attribution_model)
         result = run_attribution(
             client_id=config.client_id,
             ads=normalized_ads if normalized_ads is not None else None,
-            model=config.attribution_model,
+            model=selected_model,
             hubspot_df=hubspot_df,
             stripe_df=stripe_df,
-            lookback_days=max(config.lookback_days, 90),
+            lookback_days=config.lookback_days,
         )
         scorecard = result.channel_performance
         rows_written = _with_retry(
@@ -415,12 +421,12 @@ def step_build_attribution(
             label="write-attribution-results",
         )
         logger.info(
-            f"[Attribution] {config.client_id} | model={config.attribution_model} | "
+            f"[Attribution] {config.client_id} | model={selected_model} | "
             f"total=${result.total_revenue:,.0f} attributed=${result.attributed_revenue:,.0f} "
             f"unattributed=${result.unattributed_revenue:,.0f} | rows={rows_written}"
         )
         return {
-            "attribution_model": config.attribution_model,
+            "attribution_model": selected_model,
             "total_revenue": result.total_revenue,
             "attributed_revenue": result.attributed_revenue,
             "unattributed_revenue": result.unattributed_revenue,
@@ -662,7 +668,11 @@ def _raise_staging_vendor_error(source: str, client_id: str) -> None:
         raise RuntimeError(f"STAGING_SIMULATED_VENDOR_ERROR:{source}")
 
 
-def ingest_flow(client_id: str, run_id: str = "") -> dict:
+def ingest_flow(
+    client_id: str,
+    run_id: str = "",
+    attribution_model: str | None = None,
+) -> dict:
     logger.info(f"{'=' * 50}")
     logger.info(f"Ingest Flow START | client={client_id}")
     logger.info(f"{'=' * 50}")
@@ -733,7 +743,13 @@ def ingest_flow(client_id: str, run_id: str = "") -> dict:
     normalized_ad_rows = step_write_normalized_ads(normalized_ads, config)
 
     # Closed-loop join: attribute closed/won revenue back to ad touchpoints.
-    attribution = step_build_attribution(normalized_ads, hubspot_df, stripe_df, config)
+    attribution = step_build_attribution(
+        normalized_ads,
+        hubspot_df,
+        stripe_df,
+        config,
+        attribution_model=attribution_model,
+    )
 
     step_alert(meta_validated, hubspot_validated, stripe_validated, config, run_id)
 
