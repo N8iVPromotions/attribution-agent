@@ -34,8 +34,10 @@ $jobPipeline = "attribution-pipeline"
 $jobLauncher = "attribution-launcher"
 $jobFinalizer = "attribution-benchmark-finalizer"
 $jobMaintenance = "attribution-delta-maintenance"
+$jobOperatorHealth = "attribution-operator-health"
 $schedulerJob = "attribution-monthly"
 $schedulerMaintenanceJob = "attribution-weekly-maintenance"
+$schedulerHealthJob = "attribution-daily-health"
 $runtimeSaName = "attribution-runtime"
 $schedulerSaName = "attribution-scheduler"
 $runtimeSa = "$runtimeSaName@$ProjectId.iam.gserviceaccount.com"
@@ -226,6 +228,7 @@ $commonEnv = @(
     "COMMS_PROVIDER=gmail",
     "GOOGLE_CLOUD_PROJECT=$ProjectId",
     "ATTRIBUTION_CLOUD_RUN_JOB=$jobPipeline",
+    "ATTRIBUTION_LAUNCHER_CLOUD_RUN_JOB=$jobLauncher",
     "ATTRIBUTION_CLOUD_RUN_REGION=$Region",
     "ARIE_CLIENT_LOCK_BUCKET=$RegistryBucket",
     "ARIE_CLIENT_LOCKS_ENABLED=true",
@@ -275,7 +278,8 @@ Invoke-Gcloud run jobs add-iam-policy-binding $jobPipeline `
 $supportJobs = @(
     @{ Name = $jobFinalizer; Script = "flows/benchmark_finalizer.py"; Timeout = "3600"; Memory = "1Gi"; Retries = "1" },
     @{ Name = $jobLauncher; Script = "flows/job_launcher.py"; Timeout = "9000"; Memory = "1Gi"; Retries = "0" },
-    @{ Name = $jobMaintenance; Script = "flows/delta_maintenance.py"; Timeout = "3600"; Memory = "1Gi"; Retries = "1" }
+    @{ Name = $jobMaintenance; Script = "flows/delta_maintenance.py"; Timeout = "3600"; Memory = "1Gi"; Retries = "1" },
+    @{ Name = $jobOperatorHealth; Script = "flows/operator_health_check.py"; Timeout = "900"; Memory = "1Gi"; Retries = "1" }
 )
 foreach ($job in $supportJobs) {
     $supportArgs = @(
@@ -305,7 +309,7 @@ Invoke-Gcloud run jobs add-iam-policy-binding $jobFinalizer `
     --member "serviceAccount:$runtimeSa" `
     --role roles/run.developer `
     --project $ProjectId
-foreach ($schedulerTarget in @($jobLauncher, $jobMaintenance)) {
+foreach ($schedulerTarget in @($jobLauncher, $jobMaintenance, $jobOperatorHealth)) {
     Invoke-Gcloud run jobs add-iam-policy-binding $schedulerTarget `
         --region $Region `
         --member "serviceAccount:$schedulerSa" `
@@ -378,6 +382,19 @@ Invoke-Gcloud scheduler jobs $maintenanceVerb http $schedulerMaintenanceJob `
     --attempt-deadline "300s" `
     --project $ProjectId
 
+$healthSchedule = if ($env:HEALTH_SCHEDULE) { $env:HEALTH_SCHEDULE } else { "0 8 * * *" }
+$healthVerb = if ((Invoke-GcloudQuiet scheduler jobs describe $schedulerHealthJob --location $Region --project $ProjectId) -eq 0) { "update" } else { "create" }
+Invoke-Gcloud scheduler jobs $healthVerb http $schedulerHealthJob `
+    --location $Region `
+    --schedule $healthSchedule `
+    --time-zone "America/New_York" `
+    --uri "https://run.googleapis.com/v2/projects/$ProjectId/locations/$Region/jobs/$jobOperatorHealth`:run" `
+    --http-method POST `
+    --oauth-service-account-email $schedulerSa `
+    --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform" `
+    --attempt-deadline "300s" `
+    --project $ProjectId
+
 $serviceUrl = (& $gcloud.Source run services describe $serviceApi --region $Region --project $ProjectId --format="value(status.url)").Trim()
 
 Write-Host ""
@@ -387,3 +404,4 @@ Write-Host "API:       $serviceUrl"
 Write-Host "Job:       gcloud run jobs execute $jobLauncher --project $ProjectId --region $Region --args `"flows/job_launcher.py,--dry-run,--expected-client-count,20`" --wait"
 Write-Host "Scheduler: $schedulerJob ($schedule America/New_York)"
 Write-Host "Maintenance: $schedulerMaintenanceJob ($maintenanceSchedule America/New_York)"
+Write-Host "Health:    $schedulerHealthJob ($healthSchedule America/New_York)"

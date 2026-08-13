@@ -170,7 +170,7 @@ export type Recommendation = {
 };
 
 export type CommandCenterData = {
-  source: "databricks" | "demo";
+  source: "databricks" | "demo" | "unavailable";
   generatedAt: string;
   summary: {
     activeClients: number;

@@ -242,6 +242,57 @@ function buildRecommendations(runs: PipelineRun[], alerts: OperatorAlert[]): Rec
   return recommendations;
 }
 
+function productionRuntime() {
+  return process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production";
+}
+
+function unavailableCommandCenterData(
+  capabilities: CommandCenterData["capabilities"],
+  warnings: string[]
+): CommandCenterData {
+  return {
+    source: "unavailable",
+    generatedAt: new Date().toISOString(),
+    summary: {
+      activeClients: 0,
+      runs30d: 0,
+      successRate: 0,
+      attributedPipeline: 0,
+      openAlerts: 0,
+      criticalAlerts: 0,
+      activeRuns: 0,
+      partialRuns: 0,
+      suppressedDeliveries: 0,
+      aiSpendMonth: 0
+    },
+    agencies: [],
+    clients: [],
+    runs: [],
+    checkpoints: [],
+    alerts: [],
+    reports: [],
+    costs: [],
+    evals: [],
+    audits: [],
+    approvals: [],
+    lifecycleOperations: [],
+    recommendations: [
+      {
+        severity: "critical",
+        title: "Restore Databricks telemetry",
+        body: "Production sample data is suppressed while the command center cannot read Databricks."
+      }
+    ],
+    capabilities: {
+      ...capabilities,
+      pipelineExecution: false,
+      approvalActions: false,
+      tenantLifecycle: false
+    },
+    warnings
+  };
+}
+
 async function optionalQuery<T extends Record<string, unknown>>(
   label: string,
   statement: string,
@@ -263,6 +314,11 @@ export async function getCommandCenterData(): Promise<CommandCenterData> {
     tenantLifecycle: hasTenantLifecycleConfig()
   };
   if (!capabilities.databricks) {
+    if (productionRuntime()) {
+      return unavailableCommandCenterData(capabilities, [
+        "LIVE DATA UNAVAILABLE - Databricks is not configured. Production sample data is suppressed."
+      ]);
+    }
     return {
       ...mockCommandCenterData,
       generatedAt: new Date().toISOString(),
@@ -437,6 +493,12 @@ export async function getCommandCenterData(): Promise<CommandCenterData> {
       warnings
     };
   } catch (error) {
+    if (productionRuntime()) {
+      return unavailableCommandCenterData(capabilities, [
+        "LIVE DATA QUERY FAILED - Databricks could not be queried. Production sample data is suppressed.",
+        error instanceof Error ? error.message : "Could not query Databricks."
+      ]);
+    }
     return {
       ...mockCommandCenterData,
       generatedAt: new Date().toISOString(),

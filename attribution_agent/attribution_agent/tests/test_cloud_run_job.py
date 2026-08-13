@@ -17,17 +17,16 @@ def test_build_pipeline_args_for_filtered_dry_run():
         attribution_model="w_shape",
         run_mode="agency",
     ) == [
-        "flows/agency_flow.py",
+        "flows/job_launcher.py",
         "--agency",
         "n8iv_promotions",
-        "--client-filter",
+        "--client",
         "client_a",
+        "--client",
         "client_b",
         "--dry-run",
         "--attribution-model",
         "w_shape",
-        "--run-mode",
-        "agency",
     ]
 
 
@@ -39,15 +38,13 @@ def test_build_pipeline_args_for_live_business_run():
         attribution_model="last_touch",
         run_mode="business",
     ) == [
-        "flows/agency_flow.py",
+        "flows/job_launcher.py",
         "--agency",
         "n8iv_promotions",
-        "--client-filter",
+        "--client",
         "n8iv_promotions",
         "--attribution-model",
         "last_touch",
-        "--run-mode",
-        "business",
     ]
 
 
@@ -55,7 +52,7 @@ def test_build_gcloud_command_matches_cloud_run_job_args():
     settings = CloudRunJobSettings(
         project_id="n8iv-analytics-production",
         region="us-central1",
-        job_name="attribution-pipeline",
+        job_name="attribution-launcher",
     )
     args = build_pipeline_args(
         "demo_agency",
@@ -66,11 +63,11 @@ def test_build_gcloud_command_matches_cloud_run_job_args():
     )
 
     assert build_gcloud_command(args, settings, wait=True) == (
-        "gcloud run jobs execute attribution-pipeline "
+        "gcloud run jobs execute attribution-launcher "
         "--project n8iv-analytics-production "
         "--region us-central1 "
-        '--args "flows/agency_flow.py,--agency,demo_agency,--client-filter,'
-        'demo_client,--dry-run,--attribution-model,linear,--run-mode,agency" '
+        '--args "flows/job_launcher.py,--agency,demo_agency,--client,'
+        'demo_client,--dry-run,--attribution-model,linear" '
         "--wait"
     )
 
@@ -78,11 +75,11 @@ def test_build_gcloud_command_matches_cloud_run_job_args():
 def test_cloud_run_settings_reads_gcp_project(monkeypatch):
     monkeypatch.setenv("PROJECT_ID", "my-project")
     monkeypatch.setenv("ATTRIBUTION_CLOUD_RUN_REGION", "us-central1")
-    monkeypatch.setenv("ATTRIBUTION_CLOUD_RUN_JOB", "attribution-pipeline")
+    monkeypatch.setenv("ATTRIBUTION_LAUNCHER_CLOUD_RUN_JOB", "attribution-launcher")
 
     settings = cloud_run_settings()
 
     assert is_cloud_run_configured(settings)
     assert settings.project_id == "my-project"
     assert settings.region == "us-central1"
-    assert settings.job_name == "attribution-pipeline"
+    assert settings.job_name == "attribution-launcher"
