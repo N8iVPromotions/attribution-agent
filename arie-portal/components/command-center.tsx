@@ -39,8 +39,18 @@ const sourceLabels: Record<string, string> = {
   linkedin: "LinkedIn",
   tiktok: "TikTok",
   hubspot: "HubSpot",
-  stripe: "Stripe"
+  stripe: "Stripe",
+  normalized: "Ad rows"
 };
+
+const sourceOrder: Array<keyof PipelineRun["sourceRows"]> = [
+  "meta",
+  "google",
+  "linkedin",
+  "hubspot",
+  "stripe",
+  "normalized"
+];
 
 const money = (value: number, decimals = 0) =>
   new Intl.NumberFormat("en-US", {
@@ -604,6 +614,34 @@ function clientName(clientId: string, clients: ClientAccount[]) {
   return clients.find((client) => client.clientId === clientId)?.name || clientId || "Portfolio";
 }
 
+function hasSourceIssue(run: PipelineRun, source: keyof PipelineRun["sourceRows"]) {
+  const haystack = `${run.warnings} ${run.error}`.toLowerCase();
+  const aliases: Record<string, string[]> = {
+    google: ["google", "google-ads"],
+    linkedin: ["linkedin", "linkedin-ads"],
+    meta: ["meta"],
+    hubspot: ["hubspot"],
+    stripe: ["stripe"],
+    normalized: ["normalized"]
+  };
+  return (aliases[source] || [source]).some((alias) => haystack.includes(alias));
+}
+
+function sourceReadiness(
+  run: PipelineRun,
+  client: ClientAccount | undefined,
+  source: keyof PipelineRun["sourceRows"]
+) {
+  const rows = run.sourceRows[source] || 0;
+  if (source === "normalized") {
+    return rows > 0 ? rows.toLocaleString() : "No ad rows";
+  }
+  const platformKey = source as keyof ClientAccount["platforms"];
+  if (!client?.platforms[platformKey]) return "Disabled";
+  if (rows > 0) return rows.toLocaleString();
+  return hasSourceIssue(run, source) ? "Issue" : "No data";
+}
+
 function FleetMatrix({ clients, runs }: { clients: ClientAccount[]; runs: PipelineRun[] }) {
   return <div className="fleet-list">{clients.map((client) => { const run = latestRun(client.clientId, runs); return <article className="fleet-row" key={client.clientId}><div><strong>{client.name}</strong><small>{client.clientId}</small></div><PlatformPills platforms={client.platforms} compactMode /><div><span>Last run</span><strong>{run ? shortDate(run.startedAt) : "Never"}</strong></div><div><span>Pipeline</span><strong>{run ? money(run.totalPipeline) : "—"}</strong></div><div>{run?.deliverySuppressed && <small className="danger-copy">EMAIL SUPPRESSED</small>}<StatusChip status={run?.status || "queued"} /></div></article>; })}</div>;
 }
@@ -624,7 +662,7 @@ function CheckpointRail({ data, runs }: { data: CommandCenterData; runs: Pipelin
 function RunTable({ runs, data }: { runs: PipelineRun[]; data: CommandCenterData }) {
   const [open, setOpen] = useState("");
   if (!runs.length) return <Empty title="No execution history" body="Launch a preview run to create the first operational record." />;
-  return <div className="run-table">{runs.map((run) => { const expanded = open === run.runId; const checkpoints = data.checkpoints.filter((item) => item.runId === run.runId); return <article className={`run-record ${expanded ? "expanded" : ""}`} key={`${run.runId}-${run.clientId}`}><button className="run-summary" onClick={() => setOpen(expanded ? "" : run.runId)}><div><strong>{clientName(run.clientId, data.clients)}</strong><small>{run.runId} / {modelLabels[run.attributionModel] || run.attributionModel}</small></div><div><span>Started</span><strong>{shortDate(run.startedAt)}</strong></div><div><span>Duration</span><strong>{duration(run)}</strong></div><div><span>Pipeline</span><strong>{money(run.totalPipeline)}</strong></div><div><StatusChip status={run.status} />{run.deliverySuppressed && <small className="danger-copy">EMAIL SUPPRESSED</small>}</div><b>{expanded ? "−" : "+"}</b></button>{expanded && <div className="run-detail"><div className="source-counts">{Object.entries(run.sourceRows).map(([source, rows]) => <div key={source}><span>{source}</span><strong>{Number(rows).toLocaleString()}</strong></div>)}</div><div className="run-facts"><span>Output schema</span><code>{run.outputSchema || "—"}</code><span>Delivery</span><strong>{run.dryRun ? "Preview — not delivered" : run.emailSent ? "Email sent" : run.deliverySuppressed ? "Suppressed by partial-run policy" : "Not sent"}</strong><span>Top channel</span><strong>{run.topChannel}</strong></div>{(run.warnings || run.error) && <div className="run-message"><strong>{run.error ? "Execution error" : "Run warning"}</strong><p>{run.error || run.warnings}</p></div>}<div className="mini-checkpoints">{checkpoints.map((item) => <span key={item.checkpointId} className={item.status}>{item.stepName.replaceAll("_", " ")}</span>)}</div></div>}</article>; })}</div>;
+  return <div className="run-table">{runs.map((run) => { const expanded = open === run.runId; const checkpoints = data.checkpoints.filter((item) => item.runId === run.runId); const client = data.clients.find((item) => item.clientId === run.clientId); return <article className={`run-record ${expanded ? "expanded" : ""}`} key={`${run.runId}-${run.clientId}`}><button className="run-summary" onClick={() => setOpen(expanded ? "" : run.runId)}><div><strong>{clientName(run.clientId, data.clients)}</strong><small>{run.runId} / {modelLabels[run.attributionModel] || run.attributionModel}</small></div><div><span>Started</span><strong>{shortDate(run.startedAt)}</strong></div><div><span>Duration</span><strong>{duration(run)}</strong></div><div><span>Pipeline</span><strong>{money(run.totalPipeline)}</strong></div><div><StatusChip status={run.status} />{run.deliverySuppressed && <small className="danger-copy">EMAIL SUPPRESSED</small>}</div><b>{expanded ? "−" : "+"}</b></button>{expanded && <div className="run-detail"><div className="source-counts">{sourceOrder.map((source) => <div key={source}><span>{sourceLabels[source] || source}</span><strong>{sourceReadiness(run, client, source)}</strong></div>)}</div><div className="run-facts"><span>Output schema</span><code>{run.outputSchema || "—"}</code><span>Delivery</span><strong>{run.dryRun ? "Preview — not delivered" : run.emailSent ? "Email sent" : run.deliverySuppressed ? "Suppressed by partial-run policy" : "Not sent"}</strong><span>Top channel</span><strong>{run.topChannel}</strong></div>{(run.warnings || run.error) && <div className="run-message"><strong>{run.error ? "Execution error" : "Run warning"}</strong><p>{run.error || run.warnings}</p></div>}<div className="mini-checkpoints">{checkpoints.map((item) => <span key={item.checkpointId} className={item.status}>{item.stepName.replaceAll("_", " ")}</span>)}</div></div>}</article>; })}</div>;
 }
 
 function PlatformPills({ platforms, compactMode = false }: { platforms: ClientAccount["platforms"]; compactMode?: boolean }) {

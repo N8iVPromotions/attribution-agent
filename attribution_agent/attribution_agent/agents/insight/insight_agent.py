@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -27,10 +26,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 logger = logging.getLogger(__name__)
-
-
-def _clean_env(name: str, default: str = "") -> str:
-    return os.environ.get(name, default).strip()
 
 
 # ── path setup ────────────────────────────────────────────────
@@ -94,32 +89,40 @@ class InsightReport:
 # ─── DATA FETCHER ─────────────────────────────────────────────
 
 
-def _fetch_channel_performance(config: ClientConfig) -> list[dict]:
-    """Pull channel_performance data from Databricks. Prefers v2 (payment metrics)."""
-    from databricks import sql
+def _connect_databricks():
+    from utils.databricks_writer import _get_connection
 
-    conn = sql.connect(
-        server_hostname=(
-            _clean_env("DATABRICKS_SERVER_HOSTNAME")
-            or _clean_env("DATABRICKS_HOST").lstrip("https://").rstrip("/")
-        ),
-        http_path=_clean_env("DATABRICKS_HTTP_PATH"),
-        access_token=_clean_env("DATABRICKS_TOKEN"),
-    )
-    cursor = conn.cursor()
+    return _get_connection()
 
-    # Try v2 first (has Stripe payment metrics), fall back to v1
-    table = "channel_performance_v2"
-    v2_cols = ", collected_revenue, refund_rate, true_roi, ltv_90day"
+
+def _fetch_rows(cursor, query: str) -> list[dict]:
+    cursor.execute(query)
+    columns = [desc[0] for desc in cursor.description]
+    return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+def _table_exists(cursor, table_name: str) -> bool:
     try:
-        cursor.execute(
-            f"DESCRIBE TABLE {config.databricks_schema}.channel_performance_v2"
-        )
+        cursor.execute(f"DESCRIBE TABLE {table_name}")
+        return True
     except Exception:
-        table = "channel_performance"
-        v2_cols = ""
+        return False
 
-    query = f"""
+
+def _fetch_channel_table_rows(
+    cursor, config: ClientConfig, table: str, has_payment_cols: bool
+) -> list[dict]:
+    v2_cols = ", collected_revenue, refund_rate, true_roi, ltv_90day"
+    if not has_payment_cols:
+        v2_cols = (
+            ", CAST(0.0 AS DOUBLE) AS collected_revenue"
+            ", CAST(0.0 AS DOUBLE) AS refund_rate"
+            ", CAST(0.0 AS DOUBLE) AS true_roi"
+            ", CAST(0.0 AS DOUBLE) AS ltv_90day"
+        )
+    return _fetch_rows(
+        cursor,
+        f"""
         SELECT
             report_month,
             channel,
@@ -131,22 +134,146 @@ def _fetch_channel_performance(config: ClientConfig) -> list[dict]:
             roi,
             cost_per_deal,
             ingested_at
-            {v2_cols}
+            {v2_cols},
+            'closed_revenue' AS analytics_state
         FROM {config.databricks_schema}.{table}
-        ORDER BY pipeline_value DESC
-    """
-
-    cursor.execute(query)
-    columns = [desc[0] for desc in cursor.description]
-    rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
-    cursor.close()
-    conn.close()
-
-    logger.info(
-        f"[Insight] Fetched {len(rows)} channel rows for {config.client_id} "
-        f"(source: {table})"
+        ORDER BY pipeline_value DESC, total_spend DESC
+        """,
     )
-    return rows
+
+
+def _fetch_attribution_result_rows(
+    cursor, config: ClientConfig, selected_model: str
+) -> list[dict]:
+    if not _table_exists(cursor, f"{config.databricks_schema}.attribution_results"):
+        return []
+    return _fetch_rows(
+        cursor,
+        f"""
+        SELECT
+            COALESCE(
+                DATE_FORMAT(MAX(computed_at), 'yyyy-MM'),
+                DATE_FORMAT(CURRENT_DATE(), 'yyyy-MM')
+            ) AS report_month,
+            CASE
+                WHEN source_platform = 'unattributed' THEN 'Unattributed'
+                ELSE INITCAP(source_platform)
+            END AS channel,
+            SUM(COALESCE(attributed_conversions, 0.0)) AS deals_count,
+            SUM(COALESCE(attributed_revenue, 0.0)) AS pipeline_value,
+            CASE WHEN SUM(COALESCE(attributed_conversions, 0.0)) > 0
+                 THEN SUM(COALESCE(attributed_revenue, 0.0))
+                    / SUM(COALESCE(attributed_conversions, 0.0))
+                 ELSE 0.0
+            END AS avg_deal_value,
+            CAST(NULL AS DOUBLE) AS avg_days_to_close,
+            SUM(COALESCE(spend, 0.0)) AS total_spend,
+            CASE WHEN SUM(COALESCE(spend, 0.0)) > 0
+                 THEN SUM(COALESCE(attributed_revenue, 0.0))
+                    / SUM(COALESCE(spend, 0.0))
+                 ELSE 0.0
+            END AS roi,
+            CASE WHEN SUM(COALESCE(attributed_conversions, 0.0)) > 0
+                 THEN SUM(COALESCE(spend, 0.0))
+                    / SUM(COALESCE(attributed_conversions, 0.0))
+                 ELSE NULL
+            END AS cost_per_deal,
+            MAX(computed_at) AS ingested_at,
+            SUM(COALESCE(attributed_revenue, 0.0)) AS collected_revenue,
+            CAST(0.0 AS DOUBLE) AS refund_rate,
+            CASE WHEN SUM(COALESCE(spend, 0.0)) > 0
+                 THEN SUM(COALESCE(attributed_revenue, 0.0))
+                    / SUM(COALESCE(spend, 0.0))
+                 ELSE 0.0
+            END AS true_roi,
+            SUM(COALESCE(attributed_revenue, 0.0)) AS ltv_90day,
+            'attribution_results' AS analytics_state
+        FROM {config.databricks_schema}.attribution_results
+        WHERE attribution_model = '{selected_model}'
+        GROUP BY source_platform
+        ORDER BY pipeline_value DESC, total_spend DESC
+        """,
+    )
+
+
+def _fetch_ad_activity_rows(cursor, config: ClientConfig) -> list[dict]:
+    if not _table_exists(cursor, f"{config.databricks_schema}.ad_spend_normalized"):
+        return []
+    return _fetch_rows(
+        cursor,
+        f"""
+        SELECT
+            COALESCE(
+                DATE_FORMAT(MAX(date), 'yyyy-MM'),
+                DATE_FORMAT(CURRENT_DATE(), 'yyyy-MM')
+            ) AS report_month,
+            CASE
+                WHEN source_platform = 'google' THEN 'Paid Search'
+                WHEN source_platform IN ('meta', 'linkedin', 'tiktok') THEN 'Paid Social'
+                ELSE INITCAP(source_platform)
+            END AS channel,
+            CAST(0.0 AS DOUBLE) AS deals_count,
+            CAST(0.0 AS DOUBLE) AS pipeline_value,
+            CAST(0.0 AS DOUBLE) AS avg_deal_value,
+            CAST(NULL AS DOUBLE) AS avg_days_to_close,
+            SUM(COALESCE(spend, 0.0)) AS total_spend,
+            CAST(0.0 AS DOUBLE) AS roi,
+            CAST(NULL AS DOUBLE) AS cost_per_deal,
+            MAX(ingested_at) AS ingested_at,
+            CAST(0.0 AS DOUBLE) AS collected_revenue,
+            CAST(0.0 AS DOUBLE) AS refund_rate,
+            CAST(0.0 AS DOUBLE) AS true_roi,
+            CAST(0.0 AS DOUBLE) AS ltv_90day,
+            'ad_activity_without_closed_revenue' AS analytics_state
+        FROM {config.databricks_schema}.ad_spend_normalized
+        GROUP BY source_platform
+        ORDER BY total_spend DESC
+        """,
+    )
+
+
+def _fetch_channel_performance(
+    config: ClientConfig, attribution_model: str | None = None
+) -> list[dict]:
+    """Read attribution analytics with graceful fallbacks for expected no-data states."""
+    selected_model = normalize_model(attribution_model or config.attribution_model)
+    conn = _connect_databricks()
+    cursor = conn.cursor()
+    try:
+        readers = [
+            ("channel_performance_v2", True),
+            ("channel_performance", False),
+        ]
+        for table, has_payment_cols in readers:
+            table_name = f"{config.databricks_schema}.{table}"
+            if not _table_exists(cursor, table_name):
+                continue
+            rows = _fetch_channel_table_rows(cursor, config, table, has_payment_cols)
+            if rows:
+                logger.info(
+                    f"[Insight] Fetched {len(rows)} channel rows for "
+                    f"{config.client_id} (source: {table})"
+                )
+                return rows
+
+        rows = _fetch_attribution_result_rows(cursor, config, selected_model)
+        if rows:
+            logger.info(
+                f"[Insight] Fetched {len(rows)} fallback attribution rows for "
+                f"{config.client_id} (model: {selected_model})"
+            )
+            return rows
+
+        rows = _fetch_ad_activity_rows(cursor, config)
+        if rows:
+            logger.info(
+                f"[Insight] Fetched {len(rows)} spend-only rows for "
+                f"{config.client_id}; no closed revenue available yet"
+            )
+        return rows
+    finally:
+        cursor.close()
+        conn.close()
 
 
 # ─── CLAUDE NARRATIVE GENERATOR ───────────────────────────────
@@ -169,6 +296,14 @@ def _build_prompt(
     top_channel = data[0]["channel"] if data else "Unknown"
     report_month = data[0]["report_month"] if data else "Unknown"
     has_payment_data = any(r.get("collected_revenue") is not None for r in data)
+    has_revenue_anchor = bool(total_pipeline or collected_revenue or total_deals)
+    readiness_note = (
+        "- Revenue attribution readiness: Ad activity is available, but no "
+        "closed-won CRM revenue has been matched yet. Treat spend and source "
+        "counts as ingestion/readiness signals, not performance claims."
+        if data and not has_revenue_anchor and total_spend
+        else ""
+    )
 
     high_refund_channels = [
         r["channel"] for r in data if (r.get("refund_rate") or 0) > 0.10
@@ -203,6 +338,7 @@ Summary:
 - Total ad spend: ${total_spend:,.0f}
 - Total deals: {total_deals}
 - Top performing channel: {top_channel}
+{readiness_note}
 {payment_summary}
 Write a professional monthly attribution report with the following sections:
 
@@ -221,6 +357,8 @@ Guidelines:
 - Keep the total report under 400 words
 - If collected_revenue data is present, distinguish between pipeline value (deals created)
   and collected revenue (cash actually received) — these are different and both matter
+- If ad spend exists but deals/revenue are zero, clearly state that the client is not
+  attribution-ready yet for closed revenue and avoid ROI/performance claims
 - If any channel has a refund_rate above 10%, flag it as a watch item
 
 Return your response as a JSON object with these exact keys:
@@ -307,6 +445,7 @@ def _build_fallback_report(
     true_roi = round(collected_revenue / total_spend, 2) if total_spend else 0.0
     top_channel = data[0]["channel"] if data else "Unknown"
     report_month = data[0].get("report_month", "Unknown") if data else "Unknown"
+    has_revenue_anchor = bool(total_pipeline or collected_revenue or total_deals)
 
     channel_lines = [
         f"• {r['channel']}: {int(r.get('deals_count') or 0)} deals, "
@@ -314,6 +453,33 @@ def _build_fallback_report(
         f"${(r.get('total_spend') or 0):,.0f} spend"
         for r in data
     ]
+
+    if data and not has_revenue_anchor and total_spend:
+        return {
+            "narrative": (
+                f"[AUTO-GENERATED - AI narrative unavailable]\n\n"
+                f"Period: {report_month} | Model: {selected_model}\n\n"
+                f"Ad activity is available with ${total_spend:,.0f} in spend, "
+                "but no closed-won CRM revenue has been matched yet. ARIE can "
+                "validate source ingestion and readiness, but should not make "
+                "revenue or ROI performance claims until closed revenue is "
+                "present.\n\n"
+                "Source activity:\n" + "\n".join(channel_lines)
+            ),
+            "key_findings": [
+                f"Top source by available data: {top_channel}",
+                f"Total ad spend: ${total_spend:,.0f}",
+                "Closed-revenue attribution is pending CRM deal data.",
+            ],
+            "top_channel": top_channel,
+            "total_pipeline": 0.0,
+            "total_spend": total_spend,
+            "overall_roi": 0.0,
+            "collected_revenue": 0.0,
+            "refund_rate": 0.0,
+            "true_roi": 0.0,
+            "attribution_model": selected_model,
+        }
 
     narrative = (
         f"[AUTO-GENERATED — AI narrative unavailable]\n\n"
@@ -368,7 +534,7 @@ def generate_insight_report(
     logger.info(f"[Insight] Generating report for {config.client_name}")
 
     # 1. Fetch data
-    data = _fetch_channel_performance(config)
+    data = _fetch_channel_performance(config, selected_model)
     if not data:
         logger.warning("[Insight] No channel performance data found")
         return InsightReport(
