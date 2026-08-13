@@ -59,6 +59,7 @@ code { font-family: var(--mono); font-size: .76rem; overflow-wrap: anywhere; }
 }
 .environment .pulse { width: .55rem; height: .55rem; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 .3rem rgba(119,214,155,.08); }
 .environment.demo .pulse { background: var(--warn); box-shadow: 0 0 0 .3rem rgba(240,195,90,.08); }
+.environment.unavailable .pulse { background: var(--bad); box-shadow: 0 0 0 .3rem rgba(255,112,112,.1); }
 .environment strong, .environment small { display: block; }
 .environment strong { font-size: .73rem; text-transform: uppercase; letter-spacing: .08em; }
 .environment small { margin-top: .18rem; color: var(--faint); font-size: .64rem; }

@@ -81,8 +81,9 @@ async def submit_pipeline_run(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
-                "ATTRIBUTION_CLOUD_RUN_JOB/REGION or ATTRIBUTION_JOB_ID "
-                "must be configured"
+                "ATTRIBUTION_LAUNCHER_CLOUD_RUN_JOB/REGION or ATTRIBUTION_JOB_ID "
+                "must be configured. External executions should target the "
+                "attribution-launcher job."
             ),
         )
 

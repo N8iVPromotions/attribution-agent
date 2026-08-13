@@ -66,6 +66,16 @@ const compact = (value: number) =>
 const percent = (value: number) => `${Math.round((value || 0) * 100)}%`;
 const roi = (value: number) => `${Number(value || 0).toFixed(1)}×`;
 
+function environmentCopy(source: CommandCenterData["source"]) {
+  if (source === "databricks") {
+    return { title: "Production telemetry", detail: "Databricks system of record" };
+  }
+  if (source === "unavailable") {
+    return { title: "Live data unavailable", detail: "Sample data suppressed" };
+  }
+  return { title: "Isolated demo", detail: "No live data or actions" };
+}
+
 function shortDate(value: string) {
   if (!value) return "Pending";
   const parsed = new Date(value);
@@ -140,6 +150,7 @@ export function CommandCenter({ initialData }: Props) {
   const partialRuns = scoped.runs.filter((run) => run.status === "partial").length;
   const suppressed = scoped.runs.filter((run) => run.deliverySuppressed).length;
   const aiSpend = scoped.costs.reduce((sum, item) => sum + item.costUsd, 0);
+  const environment = environmentCopy(data.source);
 
   return (
     <main className="shell">
@@ -155,8 +166,8 @@ export function CommandCenter({ initialData }: Props) {
         <div className={`environment ${data.source}`}>
           <span className="pulse" />
           <div>
-            <strong>{data.source === "databricks" ? "Production telemetry" : "Isolated demo"}</strong>
-            <small>{data.source === "databricks" ? "Databricks system of record" : "No live data or actions"}</small>
+            <strong>{environment.title}</strong>
+            <small>{environment.detail}</small>
           </div>
         </div>
 
@@ -175,7 +186,7 @@ export function CommandCenter({ initialData }: Props) {
         </nav>
 
         <div className="sidebar-foot">
-          <div><span>DB</span><strong>{data.capabilities.databricks ? "ONLINE" : "DEMO"}</strong></div>
+          <div><span>DB</span><strong>{data.source === "unavailable" ? "DOWN" : data.capabilities.databricks ? "ONLINE" : "DEMO"}</strong></div>
           <div><span>EXEC</span><strong>{data.capabilities.pipelineExecution ? "ARMED" : "OFFLINE"}</strong></div>
           <div><span>CTRL</span><strong>{data.capabilities.approvalActions ? "ONLINE" : "READ ONLY"}</strong></div>
         </div>

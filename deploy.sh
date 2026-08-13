@@ -30,8 +30,10 @@ JOB_PIPELINE="attribution-pipeline"
 JOB_LAUNCHER="attribution-launcher"
 JOB_FINALIZER="attribution-benchmark-finalizer"
 JOB_MAINTENANCE="attribution-delta-maintenance"
+JOB_OPERATOR_HEALTH="attribution-operator-health"
 SCHEDULER_JOB="attribution-monthly"
 SCHEDULER_MAINTENANCE_JOB="attribution-weekly-maintenance"
+SCHEDULER_HEALTH_JOB="attribution-daily-health"
 REGISTRY_BUCKET="${REGISTRY_BUCKET:-${PROJECT_ID}-attribution-registry}"
 RAW_ARCHIVE_BUCKET="${RAW_ARCHIVE_BUCKET:-${PROJECT_ID}-attribution-raw}"
 PIPELINE_TASKS="${PIPELINE_TASKS:-20}"
@@ -81,6 +83,7 @@ COMMON_ENV+=",ATTRIBUTION_OPS_SCHEMA=workspace.attribution_ops"
 COMMON_ENV+=",COMMS_PROVIDER=gmail"
 COMMON_ENV+=",GOOGLE_CLOUD_PROJECT=${PROJECT_ID}"
 COMMON_ENV+=",ATTRIBUTION_CLOUD_RUN_JOB=${JOB_PIPELINE}"
+COMMON_ENV+=",ATTRIBUTION_LAUNCHER_CLOUD_RUN_JOB=${JOB_LAUNCHER}"
 COMMON_ENV+=",ATTRIBUTION_CLOUD_RUN_REGION=${REGION}"
 COMMON_ENV+=",ARIE_CLIENT_LOCK_BUCKET=${REGISTRY_BUCKET}"
 COMMON_ENV+=",ARIE_CLIENT_LOCKS_ENABLED=true"
@@ -289,6 +292,20 @@ gcloud run jobs deploy "$JOB_MAINTENANCE" \
 gcloud run jobs add-iam-policy-binding "$JOB_MAINTENANCE" --region "$REGION" \
   --member "serviceAccount:${SCHED_SA}" --role roles/run.invoker >/dev/null
 
+gcloud run jobs deploy "$JOB_OPERATOR_HEALTH" \
+  --image "${IMAGE}:${GIT_SHA}" \
+  --region "$REGION" \
+  --service-account "$RUNTIME_SA" \
+  --command python \
+  --args "flows/operator_health_check.py" \
+  --set-secrets "$SECRET_FLAGS" \
+  --set-env-vars "$COMMON_ENV" \
+  --add-volume "name=registry,type=cloud-storage,bucket=${REGISTRY_BUCKET}" \
+  --add-volume-mount "volume=registry,mount-path=/mnt/registry" \
+  --task-timeout 900 --max-retries 1 --tasks 1 --memory 1Gi --cpu 1
+gcloud run jobs add-iam-policy-binding "$JOB_OPERATOR_HEALTH" --region "$REGION" \
+  --member "serviceAccount:${SCHED_SA}" --role roles/run.invoker >/dev/null
+
 # ── 6. Cloud Run Service (FastAPI REST layer) ───────────────────────────────
 # Same image, default FastAPI command. The Vercel Command Center can call this
 # service for approval mutations when ARIE_API_BASE and ARIE_API_KEY are set.
@@ -360,6 +377,22 @@ gcloud scheduler jobs "$MAINTENANCE_SCHED_VERB" http "$SCHEDULER_MAINTENANCE_JOB
   --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform" \
   --attempt-deadline 300s
 
+HEALTH_SCHEDULE="${HEALTH_SCHEDULE:-0 8 * * *}"
+if gcloud scheduler jobs describe "$SCHEDULER_HEALTH_JOB" --location "$REGION" >/dev/null 2>&1; then
+  HEALTH_SCHED_VERB="update"
+else
+  HEALTH_SCHED_VERB="create"
+fi
+gcloud scheduler jobs "$HEALTH_SCHED_VERB" http "$SCHEDULER_HEALTH_JOB" \
+  --location "$REGION" \
+  --schedule "$HEALTH_SCHEDULE" \
+  --time-zone "America/New_York" \
+  --uri "https://run.googleapis.com/v2/projects/${PROJECT_ID}/locations/${REGION}/jobs/${JOB_OPERATOR_HEALTH}:run" \
+  --http-method POST \
+  --oauth-service-account-email "$SCHED_SA" \
+  --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform" \
+  --attempt-deadline 300s
+
 echo ""
 echo "── Deployed ──────────────────────────────────────────────"
 echo "Image:     ${IMAGE}:${GIT_SHA}"
@@ -367,3 +400,4 @@ echo "API:       $(gcloud run services describe "$SERVICE_API" --region "$REGION
 echo "Job:       gcloud run jobs execute $JOB_LAUNCHER --region $REGION --args 'flows/job_launcher.py,--dry-run,--expected-client-count,20' --wait"
 echo "Scheduler: $SCHEDULER_JOB ($SCHEDULE America/New_York)"
 echo "Maintenance: $SCHEDULER_MAINTENANCE_JOB ($MAINTENANCE_SCHEDULE America/New_York)"
+echo "Health:    $SCHEDULER_HEALTH_JOB ($HEALTH_SCHEDULE America/New_York)"

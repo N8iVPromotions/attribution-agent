@@ -30,7 +30,7 @@ def cloud_run_settings() -> CloudRunJobSettings:
         ).strip(),
         region=os.environ.get("ATTRIBUTION_CLOUD_RUN_REGION", "us-central1").strip(),
         job_name=os.environ.get(
-            "ATTRIBUTION_CLOUD_RUN_JOB", "attribution-pipeline"
+            "ATTRIBUTION_LAUNCHER_CLOUD_RUN_JOB", "attribution-launcher"
         ).strip(),
     )
 
@@ -48,12 +48,12 @@ def build_pipeline_args(
     attribution_model: str = "last_touch",
     run_mode: str = "agency",
 ) -> list[str]:
-    args = ["flows/agency_flow.py", "--agency", agency_id]
-    if client_ids:
-        args += ["--client-filter", *client_ids]
+    args = ["flows/job_launcher.py", "--agency", agency_id]
+    for client_id in client_ids or []:
+        args += ["--client", client_id]
     if dry_run:
         args.append("--dry-run")
-    args += ["--attribution-model", attribution_model, "--run-mode", run_mode]
+    args += ["--attribution-model", attribution_model]
     return args
 
 
@@ -89,7 +89,7 @@ def submit_cloud_run_job(
     if not is_cloud_run_configured(settings):
         raise CloudRunJobError(
             "GOOGLE_CLOUD_PROJECT/PROJECT_ID, ATTRIBUTION_CLOUD_RUN_REGION, "
-            "and ATTRIBUTION_CLOUD_RUN_JOB must be configured."
+            "and ATTRIBUTION_LAUNCHER_CLOUD_RUN_JOB must be configured."
         )
 
     try:

@@ -151,8 +151,14 @@ if ($AfterDeploy) {
     $launcherResult = Invoke-GcloudQuiet @("run", "jobs", "describe", "attribution-launcher", "--project", $ProjectId, "--region", $Region)
     if ($launcherResult.ExitCode -eq 0) { Write-Pass "Cloud Run job exists: attribution-launcher" } else { Write-Fail "Cloud Run job missing: attribution-launcher" }
 
+    $healthResult = Invoke-GcloudQuiet @("run", "jobs", "describe", "attribution-operator-health", "--project", $ProjectId, "--region", $Region)
+    if ($healthResult.ExitCode -eq 0) { Write-Pass "Cloud Run job exists: attribution-operator-health" } else { Write-Warn "Cloud Run job missing: attribution-operator-health" }
+
     $schedulerResult = Invoke-GcloudQuiet @("scheduler", "jobs", "describe", "attribution-monthly", "--project", $ProjectId, "--location", $Region)
     if ($schedulerResult.ExitCode -eq 0) { Write-Pass "Cloud Scheduler job exists: attribution-monthly" } else { Write-Warn "Cloud Scheduler job missing: attribution-monthly" }
+
+    $healthSchedulerResult = Invoke-GcloudQuiet @("scheduler", "jobs", "describe", "attribution-daily-health", "--project", $ProjectId, "--location", $Region)
+    if ($healthSchedulerResult.ExitCode -eq 0) { Write-Pass "Cloud Scheduler job exists: attribution-daily-health" } else { Write-Warn "Cloud Scheduler job missing: attribution-daily-health" }
 
     $bucket = "$ProjectId-attribution-registry"
     $bucketResult = Invoke-GcloudQuiet @("storage", "buckets", "describe", "gs://$bucket", "--project", $ProjectId)
