@@ -240,7 +240,7 @@ export function CommandCenter({ initialData }: Props) {
         )}
         {activeView === "Tenants" && <TenantView data={data} clients={scoped.clients} runs={scoped.runs} agencyId={activeAgency} onRefresh={refresh} />}
         {activeView === "Reports" && <ReportsView data={data} reports={scoped.reports} />}
-        {activeView === "Alerts" && <AlertsView data={data} alerts={scoped.alerts} />}
+        {activeView === "Alerts" && <AlertsView data={data} alerts={scoped.alerts} onRefresh={refresh} />}
         {activeView === "Governance" && (
           <GovernanceView data={data} costs={scoped.costs} approvals={scoped.approvals} onRefresh={refresh} />
         )}
@@ -563,9 +563,79 @@ function ReportsView({ data, reports }: { data: CommandCenterData; reports: Comm
   );
 }
 
-function AlertsView({ data, alerts }: { data: CommandCenterData; alerts: CommandCenterData["alerts"] }) {
+function AlertsView({
+  data,
+  alerts,
+  onRefresh
+}: {
+  data: CommandCenterData;
+  alerts: CommandCenterData["alerts"];
+  onRefresh: (quiet?: boolean) => Promise<void>;
+}) {
+  const [busyAlertId, setBusyAlertId] = useState("");
+  const [error, setError] = useState("");
+
+  async function resolveAlert(alertId: string) {
+    setBusyAlertId(alertId);
+    setError("");
+    try {
+      const response = await fetch(`/api/alerts/${encodeURIComponent(alertId)}/resolve`, {
+        method: "POST"
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || "Alert resolution failed.");
+      }
+      await onRefresh();
+    } catch (resolveError) {
+      setError(resolveError instanceof Error ? resolveError.message : "Alert resolution failed.");
+    } finally {
+      setBusyAlertId("");
+    }
+  }
+
   if (!alerts.length) return <Empty title="No open alerts" body="The selected agency has no operator interventions waiting." />;
-  return <div className="alert-board reveal">{alerts.map((alert) => <article className={`alert-row ${alert.severity}`} key={alert.alertId || `${alert.eventTime}-${alert.title}`}><div className="alert-index">{alert.severity === "critical" ? "!!" : "!"}</div><div><div className="alert-meta"><StatusChip status={alert.severity === "critical" ? "failed" : "partial"} label={alert.severity} /><span>{alert.source || "platform"}</span><span>{shortDate(alert.eventTime)}</span></div><h2>{alert.title}</h2><p>{alert.message}</p><strong className="action-copy">Next action: {alert.actionRequired || "Review the run record."}</strong></div><div className="alert-context"><span>Tenant</span><strong>{clientName(alert.clientId, data.clients)}</strong><span>Run</span><strong>{alert.runId || "—"}</strong></div></article>)}</div>;
+  return (
+    <div className="alert-board reveal">
+      {error && <div className="inline-warning">{error}</div>}
+      {alerts.map((alert) => {
+        const alertKey = alert.alertId || `${alert.eventTime}-${alert.title}`;
+        const resolving = busyAlertId === alert.alertId;
+        return (
+          <article className={`alert-row ${alert.severity}`} key={alertKey}>
+            <div className="alert-index">{alert.severity === "critical" ? "!!" : "!"}</div>
+            <div>
+              <div className="alert-meta">
+                <StatusChip status={alert.severity === "critical" ? "failed" : "partial"} label={alert.severity} />
+                <span>{alert.source || "platform"}</span>
+                <span>{shortDate(alert.eventTime)}</span>
+              </div>
+              <h2>{alert.title}</h2>
+              <p>{alert.message}</p>
+              <strong className="action-copy">Next action: {alert.actionRequired || "Review the run record."}</strong>
+            </div>
+            <div className="alert-context">
+              <span>Tenant</span>
+              <strong>{clientName(alert.clientId, data.clients)}</strong>
+              <span>Run</span>
+              <strong>{alert.runId || "—"}</strong>
+              <button
+                className="button ghost alert-resolve"
+                disabled={!alert.alertId || data.source !== "databricks" || resolving}
+                onClick={() => void resolveAlert(alert.alertId)}
+                type="button"
+              >
+                {resolving ? "Resolving..." : "Mark resolved"}
+              </button>
+            </div>
+          </article>
+        );
+      })}
+      {data.source !== "databricks" && (
+        <div className="inline-warning">Alert resolution is available only when ARIE is reading live Databricks telemetry.</div>
+      )}
+    </div>
+  );
 }
 
 function GovernanceView({ data, costs, approvals, onRefresh }: { data: CommandCenterData; costs: CommandCenterData["costs"]; approvals: CommandCenterData["approvals"]; onRefresh: (quiet?: boolean) => Promise<void> }) {

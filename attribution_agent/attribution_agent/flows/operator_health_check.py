@@ -102,11 +102,9 @@ def main() -> None:
         help="Preview health checks without writing or sending alerts.",
     )
     args = parser.parse_args()
-    dispatch = (
-        not args.no_dispatch
-        and os.environ.get("ARIE_OPERATOR_HEALTH_DISPATCH", "true").lower()
-        not in {"0", "false", "no"}
-    )
+    dispatch = not args.no_dispatch and os.environ.get(
+        "ARIE_OPERATOR_HEALTH_DISPATCH", "true"
+    ).lower() not in {"0", "false", "no"}
     print(json.dumps(run_health_check(client_ids=args.clients, dispatch=dispatch)))
 
 

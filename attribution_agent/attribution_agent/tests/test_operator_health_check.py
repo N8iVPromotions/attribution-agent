@@ -28,7 +28,9 @@ def test_run_health_check_can_preview_without_dispatch(monkeypatch):
     dispatched = []
     monkeypatch.setattr(health, "reload_client_registry", lambda: None)
     monkeypatch.setattr(health, "CLIENT_REGISTRY", {"quiet": cfg})
-    monkeypatch.setattr(health, "dispatch_alerts", lambda alerts: dispatched.extend(alerts))
+    monkeypatch.setattr(
+        health, "dispatch_alerts", lambda alerts: dispatched.extend(alerts)
+    )
 
     summary = health.run_health_check(client_ids=["quiet"], dispatch=False)
 
