@@ -1,5 +1,11 @@
 # ARIE Operator Runbook
 
+When a legacy deployment intentionally shares connector credentials across
+clients, deploy with `-AllowGlobalConnectorCredentials` on Windows or set
+`ARIE_ALLOW_GLOBAL_CONNECTOR_CREDENTIALS=true` before running `deploy.sh`.
+Omit the opt-in once every client registry entry references tenant-specific
+secrets.
+
 Operational reference for ARIE, the Automatic Revenue Intelligence Engine.
 
 ## Components
