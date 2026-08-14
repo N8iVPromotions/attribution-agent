@@ -220,7 +220,7 @@ Invoke-Gcloud storage buckets add-iam-policy-binding "gs://$RawArchiveBucket" `
 $gitSha = Get-GitSha
 Invoke-Gcloud builds submit --tag "$image`:$gitSha" . --project $ProjectId
 Invoke-Gcloud artifacts docker tags add "$image`:$gitSha" "$image`:latest" --project $ProjectId
-$allowGlobalConnectorCredentials = $AllowGlobalConnectorCredentials.IsPresent.ToString().ToLowerInvariant()
+$allowGlobalCredentialsValue = $AllowGlobalConnectorCredentials.IsPresent.ToString().ToLowerInvariant()
 
 $commonEnv = @(
     "ATTRIBUTION_CLIENT_REGISTRY_BACKEND=delta",
@@ -242,7 +242,7 @@ $commonEnv = @(
     "ARIE_INGEST_BATCH_ROWS=5000",
     "ARIE_STREAMING_INGEST=true",
     "ARIE_MODEL_BUDGET_FAIL_CLOSED=true",
-    "ARIE_ALLOW_GLOBAL_CONNECTOR_CREDENTIALS=$allowGlobalConnectorCredentials",
+    "ARIE_ALLOW_GLOBAL_CONNECTOR_CREDENTIALS=$allowGlobalCredentialsValue",
     "ARIE_DAILY_AI_USD_LIMIT=25",
     "ARIE_MONTHLY_AI_USD_LIMIT=300",
     "ATTRIBUTION_BENCHMARK_FINALIZER_JOB=$jobFinalizer"
