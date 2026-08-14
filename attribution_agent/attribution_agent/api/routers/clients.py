@@ -1,8 +1,14 @@
 from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
-from api.auth import require_auth, require_admin
+from api.auth import (
+    AuthPrincipal,
+    require_auth,
+    require_admin,
+    require_client_access,
+    require_permission,
+)
 from api.models import ClientConfigRequest, ClientConfigResponse
-from config.rbac_config import Role, Permission, require_permission
+from config.rbac_config import Permission
 from utils.secrets import redact_secrets
 
 router = APIRouter(prefix="/clients", tags=["clients"])
@@ -58,20 +64,24 @@ def _secret_values_from_request(req: ClientConfigRequest) -> dict[str, str]:
 
 @router.get("", response_model=list[ClientConfigResponse])
 async def list_clients(
-    role: Role = Depends(require_auth),
+    principal: AuthPrincipal = Depends(require_auth),
 ) -> list[ClientConfigResponse]:
-    require_permission(role, Permission.VIEW_REPORTS)
+    require_permission(principal, Permission.VIEW_REPORTS)
     from config.client_config import CLIENT_REGISTRY, reload_client_registry
 
     reload_client_registry()
-    return [_to_response(c) for c in CLIENT_REGISTRY.values()]
+    clients = CLIENT_REGISTRY.values()
+    if principal.client_id:
+        clients = [c for c in clients if c.client_id == principal.client_id]
+    return [_to_response(c) for c in clients]
 
 
 @router.get("/{client_id}", response_model=ClientConfigResponse)
 async def get_client(
-    client_id: str, role: Role = Depends(require_auth)
+    client_id: str, principal: AuthPrincipal = Depends(require_auth)
 ) -> ClientConfigResponse:
-    require_permission(role, Permission.VIEW_REPORTS)
+    require_permission(principal, Permission.VIEW_REPORTS)
+    require_client_access(principal, client_id)
     from config.client_config import CLIENT_REGISTRY, reload_client_registry
 
     reload_client_registry()
@@ -84,9 +94,9 @@ async def get_client(
 @router.post("", response_model=ClientConfigResponse, status_code=201)
 async def create_client(
     req: ClientConfigRequest,
-    role: Role = Depends(require_admin),
+    principal: AuthPrincipal = Depends(require_admin),
 ) -> ClientConfigResponse:
-    require_permission(role, Permission.MANAGE_CLIENTS)
+    require_permission(principal, Permission.MANAGE_CLIENTS)
     from config.client_config import (
         ClientConfig,
         attach_client_secret_values,
@@ -139,9 +149,9 @@ async def create_client(
 async def update_client(
     client_id: str,
     req: ClientConfigRequest,
-    role: Role = Depends(require_admin),
+    principal: AuthPrincipal = Depends(require_admin),
 ) -> ClientConfigResponse:
-    require_permission(role, Permission.MANAGE_CLIENTS)
+    require_permission(principal, Permission.MANAGE_CLIENTS)
     from config.client_config import (
         CLIENT_REGISTRY,
         attach_client_secret_values,
@@ -197,9 +207,9 @@ async def update_client(
 @router.delete("/{client_id}", status_code=204)
 async def delete_client(
     client_id: str,
-    role: Role = Depends(require_admin),
+    principal: AuthPrincipal = Depends(require_admin),
 ) -> None:
-    require_permission(role, Permission.MANAGE_CLIENTS)
+    require_permission(principal, Permission.MANAGE_CLIENTS)
     from config.client_config import (
         CLIENT_REGISTRY,
         reload_client_registry,

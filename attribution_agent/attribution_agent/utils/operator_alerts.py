@@ -220,6 +220,7 @@ def build_credential_alerts(
     )
     today = datetime.now(timezone.utc).date()
     alerts: list[OperatorAlert] = []
+    tokens_supplied = tokens is not None
     tokens = tokens or {}
 
     for source, label in _SOURCE_LABELS.items():
@@ -229,7 +230,7 @@ def build_credential_alerts(
         token_field = _platform_token_field(source)
         token_value = tokens.get(source)
         if token_value is None:
-            token_value = getattr(config, token_field, "")
+            token_value = "" if tokens_supplied else getattr(config, token_field, "")
         if not token_value:
             alerts.append(
                 OperatorAlert(

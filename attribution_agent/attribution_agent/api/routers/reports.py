@@ -2,9 +2,15 @@ from __future__ import annotations
 import json
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from api.auth import require_auth
+from api.auth import (
+    AuthPrincipal,
+    require_auth,
+    require_client_access,
+    require_permission,
+)
 from api.models import InsightReportResponse
-from config.rbac_config import Role, Permission, require_permission
+from config.rbac_config import Permission
+from utils.sql import sql_literal
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -46,7 +52,7 @@ def _fetch_reports(client_id: str, limit: int = 1) -> list[dict]:
     )
     query = (
         f"SELECT * FROM {_OPS_SCHEMA}.insight_reports "
-        f"WHERE client_id = '{client_id}' "
+        f"WHERE client_id = {sql_literal(client_id)} "
         f"ORDER BY generated_at DESC LIMIT {int(limit)}"
     )
     try:
@@ -68,9 +74,10 @@ def _fetch_reports(client_id: str, limit: int = 1) -> list[dict]:
 @router.get("/{client_id}/latest", response_model=InsightReportResponse)
 async def get_latest_report(
     client_id: str,
-    role: Role = Depends(require_auth),
+    principal: AuthPrincipal = Depends(require_auth),
 ) -> InsightReportResponse:
-    require_permission(role, Permission.VIEW_REPORTS)
+    require_permission(principal, Permission.VIEW_REPORTS)
+    require_client_access(principal, client_id)
     rows = _fetch_reports(client_id, limit=1)
     if not rows:
         raise HTTPException(
@@ -83,9 +90,10 @@ async def get_latest_report(
 async def list_reports(
     client_id: str,
     limit: int = 10,
-    role: Role = Depends(require_auth),
+    principal: AuthPrincipal = Depends(require_auth),
 ) -> list[InsightReportResponse]:
-    require_permission(role, Permission.VIEW_REPORTS)
+    require_permission(principal, Permission.VIEW_REPORTS)
+    require_client_access(principal, client_id)
     rows = _fetch_reports(client_id, limit=min(limit, 50))
     return [_row_to_response(r) for r in rows]
 
@@ -94,9 +102,10 @@ async def list_reports(
 async def trigger_report_generation(
     client_id: str,
     background_tasks: BackgroundTasks,
-    role: Role = Depends(require_auth),
+    principal: AuthPrincipal = Depends(require_auth),
 ) -> dict:
-    require_permission(role, Permission.RUN_PIPELINE_DRY)
+    require_permission(principal, Permission.RUN_PIPELINE_DRY)
+    require_client_access(principal, client_id)
     from config.client_config import CLIENT_REGISTRY, reload_client_registry
 
     reload_client_registry()
