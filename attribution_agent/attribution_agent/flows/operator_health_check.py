@@ -39,18 +39,29 @@ def _stable_health_alert_id(alert: OperatorAlert, run_date: str) -> str:
 
 
 def _token_values(config: ClientConfig) -> dict[str, str]:
+    allow_global = os.environ.get(
+        "ARIE_ALLOW_GLOBAL_CONNECTOR_CREDENTIALS", "false"
+    ).lower() in {"1", "true", "yes"}
     tokens: dict[str, str] = {}
-    if config.meta_enabled:
+    if config.meta_enabled and (config.meta_access_token_secret_name or allow_global):
         tokens["meta"] = config.meta_access_token
-    if config.google_ads_enabled:
+    if config.google_ads_enabled and (
+        config.google_ads_refresh_token_secret_name or allow_global
+    ):
         tokens["google_ads"] = config.google_ads_refresh_token
-    if config.linkedin_ads_enabled:
+    if config.linkedin_ads_enabled and (
+        config.linkedin_access_token_secret_name or allow_global
+    ):
         tokens["linkedin_ads"] = config.linkedin_access_token
-    if config.tiktok_ads_enabled:
+    if config.tiktok_ads_enabled and (
+        config.tiktok_access_token_secret_name or allow_global
+    ):
         tokens["tiktok_ads"] = config.tiktok_access_token
-    if config.hubspot_enabled:
+    if config.hubspot_enabled and (
+        config.hubspot_access_token_secret_name or allow_global
+    ):
         tokens["hubspot"] = config.hubspot_access_token
-    if config.stripe_enabled:
+    if config.stripe_enabled and (config.stripe_secret_key_secret_name or allow_global):
         tokens["stripe"] = config.stripe_secret_key
     return tokens
 

@@ -92,6 +92,7 @@ def client(monkeypatch):
         return {"echoed": agent_id}
 
     monkeypatch.setattr(server, "run_local", _fake)
+    monkeypatch.setenv("API_KEY_ADMIN", "test-admin-key")
     return TestClient(server.app)
 
 
@@ -109,7 +110,9 @@ def test_discovery_lists_agent_cards(client):
 
 def test_server_dispatch_runs_agent(client):
     resp = client.post(
-        "/a2a/dispatch", json={"agent_id": "data-quality", "input": {"client_id": "c1"}}
+        "/a2a/dispatch",
+        headers={"X-API-Key": "test-admin-key"},
+        json={"agent_id": "data-quality", "input": {"client_id": "c1"}},
     )
     assert resp.status_code == 200
     assert resp.json() == {
@@ -119,5 +122,28 @@ def test_server_dispatch_runs_agent(client):
 
 
 def test_server_dispatch_unknown_agent_404(client):
-    resp = client.post("/a2a/dispatch", json={"agent_id": "ghost", "input": {}})
+    resp = client.post(
+        "/a2a/dispatch",
+        headers={"X-API-Key": "test-admin-key"},
+        json={"agent_id": "ghost", "input": {}},
+    )
     assert resp.status_code == 404
+
+
+def test_server_dispatch_requires_authentication(client):
+    resp = client.post(
+        "/a2a/dispatch", json={"agent_id": "data-quality", "input": {}}
+    )
+    assert resp.status_code == 401
+
+
+def test_server_dispatch_rate_limits_principal(client, monkeypatch):
+    from agents.a2a import server
+
+    server._request_times.clear()
+    monkeypatch.setattr(server, "_RATE_LIMIT_PER_MINUTE", 1)
+    request = {"agent_id": "data-quality", "input": {"client_id": "c1"}}
+    headers = {"X-API-Key": "test-admin-key"}
+
+    assert client.post("/a2a/dispatch", headers=headers, json=request).status_code == 200
+    assert client.post("/a2a/dispatch", headers=headers, json=request).status_code == 429

@@ -32,7 +32,7 @@ from agents.a2a.dispatcher import AgentDispatcher, HttpA2ATransport
 
 transport = HttpA2ATransport(
     "https://peer-node.example.com",       # base URL of the remote A2A node
-    headers={"X-API-Key": "..."},          # optional auth headers
+    headers={"X-API-Key": "..."},          # required API credential
     timeout=30,
     retries=3,                             # exponential backoff on transient failures
 )
@@ -53,6 +53,11 @@ of that app is already an A2A node. Endpoints (no prefix):
 | GET | `/.well-known/agent-cards` | Discovery — list served agents and their I/O schemas |
 | POST | `/a2a/dispatch` | Run a named agent: body `{"agent_id", "input"}` → `{"agent_id", "output"}` |
 
+Dispatch requires `X-API-Key`. Client-scoped keys may dispatch only requests
+whose `input.client_id` matches their tenant. Payloads are limited to 64 KiB and
+each principal is limited to `A2A_RATE_LIMIT_PER_MINUTE` requests per process
+(30 by default). Discovery remains public.
+
 Run the A2A surface standalone:
 
 ```bash
@@ -60,8 +65,9 @@ cd attribution_agent/attribution_agent
 uvicorn agents.a2a.server:app --port 8001
 ```
 
-Error semantics: unknown `agent_id` → `404`; an agent that raises during
-execution → `502`.
+Error semantics: missing or invalid credentials → `401`; tenant mismatch →
+`403`; oversized input → `413`; rate limit exceeded → `429`; unknown
+`agent_id` → `404`; an agent that raises during execution → `502`.
 
 ## Adding an agent
 
