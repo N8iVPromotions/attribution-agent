@@ -23,6 +23,8 @@ google-cloud-storage>=2.18.0,<4
 streamlit>=1.54.0,<2
 databricks-sdk>=0.28.0,<1.0
 fastapi>=0.115.0,<1.0
+# Starlette 1.x TestClient uses the maintained HTTPX2 transport.
+httpx2>=2.9.0,<3
 uvicorn>=0.30.0,<1.0
 fastmcp>=3.2.0,<4
 # Constrain transitive deps that otherwise resolve to versions conflicting with
