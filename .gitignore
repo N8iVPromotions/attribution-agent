@@ -4,6 +4,7 @@ attribution_agent/attribution_agent/config/client_registry.local.json
 
 # Python
 __pycache__/
+.pytest-*-tmp/
 *.py[cod]
 *.pyo
 *.pyd
