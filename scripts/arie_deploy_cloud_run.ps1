@@ -231,6 +231,7 @@ $commonEnv = @(
     "ATTRIBUTION_CLIENT_REGISTRY_PATH=/mnt/registry/clients.json",
     "ATTRIBUTION_CATALOG=workspace",
     "ATTRIBUTION_OPS_SCHEMA=workspace.attribution_ops",
+    "DATABRICKS_BUNDLE_TARGET=cloud-run",
     "COMMS_PROVIDER=gmail",
     "GOOGLE_CLOUD_PROJECT=$ProjectId",
     "ATTRIBUTION_CLOUD_RUN_JOB=$jobPipeline",

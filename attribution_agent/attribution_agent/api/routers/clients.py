@@ -98,14 +98,22 @@ async def create_client(
 ) -> ClientConfigResponse:
     require_permission(principal, Permission.MANAGE_CLIENTS)
     from config.client_config import (
+        CLIENT_REGISTRY,
         ClientConfig,
         attach_client_secret_values,
+        default_client_schema,
+        reload_client_registry,
         save_client_config,
         slugify_client_id,
-        default_client_schema,
     )
 
     client_id = slugify_client_id(req.client_name)
+    reload_client_registry()
+    if client_id in CLIENT_REGISTRY:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Client '{client_id}' already exists; update the existing client instead.",
+        )
     cfg = ClientConfig(
         client_id=client_id,
         client_name=req.client_name,

@@ -84,6 +84,38 @@ function parseClient(row: Record<string, unknown>): ClientAccount {
       hubspot: bool(config.hubspot_enabled),
       stripe: bool(config.stripe_enabled)
     },
+    platformDetails: {
+      meta: {
+        accountId: text(config.meta_ad_account_id),
+        credentialConfigured: Boolean(text(config.meta_access_token_secret_name)),
+        expiresAt: text(config.meta_token_expires_at)
+      },
+      google: {
+        accountId: text(config.google_ads_customer_id),
+        credentialConfigured: Boolean(text(config.google_ads_refresh_token_secret_name)),
+        expiresAt: text(config.google_ads_token_expires_at)
+      },
+      linkedin: {
+        accountId: text(config.linkedin_ads_account_id),
+        credentialConfigured: Boolean(text(config.linkedin_access_token_secret_name)),
+        expiresAt: text(config.linkedin_token_expires_at)
+      },
+      tiktok: {
+        accountId: text(config.tiktok_ads_advertiser_id),
+        credentialConfigured: Boolean(text(config.tiktok_access_token_secret_name)),
+        expiresAt: text(config.tiktok_token_expires_at)
+      },
+      hubspot: {
+        accountId: text(config.hubspot_pipeline_id),
+        credentialConfigured: Boolean(text(config.hubspot_access_token_secret_name)),
+        expiresAt: text(config.hubspot_token_expires_at)
+      },
+      stripe: {
+        accountId: text(config.stripe_account_id),
+        credentialConfigured: Boolean(text(config.stripe_secret_key_secret_name)),
+        expiresAt: text(config.stripe_token_expires_at)
+      }
+    },
     updatedAt: text(row.updated_at, new Date().toISOString())
   };
 }
@@ -246,6 +278,10 @@ function productionRuntime() {
   return process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production";
 }
 
+function isolatedDemoEnabled() {
+  return process.env.VERCEL_ENV !== "production" && process.env.ARIE_ISOLATED_DEMO === "true";
+}
+
 function unavailableCommandCenterData(
   capabilities: CommandCenterData["capabilities"],
   warnings: string[]
@@ -287,7 +323,8 @@ function unavailableCommandCenterData(
       ...capabilities,
       pipelineExecution: false,
       approvalActions: false,
-      tenantLifecycle: false
+      tenantLifecycle: false,
+      clientConfiguration: false
     },
     warnings
   };
@@ -311,10 +348,11 @@ export async function getCommandCenterData(): Promise<CommandCenterData> {
     databricks: hasDatabricksConfig(),
     pipelineExecution: hasPipelineExecutionConfig(),
     approvalActions: hasControlApiConfig(),
-    tenantLifecycle: hasTenantLifecycleConfig()
+    tenantLifecycle: hasTenantLifecycleConfig(),
+    clientConfiguration: hasControlApiConfig()
   };
   if (!capabilities.databricks) {
-    if (productionRuntime()) {
+    if (productionRuntime() && !isolatedDemoEnabled()) {
       return unavailableCommandCenterData(capabilities, [
         "LIVE DATA UNAVAILABLE - Databricks is not configured. Production sample data is suppressed."
       ]);

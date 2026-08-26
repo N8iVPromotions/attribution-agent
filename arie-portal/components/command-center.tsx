@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { PilotRoom } from "@/components/pilot-room";
 import type {
   ClientAccount,
   CommandCenterData,
@@ -13,16 +14,17 @@ import type {
 } from "@/lib/types";
 
 type Props = { initialData: CommandCenterData };
-type View = "Overview" | "Pipeline" | "Tenants" | "Reports" | "Alerts" | "Governance" | "Audit";
+type View = "Overview" | "Pilot Room" | "Pipeline" | "Tenants" | "Reports" | "Alerts" | "Governance" | "Audit";
 
 const views: Array<{ id: View; code: string; description: string }> = [
   { id: "Overview", code: "01", description: "Fleet health" },
-  { id: "Pipeline", code: "02", description: "Execute & inspect" },
-  { id: "Tenants", code: "03", description: "Source readiness" },
-  { id: "Reports", code: "04", description: "Revenue intelligence" },
-  { id: "Alerts", code: "05", description: "Operator action" },
-  { id: "Governance", code: "06", description: "Cost & quality" },
-  { id: "Audit", code: "07", description: "Control history" }
+  { id: "Pilot Room", code: "02", description: "Configure & prove" },
+  { id: "Pipeline", code: "03", description: "Execute & inspect" },
+  { id: "Tenants", code: "04", description: "Source readiness" },
+  { id: "Reports", code: "05", description: "Revenue intelligence" },
+  { id: "Alerts", code: "06", description: "Operator action" },
+  { id: "Governance", code: "07", description: "Cost & quality" },
+  { id: "Audit", code: "08", description: "Control history" }
 ];
 
 const modelLabels: Record<string, string> = {
@@ -199,6 +201,7 @@ export function CommandCenter({ initialData }: Props) {
           <div><span>DB</span><strong>{data.source === "unavailable" ? "DOWN" : data.capabilities.databricks ? "ONLINE" : "DEMO"}</strong></div>
           <div><span>EXEC</span><strong>{data.capabilities.pipelineExecution ? "ARMED" : "OFFLINE"}</strong></div>
           <div><span>CTRL</span><strong>{data.capabilities.approvalActions ? "ONLINE" : "READ ONLY"}</strong></div>
+          <div><span>CFG</span><strong>{data.capabilities.clientConfiguration ? "SECURE" : "LOCKED"}</strong></div>
         </div>
       </aside>
 
@@ -259,6 +262,16 @@ export function CommandCenter({ initialData }: Props) {
         )}
         {activeView === "Pipeline" && (
           <PipelineView key={activeAgency} data={data} clients={scoped.clients} runs={scoped.runs} agencyId={activeAgency} onRefresh={refresh} />
+        )}
+        {activeView === "Pilot Room" && (
+          <PilotRoom
+            key={activeAgency}
+            data={data}
+            clients={scoped.clients}
+            agencyId={activeAgency}
+            onRefresh={refresh}
+            onOpenPipeline={() => setActiveView("Pipeline")}
+          />
         )}
         {activeView === "Tenants" && <TenantView data={data} clients={scoped.clients} runs={scoped.runs} agencyId={activeAgency} onRefresh={refresh} />}
         {activeView === "Reports" && <ReportsView data={data} reports={scoped.reports} />}
