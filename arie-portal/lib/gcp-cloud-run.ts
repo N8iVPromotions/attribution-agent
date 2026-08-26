@@ -9,6 +9,13 @@ type CloudRunRunResponse = {
   };
 };
 
+type GoogleIdTokenResponse = {
+  token?: string;
+  error?: {
+    message?: string;
+  };
+};
+
 function clean(value: string | undefined) {
   return (value || "").trim();
 }
@@ -25,16 +32,82 @@ function gcpConfig() {
   };
 }
 
+function hasGcpIdentityConfig() {
+  const config = gcpConfig();
+  return Boolean(
+    config.projectNumber &&
+      config.serviceAccountEmail &&
+      config.workloadIdentityPoolId &&
+      config.workloadIdentityPoolProviderId
+  );
+}
+
+function externalAccountOptions(impersonateServiceAccount: boolean) {
+  const config = gcpConfig();
+  return {
+    type: "external_account" as const,
+    audience: `//iam.googleapis.com/projects/${config.projectNumber}/locations/global/workloadIdentityPools/${config.workloadIdentityPoolId}/providers/${config.workloadIdentityPoolProviderId}`,
+    subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+    token_url: "https://sts.googleapis.com/v1/token",
+    ...(impersonateServiceAccount
+      ? {
+          service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${config.serviceAccountEmail}:generateAccessToken`
+        }
+      : {}),
+    subject_token_supplier: {
+      getSubjectToken: getVercelOidcToken
+    }
+  };
+}
+
+function externalAccountClient(impersonateServiceAccount: boolean) {
+  if (!hasGcpIdentityConfig()) {
+    throw new Error("GCP workload identity is not configured.");
+  }
+  const client = ExternalAccountClient.fromJSON(externalAccountOptions(impersonateServiceAccount));
+  if (!client) {
+    throw new Error("Could not initialize the GCP external account client.");
+  }
+  return client;
+}
+
+export function hasGcpCloudRunIdentityConfig() {
+  return hasGcpIdentityConfig();
+}
+
+export async function getCloudRunIdToken(audience: string) {
+  const config = gcpConfig();
+  const sourceClient = externalAccountClient(false);
+  const accessToken = await sourceClient.getAccessToken();
+  if (!accessToken.token) {
+    throw new Error("Could not exchange the Vercel identity for a GCP access token.");
+  }
+
+  const response = await fetch(
+    `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${encodeURIComponent(config.serviceAccountEmail)}:generateIdToken`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${accessToken.token}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ audience: clean(audience), includeEmail: true }),
+      cache: "no-store"
+    }
+  );
+  const payload = (await response.json().catch(() => ({}))) as GoogleIdTokenResponse;
+  if (!response.ok || !payload.token) {
+    throw new Error(
+      payload.error?.message || `GCP IAM Credentials returned HTTP ${response.status} while creating an ID token.`
+    );
+  }
+  return payload.token;
+}
+
 export function hasGcpCloudRunOidcConfig() {
   const config = gcpConfig();
   return Boolean(
-    config.projectId &&
-      config.projectNumber &&
-      config.serviceAccountEmail &&
-      config.workloadIdentityPoolId &&
-      config.workloadIdentityPoolProviderId &&
-      config.region &&
-      config.jobName
+    hasGcpIdentityConfig() && config.projectId && config.region && config.jobName
   );
 }
 
@@ -59,23 +132,7 @@ export async function triggerCloudRunJobWithOidc(input: PipelineTriggerInput): P
     };
   }
 
-  const authClient = ExternalAccountClient.fromJSON({
-    type: "external_account",
-    audience: `//iam.googleapis.com/projects/${config.projectNumber}/locations/global/workloadIdentityPools/${config.workloadIdentityPoolId}/providers/${config.workloadIdentityPoolProviderId}`,
-    subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
-    token_url: "https://sts.googleapis.com/v1/token",
-    service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${config.serviceAccountEmail}:generateAccessToken`,
-    subject_token_supplier: {
-      getSubjectToken: getVercelOidcToken
-    }
-  });
-
-  if (!authClient) {
-    return {
-      ok: false,
-      message: "Could not initialize GCP external account auth client."
-    };
-  }
+  const authClient = externalAccountClient(true);
 
   const headers = await authClient.getRequestHeaders();
   const authorization = headers.get("authorization");

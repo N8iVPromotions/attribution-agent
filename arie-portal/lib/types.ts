@@ -1,5 +1,13 @@
 export type RunStatus = "success" | "partial" | "failed" | "running" | "queued" | "warning";
 
+export type ClientPlatformKey = "meta" | "google" | "linkedin" | "tiktok" | "hubspot" | "stripe";
+
+export type ClientPlatformDetail = {
+  accountId: string;
+  credentialConfigured: boolean;
+  expiresAt: string;
+};
+
 export type SourceRows = {
   meta: number;
   google: number;
@@ -56,7 +64,31 @@ export type ClientAccount = {
     hubspot: boolean;
     stripe: boolean;
   };
+  platformDetails?: Record<ClientPlatformKey, ClientPlatformDetail>;
   updatedAt: string;
+};
+
+export type PilotClientConfiguration = {
+  clientId: string;
+  clientName: string;
+  agencyId: string;
+  attributionModel: string;
+  reportEmail: string;
+  lookbackDays: number;
+  databricksSchema: string;
+  platforms: Record<
+    ClientPlatformKey,
+    ClientPlatformDetail & {
+      enabled: boolean;
+    }
+  >;
+};
+
+export type PilotClientConfigurationResult = {
+  ok: boolean;
+  message: string;
+  client?: PilotClientConfiguration;
+  error?: string;
 };
 
 export type AgencyAccount = {
@@ -201,6 +233,7 @@ export type CommandCenterData = {
     pipelineExecution: boolean;
     approvalActions: boolean;
     tenantLifecycle: boolean;
+    clientConfiguration: boolean;
   };
   warnings: string[];
 };

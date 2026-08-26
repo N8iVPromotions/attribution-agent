@@ -181,6 +181,12 @@ export const mockCommandCenterData: CommandCenterData = {
     { severity: "critical", title: "Resolve Google Ads credentials", body: "Agency Pilot cannot produce complete paid-search attribution until the refresh token is restored." },
     { severity: "warning", title: "Keep Agency Pilot delivery suppressed", body: "Retry Meta ingestion and complete a clean preview run before releasing the report." }
   ],
-  capabilities: { databricks: false, pipelineExecution: false, approvalActions: false, tenantLifecycle: false },
+  capabilities: {
+    databricks: false,
+    pipelineExecution: false,
+    approvalActions: false,
+    tenantLifecycle: false,
+    clientConfiguration: false
+  },
   warnings: ["DEMO ISOLATION ACTIVE — synthetic operations data only."]
 };

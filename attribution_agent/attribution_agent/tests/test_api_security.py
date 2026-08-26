@@ -11,8 +11,8 @@ from api.auth import (
     require_client_access,
     require_permission,
 )
-from api.models import ApprovalResolution, PipelineRunRequest
-from api.routers import approvals, pipeline, reports
+from api.models import ApprovalResolution, ClientConfigRequest, PipelineRunRequest
+from api.routers import approvals, clients, pipeline, reports
 from config.client_config import ClientConfig
 from config.rbac_config import Permission, Role
 
@@ -70,6 +70,24 @@ def test_client_pipeline_request_must_target_own_client():
             pipeline.submit_pipeline_run(request, AuthPrincipal(Role.ANALYST, "acme"))
         )
     assert exc.value.status_code == 403
+
+
+def test_create_client_rejects_existing_generated_id(monkeypatch):
+    from config import client_config
+
+    registry = {"acme": ClientConfig(client_id="acme", client_name="Acme")}
+    monkeypatch.setattr(client_config, "CLIENT_REGISTRY", registry)
+    monkeypatch.setattr(client_config, "reload_client_registry", lambda: registry)
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            clients.create_client(
+                ClientConfigRequest(client_name="Acme"),
+                AuthPrincipal(Role.ADMIN),
+            )
+        )
+
+    assert exc.value.status_code == 409
 
 
 def test_approval_resolution_handles_missing_and_existing(monkeypatch):

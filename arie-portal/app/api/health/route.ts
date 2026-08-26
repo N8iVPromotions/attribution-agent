@@ -11,6 +11,7 @@ export async function GET() {
     databricksConfigured: hasDatabricksConfig(),
     pipelineExecutionConfigured: hasPipelineExecutionConfig(),
     controlApiConfigured: hasControlApiConfig(),
+    clientConfigurationConfigured: hasControlApiConfig(),
     tenantLifecycleConfigured: hasTenantLifecycleConfig(),
     runtime: "vercel"
   }, { headers: { "Cache-Control": "no-store" } });
