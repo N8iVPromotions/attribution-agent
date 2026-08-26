@@ -97,9 +97,7 @@ async def resolve_approval(
     require_permission(principal, Permission.APPROVE_ACTIONS)
     current_status = _fetch_approval_status(action_id)
     if current_status is None:
-        raise HTTPException(
-            status_code=404, detail=f"Approval '{action_id}' not found"
-        )
+        raise HTTPException(status_code=404, detail=f"Approval '{action_id}' not found")
     if current_status != "pending":
         raise HTTPException(
             status_code=409,
