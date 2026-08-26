@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import type {
   ClientAccount,
@@ -156,10 +157,19 @@ export function CommandCenter({ initialData }: Props) {
     <main className="shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark"><span>AR</span></div>
-          <div>
-            <div className="brand-title">ARIE</div>
-            <div className="brand-subtitle">Operations Command</div>
+          <div className="brand-wordmark">
+            <Image
+              src="/n8iv-promotions-wordmark.png"
+              alt="N8iV Promotions"
+              width={1050}
+              height={600}
+              priority
+              unoptimized
+            />
+          </div>
+          <div className="brand-product">
+            <span>ARIE</span>
+            <small>Revenue intelligence command</small>
           </div>
         </div>
 
@@ -194,9 +204,21 @@ export function CommandCenter({ initialData }: Props) {
 
       <section className="workspace">
         <header className="topbar">
-          <div>
-            <p className="eyebrow">N8iV / Automatic Revenue Intelligence Engine</p>
-            <h1>{activeView}</h1>
+          <div className="view-identity">
+            <div className="brand-symbol" aria-hidden="true">
+              <Image
+                src="/n8iv-logo-transparent.png"
+                alt=""
+                width={3000}
+                height={650}
+                priority
+                unoptimized
+              />
+            </div>
+            <div>
+              <p className="eyebrow">N8iV / Automatic Revenue Intelligence Engine</p>
+              <h1>{activeView}</h1>
+            </div>
           </div>
           <div className="topbar-actions">
             <label className="field compact-field">

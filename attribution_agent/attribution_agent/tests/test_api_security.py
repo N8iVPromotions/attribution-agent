@@ -64,14 +64,10 @@ def test_report_query_escapes_client_id(monkeypatch):
 
 
 def test_client_pipeline_request_must_target_own_client():
-    request = PipelineRunRequest(
-        agency_id="agency", client_ids=["other"], dry_run=True
-    )
+    request = PipelineRunRequest(agency_id="agency", client_ids=["other"], dry_run=True)
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
-            pipeline.submit_pipeline_run(
-                request, AuthPrincipal(Role.ANALYST, "acme")
-            )
+            pipeline.submit_pipeline_run(request, AuthPrincipal(Role.ANALYST, "acme"))
         )
     assert exc.value.status_code == 403
 

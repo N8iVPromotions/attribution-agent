@@ -40,9 +40,7 @@ def test_run_health_check_can_preview_without_dispatch(monkeypatch):
 
 
 def test_global_connector_credentials_require_explicit_opt_in(monkeypatch):
-    cfg = ClientConfig(
-        client_id="legacy", client_name="Legacy", hubspot_enabled=True
-    )
+    cfg = ClientConfig(client_id="legacy", client_name="Legacy", hubspot_enabled=True)
     monkeypatch.setenv("HUBSPOT_ACCESS_TOKEN", "global-token")
     monkeypatch.setenv("ARIE_ALLOW_GLOBAL_CONNECTOR_CREDENTIALS", "true")
     monkeypatch.setattr(health, "reload_client_registry", lambda: None)

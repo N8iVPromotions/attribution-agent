@@ -131,9 +131,7 @@ def test_server_dispatch_unknown_agent_404(client):
 
 
 def test_server_dispatch_requires_authentication(client):
-    resp = client.post(
-        "/a2a/dispatch", json={"agent_id": "data-quality", "input": {}}
-    )
+    resp = client.post("/a2a/dispatch", json={"agent_id": "data-quality", "input": {}})
     assert resp.status_code == 401
 
 
@@ -145,5 +143,9 @@ def test_server_dispatch_rate_limits_principal(client, monkeypatch):
     request = {"agent_id": "data-quality", "input": {"client_id": "c1"}}
     headers = {"X-API-Key": "test-admin-key"}
 
-    assert client.post("/a2a/dispatch", headers=headers, json=request).status_code == 200
-    assert client.post("/a2a/dispatch", headers=headers, json=request).status_code == 429
+    assert (
+        client.post("/a2a/dispatch", headers=headers, json=request).status_code == 200
+    )
+    assert (
+        client.post("/a2a/dispatch", headers=headers, json=request).status_code == 429
+    )

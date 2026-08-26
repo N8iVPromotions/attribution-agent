@@ -45,6 +45,8 @@ attribution_agent/arie_bot.lock
 attribution-agent/
 prototypes/
 website-work/
+.audit-worktree-*/
+.pytest-final-validation/
 
 # Databricks
 .databricks/
