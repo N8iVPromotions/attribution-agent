@@ -1,0 +1,1318 @@
+<title>Ad Spend to Closed Revenue</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+/* ─────────────────────────────────────────────────────────────
+   Tokens — complete light palette on bare :root, redefined for
+   dark under prefers-color-scheme and again under [data-theme].
+   ───────────────────────────────────────────────────────────── */
+:root {
+  --ground:      #EDF0F5;
+  --surface:     #FFFFFF;
+  --surface-2:   #E3E8EF;
+  --surface-3:   #D6DDE7;
+  --line:        #C3CCD9;
+  --line-soft:   #DBE1EA;
+  --ink:         #0E1720;
+  --ink-2:       #3B4959;
+  --ink-3:       #6B7B8D;
+  --flow:        #1C6CCB;   /* data in motion */
+  --flow-wash:   #DCE9F9;
+  --revenue:     #A66A12;   /* attributed dollars */
+  --revenue-wash:#F6E9D3;
+  --reason:      #6446C4;   /* model reasoning */
+  --reason-wash: #E6E1F8;
+  --warn:        #A9481F;
+  --warn-wash:   #F7E2D8;
+  --ok:          #1B6E51;
+  --shadow:      0 1px 2px rgba(14,23,32,.06), 0 8px 24px -12px rgba(14,23,32,.18);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:      #0B1119;
+    --surface:     #141D28;
+    --surface-2:   #1B2634;
+    --surface-3:   #243141;
+    --line:        #2E3D4E;
+    --line-soft:   #223040;
+    --ink:         #E3EAF2;
+    --ink-2:       #A9B8C8;
+    --ink-3:       #74869A;
+    --flow:        #5CA6F0;
+    --flow-wash:   #14273C;
+    --revenue:     #E2A54D;
+    --revenue-wash:#33280F;
+    --reason:      #A78DF6;
+    --reason-wash: #241D3F;
+    --warn:        #E4855A;
+    --warn-wash:   #351C11;
+    --ok:          #47C098;
+    --shadow:      0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"] {
+  --ground:      #0B1119;
+  --surface:     #141D28;
+  --surface-2:   #1B2634;
+  --surface-3:   #243141;
+  --line:        #2E3D4E;
+  --line-soft:   #223040;
+  --ink:         #E3EAF2;
+  --ink-2:       #A9B8C8;
+  --ink-3:       #74869A;
+  --flow:        #5CA6F0;
+  --flow-wash:   #14273C;
+  --revenue:     #E2A54D;
+  --revenue-wash:#33280F;
+  --reason:      #A78DF6;
+  --reason-wash: #241D3F;
+  --warn:        #E4855A;
+  --warn-wash:   #351C11;
+  --ok:          #47C098;
+  --shadow:      0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1200px; margin: 0 auto; padding: 0 30px 90px; }
+
+h1, h2, h3 { font-family: "IBM Plex Sans Condensed", "IBM Plex Sans", sans-serif; margin: 0; text-wrap: balance; }
+
+.mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.eyebrow {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10.5px; font-weight: 500;
+  letter-spacing: .18em; text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* ── Masthead ───────────────────────────────────────────────── */
+.mast {
+  display: grid; gap: 22px;
+  padding: 46px 0 30px;
+  border-bottom: 1px solid var(--line);
+}
+.mast h1 {
+  font-size: clamp(38px, 5.4vw, 62px);
+  font-weight: 700; line-height: .98;
+  letter-spacing: -.022em;
+}
+.mast h1 .dim { color: var(--ink-3); font-weight: 500; }
+.mast .lede {
+  max-width: 62ch; font-size: 17px; color: var(--ink-2);
+}
+.mast .lede b { color: var(--ink); font-weight: 600; }
+.mast-head { display: flex; flex-wrap: wrap; gap: 14px 26px; align-items: baseline; }
+
+.rail {
+  display: flex; flex-wrap: wrap; gap: 0;
+  border: 1px solid var(--line); border-radius: 3px;
+  background: var(--surface); overflow: hidden;
+}
+.rail > div {
+  padding: 10px 18px; flex: 1 1 auto; min-width: 150px;
+  border-right: 1px solid var(--line-soft);
+}
+.rail > div:last-child { border-right: 0; }
+.rail dt {
+  font-family: "IBM Plex Mono", monospace; font-size: 9.5px;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3);
+}
+.rail dd {
+  margin: 2px 0 0; font-family: "IBM Plex Mono", monospace;
+  font-size: 14px; font-weight: 500; color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Section scaffolding ────────────────────────────────────── */
+section { padding-top: 58px; }
+.sec-head { display: grid; gap: 8px; margin-bottom: 24px; max-width: 78ch; }
+.sec-head h2 { font-size: 27px; font-weight: 600; letter-spacing: -.012em; }
+.sec-head p { margin: 0; color: var(--ink-2); }
+
+/* ── Run console ────────────────────────────────────────────── */
+.console {
+  border: 1px solid var(--line); border-radius: 4px;
+  background: var(--surface); box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.console-bar {
+  position: sticky; top: 0; z-index: 5;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.bar-row {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 10px; padding: 11px 16px;
+}
+.bar-row + .bar-row { border-top: 1px solid var(--line-soft); }
+
+button {
+  font: inherit; cursor: pointer; color: inherit;
+  border: 1px solid var(--line); background: var(--surface);
+  border-radius: 3px;
+}
+button:focus-visible { outline: 2px solid var(--flow); outline-offset: 2px; }
+
+.btn {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px; letter-spacing: .07em; text-transform: uppercase;
+  padding: 7px 14px; font-weight: 500;
+}
+.btn:hover { background: var(--surface-2); }
+.btn-primary { background: var(--ink); color: var(--ground); border-color: var(--ink); }
+.btn-primary:hover { background: var(--ink-2); border-color: var(--ink-2); }
+
+.steps { display: flex; flex-wrap: wrap; gap: 6px; }
+.step {
+  display: inline-flex; align-items: baseline; gap: 7px;
+  font-family: "IBM Plex Mono", monospace; font-size: 10.5px;
+  letter-spacing: .06em; text-transform: uppercase;
+  padding: 6px 11px; color: var(--ink-3);
+  background: transparent; border-color: transparent;
+}
+.step:hover { background: var(--surface-2); color: var(--ink-2); }
+.step .num { font-weight: 600; opacity: .55; }
+.step[data-state="done"] { color: var(--ink-2); }
+.step[data-state="done"] .num { color: var(--ok); opacity: 1; }
+.step[aria-current="true"] {
+  color: var(--ink); background: var(--surface-2);
+  border-color: var(--line); font-weight: 600;
+}
+.step[aria-current="true"] .num { opacity: 1; color: var(--flow); }
+
+.toggle {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 9px;
+  font-family: "IBM Plex Mono", monospace; font-size: 10.5px;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3);
+  cursor: pointer; user-select: none;
+}
+.toggle input { accent-color: var(--warn); width: 14px; height: 14px; cursor: pointer; }
+.toggle:hover { color: var(--ink-2); }
+
+.progress { height: 2px; background: var(--surface-2); }
+.progress span {
+  display: block; height: 100%; width: 0;
+  background: var(--flow); transition: width .1s linear;
+}
+
+/* stat readout */
+.stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(122px, 1fr));
+  border-top: 1px solid var(--line-soft);
+}
+.stats > div { padding: 10px 16px; border-right: 1px solid var(--line-soft); }
+.stats > div:last-child { border-right: 0; }
+.stats dt {
+  font-family: "IBM Plex Mono", monospace; font-size: 9px;
+  letter-spacing: .13em; text-transform: uppercase; color: var(--ink-3);
+  white-space: nowrap;
+}
+.stats dd {
+  margin: 1px 0 0; font-family: "IBM Plex Mono", monospace;
+  font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums;
+  color: var(--ink); transition: color .3s;
+}
+.stats dd.pending { color: var(--ink-3); }
+.stats dd.held { color: var(--warn); }
+
+/* caption */
+.caption {
+  display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  gap: 4px 34px; padding: 18px 20px 20px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--surface-2);
+}
+.caption h3 {
+  grid-column: 1 / -1;
+  font-size: 19px; font-weight: 600; letter-spacing: -.008em;
+  display: flex; align-items: baseline; gap: 11px;
+}
+.caption h3 .tag {
+  font-family: "IBM Plex Mono", monospace; font-size: 10px; font-weight: 500;
+  letter-spacing: .14em; padding: 3px 8px; border-radius: 2px;
+  background: var(--flow-wash); color: var(--flow); text-transform: uppercase;
+}
+.caption p { margin: 6px 0 0; color: var(--ink-2); font-size: 14.5px; max-width: 66ch; }
+.caption ul {
+  margin: 8px 0 0; padding: 0; list-style: none;
+  font-family: "IBM Plex Mono", monospace; font-size: 11.5px; line-height: 1.85;
+  color: var(--ink-3);
+}
+.caption li::before { content: "› "; color: var(--flow); }
+.caption li b { color: var(--ink-2); font-weight: 500; }
+@media (max-width: 760px) { .caption { grid-template-columns: 1fr; } }
+
+.stage-svg-wrap { overflow-x: auto; padding: 8px 14px 18px; }
+.stage-svg-wrap svg { display: block; min-width: 1100px; width: 100%; height: auto; }
+
+/* ── Diagram internals ──────────────────────────────────────── */
+.band-bg { fill: var(--surface-2); opacity: 0; transition: opacity .45s; }
+.band.is-active .band-bg { opacity: 1; }
+
+.n { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.n-ext { stroke-dasharray: 3 3; fill: none; }
+.band.is-active .n { stroke: var(--ink-3); }
+.band.is-done .n { stroke: var(--line); }
+
+.t-title { font-family: "IBM Plex Sans", sans-serif; font-size: 12.5px; font-weight: 600; fill: var(--ink); }
+.t-sub   { font-family: "IBM Plex Mono", monospace; font-size: 9.5px; fill: var(--ink-3); letter-spacing: .01em; }
+.t-edge  { font-family: "IBM Plex Mono", monospace; font-size: 9px; fill: var(--ink-3); letter-spacing: .04em; }
+.t-note  { font-family: "IBM Plex Mono", monospace; font-size: 9.5px; fill: var(--ink-3); }
+.t-stage {
+  font-family: "IBM Plex Mono", monospace; font-size: 10px; font-weight: 500;
+  letter-spacing: .18em; fill: var(--ink-3); text-transform: uppercase;
+  transition: fill .35s;
+}
+.band.is-active .t-stage { fill: var(--flow); }
+.band.is-done .t-stage { fill: var(--ink-2); }
+
+.edge { fill: none; stroke: var(--line); stroke-width: 1.4; stroke-linecap: square; transition: stroke .4s; }
+.edge.hot { stroke: var(--flow); }
+.ah    { fill: var(--line); transition: fill .4s; }
+.ah-hot{ fill: var(--flow); }
+
+.dot { fill: var(--flow); }
+.dot.rev { fill: var(--revenue); }
+.dot.rsn { fill: var(--reason); }
+
+/* accent per band */
+.band[data-accent="revenue"].is-active .band-bg { fill: var(--revenue-wash); }
+.band[data-accent="revenue"].is-active .t-stage { fill: var(--revenue); }
+.band[data-accent="reason"].is-active .band-bg { fill: var(--reason-wash); }
+.band[data-accent="reason"].is-active .t-stage { fill: var(--reason); }
+.band[data-accent="flow"].is-active .band-bg { fill: var(--flow-wash); }
+
+/* failure mode */
+svg[data-mode="partial"] .src.is-failed rect { stroke: var(--warn); stroke-dasharray: 2 3; }
+svg[data-mode="partial"] .src.is-failed .t-title { fill: var(--warn); }
+svg[data-mode="partial"] .src.is-failed .t-sub { fill: var(--warn); }
+svg[data-mode="partial"] .src.is-failed .edge { stroke: var(--warn); stroke-dasharray: 2 3; }
+svg[data-mode="partial"] #report-node rect { stroke: var(--warn); }
+svg[data-mode="partial"] #report-node .t-title { fill: var(--warn); }
+.status-chip rect { fill: var(--surface); stroke: var(--ok); }
+.status-chip text { fill: var(--ok); }
+svg[data-mode="partial"] .status-chip rect { stroke: var(--warn); }
+svg[data-mode="partial"] .status-chip text { fill: var(--warn); }
+
+@media (prefers-reduced-motion: reduce) {
+  .dot { display: none; }
+  .band-bg, .t-stage, .edge, .ah { transition: none; }
+}
+
+/* ── Figures ────────────────────────────────────────────────── */
+figure {
+  margin: 0; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--surface); overflow: hidden;
+}
+figure > .fig-body { padding: 22px 22px 6px; overflow-x: auto; }
+figure svg { display: block; width: 100%; height: auto; }
+figcaption {
+  padding: 14px 22px 16px; border-top: 1px solid var(--line-soft);
+  color: var(--ink-2); font-size: 13.5px; background: var(--surface-2);
+}
+figcaption b { color: var(--ink); font-weight: 600; }
+
+/* ── Model explorer ─────────────────────────────────────────── */
+.models { border: 1px solid var(--line); border-radius: 4px; background: var(--surface); overflow: hidden; }
+.model-picker { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+.model-picker button {
+  flex: 1 1 140px; border: 0; border-right: 1px solid var(--line-soft);
+  border-radius: 0; padding: 13px 10px; background: var(--surface);
+  font-family: "IBM Plex Mono", monospace; font-size: 11px;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3);
+}
+.model-picker button:last-child { border-right: 0; }
+.model-picker button:hover { background: var(--surface-2); color: var(--ink-2); }
+.model-picker button[aria-pressed="true"] {
+  background: var(--revenue-wash); color: var(--revenue); font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--revenue);
+}
+.model-note {
+  padding: 15px 22px; border-bottom: 1px solid var(--line-soft);
+  color: var(--ink-2); font-size: 14px; max-width: 74ch;
+}
+.journey { padding: 6px 22px 20px; }
+.touch {
+  display: grid;
+  grid-template-columns: 46px minmax(120px, 190px) minmax(0, 1fr) 62px 84px;
+  gap: 14px; align-items: center;
+  padding: 12px 0; border-bottom: 1px solid var(--line-soft);
+}
+.touch:last-child { border-bottom: 0; }
+.touch .day {
+  font-family: "IBM Plex Mono", monospace; font-size: 11px;
+  color: var(--ink-3); font-variant-numeric: tabular-nums;
+}
+.touch .who { display: grid; gap: 1px; }
+.touch .who strong { font-size: 13.5px; font-weight: 600; }
+.touch .who span { font-family: "IBM Plex Mono", monospace; font-size: 10px; color: var(--ink-3); }
+.touch .who em {
+  font-style: normal; font-family: "IBM Plex Mono", monospace; font-size: 9px;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--reason);
+}
+.track { height: 12px; background: var(--surface-2); border-radius: 2px; overflow: hidden; }
+.track i {
+  display: block; height: 100%; width: 0; background: var(--revenue);
+  transition: width .55s cubic-bezier(.4,0,.15,1);
+}
+.touch .pct, .touch .amt {
+  font-family: "IBM Plex Mono", monospace; font-size: 13px;
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+.touch .pct { color: var(--ink-2); }
+.touch .amt { color: var(--ink); font-weight: 500; }
+.journey-foot {
+  display: flex; flex-wrap: wrap; gap: 6px 22px; justify-content: space-between;
+  padding-top: 14px; border-top: 1px solid var(--line);
+  font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--ink-3);
+}
+@media (prefers-reduced-motion: reduce) { .track i { transition: none; } }
+@media (max-width: 700px) {
+  .touch { grid-template-columns: 40px 1fr 70px; }
+  .touch .track, .touch .pct { grid-column: 1 / -1; }
+}
+
+/* ── Ledger table ───────────────────────────────────────────── */
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 780px; font-size: 13px; }
+th, td { text-align: left; padding: 12px 16px; vertical-align: top; border-bottom: 1px solid var(--line-soft); }
+thead th {
+  font-family: "IBM Plex Mono", monospace; font-size: 9.5px; font-weight: 500;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3);
+  background: var(--surface-2); border-bottom: 1px solid var(--line);
+  position: sticky; top: 0;
+}
+tbody tr:last-child td { border-bottom: 0; }
+td.code { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--ink-2); }
+td.code span { display: block; }
+td.stage { font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
+td.stage b { color: var(--flow); font-weight: 600; }
+td.fail { color: var(--ink-2); }
+
+footer {
+  margin-top: 62px; padding-top: 22px; border-top: 1px solid var(--line);
+  font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--ink-3);
+  display: flex; flex-wrap: wrap; gap: 6px 28px; justify-content: space-between;
+}
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <div class="mast-head">
+    <p class="eyebrow" style="margin:0">n8iv · attribution agent · end-to-end</p>
+    <p class="eyebrow" style="margin:0">gcp cloud run + databricks sql</p>
+  </div>
+  <h1>Ad spend in.<br><span class="dim">Closed revenue out.</span></h1>
+  <p class="lede">
+    Seven stages turn four ad platforms, one CRM and one payment processor into a
+    single sentence a marketer can act on: <b>this channel produced this much
+    money that actually closed.</b> Press play to watch one monthly run move
+    through the machine.
+  </p>
+  <dl class="rail">
+    <div><dt>Trigger</dt><dd>1st · 9am ET</dd></div>
+    <div><dt>Sources</dt><dd>6</dd></div>
+    <div><dt>Lookback</dt><dd>90 days</dd></div>
+    <div><dt>Models</dt><dd>6</dd></div>
+    <div><dt>Claude agents</dt><dd>4</dd></div>
+    <div><dt>Ops tables</dt><dd>15</dd></div>
+  </dl>
+</header>
+
+<!-- ══════════════ THE RUN ══════════════ -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">The run</p>
+    <h2>One month, one agency, six clients — traced end to end</h2>
+    <p>
+      Every arrow below is a real hop in the pipeline and every box is real code.
+      The figures are a worked sample for <span class="mono">demo_agency</span>,
+      not live client data.
+    </p>
+  </div>
+
+  <div class="console">
+    <div class="console-bar">
+      <div class="bar-row">
+        <button class="btn btn-primary" id="play">Pause</button>
+        <button class="btn" id="restart">Restart</button>
+        <div class="steps" id="steps"></div>
+      </div>
+      <div class="bar-row">
+        <label class="toggle" style="margin-left:0">
+          <input type="checkbox" id="failmode">
+          Simulate a source failure
+        </label>
+        <span class="mono" style="font-size:10.5px;color:var(--ink-3)">
+          Google Ads + TikTok credentials expire mid-run
+        </span>
+      </div>
+      <div class="progress"><span id="progress"></span></div>
+      <dl class="stats" id="stats">
+        <div><dt>Rows ingested</dt><dd id="s-rows" class="pending">—</dd></div>
+        <div><dt>Ad spend read</dt><dd id="s-spend" class="pending">—</dd></div>
+        <div><dt>Conversions</dt><dd id="s-conv" class="pending">—</dd></div>
+        <div><dt>Attributed rev.</dt><dd id="s-attr" class="pending">—</dd></div>
+        <div><dt>Coverage</dt><dd id="s-cov" class="pending">—</dd></div>
+        <div><dt>Blended ROAS</dt><dd id="s-roas" class="pending">—</dd></div>
+        <div><dt>Report</dt><dd id="s-report" class="pending">—</dd></div>
+      </dl>
+    </div>
+
+    <div class="caption" id="caption">
+      <h3><span id="cap-title">Dispatch</span><span class="tag" id="cap-tag">stage 00</span></h3>
+      <p id="cap-body"></p>
+      <ul id="cap-refs"></ul>
+    </div>
+
+    <div class="stage-svg-wrap">
+<svg id="flow" viewBox="0 0 1140 900" role="img" data-mode="complete"
+     aria-label="End-to-end diagram of the attribution pipeline: a scheduled trigger launches a Cloud Run task array, which pulls six ad, CRM and payment sources in parallel, lands them in Delta tables, joins payments back to ad touchpoints, generates a report with three Claude agents, delivers it, and loops the result back into next month's budget.">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <polygon class="ah" points="0,1.6 10,5 0,8.4"></polygon>
+    </marker>
+  </defs>
+
+  <!-- ══ 00 DISPATCH ══ -->
+  <g class="band" data-stage="0" data-accent="flow">
+    <rect class="band-bg" x="30" y="4" width="1080" height="102" rx="3"></rect>
+    <text class="t-stage" x="60" y="22">00 — Dispatch</text>
+
+    <g><rect class="n" x="60" y="36" width="237" height="56" rx="3"></rect>
+      <text class="t-title" x="74" y="59">Scheduler · Portal · CLI</text>
+      <text class="t-sub" x="74" y="76">attribution-monthly — 1st, 9am ET</text></g>
+
+    <path class="edge" d="M297,64 H317" marker-end="url(#ah)"></path>
+
+    <g><rect class="n" x="321" y="36" width="237" height="56" rx="3"></rect>
+      <text class="t-title" x="335" y="59">attribution-launcher</text>
+      <text class="t-sub" x="335" y="76">flows/job_launcher.py</text></g>
+
+    <path class="edge" d="M558,64 H578" marker-end="url(#ah)"></path>
+
+    <g><rect class="n" x="582" y="36" width="237" height="56" rx="3"></rect>
+      <text class="t-title" x="596" y="59">Work manifest</text>
+      <text class="t-sub" x="596" y="76">clients frozen for this run_id</text></g>
+
+    <path class="edge" d="M819,64 H839" marker-end="url(#ah)"></path>
+
+    <g><rect class="n" x="843" y="36" width="237" height="56" rx="3"></rect>
+      <text class="t-title" x="857" y="59">attribution-pipeline</text>
+      <text class="t-sub" x="857" y="76">task array — one task per client</text></g>
+
+    <path class="edge" id="p-d4" d="M961,92 V110 H1112 V209 H1084" marker-end="url(#ah)"></path>
+    <text class="t-edge" x="1104" y="160" text-anchor="end" transform="rotate(-90 1104 160)">runs per client</text>
+  </g>
+
+  <!-- ══ 01 INGEST ══ -->
+  <g class="band" data-stage="1" data-accent="flow">
+    <rect class="band-bg" x="30" y="112" width="1080" height="176" rx="3"></rect>
+    <text class="t-stage" x="60" y="124">01 — Ingest</text>
+
+    <g class="src"><rect class="n n-ext" x="60" y="136" width="150" height="40" rx="3"></rect>
+      <text class="t-title" x="72" y="155">Meta Ads</text>
+      <text class="t-sub" x="72" y="168">spend · creative</text></g>
+    <g class="src is-failed"><rect class="n n-ext" x="234" y="136" width="150" height="40" rx="3"></rect>
+      <text class="t-title" x="246" y="155">Google Ads</text>
+      <text class="t-sub" x="246" y="168">spend · keywords</text></g>
+    <g class="src"><rect class="n n-ext" x="408" y="136" width="150" height="40" rx="3"></rect>
+      <text class="t-title" x="420" y="155">LinkedIn Ads</text>
+      <text class="t-sub" x="420" y="168">spend · b2b</text></g>
+    <g class="src is-failed"><rect class="n n-ext" x="582" y="136" width="150" height="40" rx="3"></rect>
+      <text class="t-title" x="594" y="155">TikTok Ads</text>
+      <text class="t-sub" x="594" y="168">spend · video</text></g>
+    <g class="src"><rect class="n n-ext" x="756" y="136" width="150" height="40" rx="3"></rect>
+      <text class="t-title" x="768" y="155">HubSpot</text>
+      <text class="t-sub" x="768" y="168">deals · stages · utm</text></g>
+    <g class="src"><rect class="n n-ext" x="930" y="136" width="150" height="40" rx="3"></rect>
+      <text class="t-title" x="942" y="155">Stripe</text>
+      <text class="t-sub" x="942" y="168">charges · invoices</text></g>
+
+    <g class="src"><path class="edge" id="p-s1" d="M135,176 V186" marker-end="url(#ah)"></path></g>
+    <g class="src is-failed"><path class="edge" id="p-s2" d="M309,176 V186" marker-end="url(#ah)"></path></g>
+    <g class="src"><path class="edge" id="p-s3" d="M483,176 V186" marker-end="url(#ah)"></path></g>
+    <g class="src is-failed"><path class="edge" id="p-s4" d="M657,176 V186" marker-end="url(#ah)"></path></g>
+    <g class="src"><path class="edge" id="p-s5" d="M831,176 V186" marker-end="url(#ah)"></path></g>
+    <g class="src"><path class="edge" id="p-s6" d="M1005,176 V186" marker-end="url(#ah)"></path></g>
+
+    <rect class="n" x="60" y="190" width="1020" height="38" rx="3"></rect>
+    <text class="t-title" x="76" y="214">Concurrent pull</text>
+    <text class="t-sub" x="196" y="214">6 sources · 3 workers</text>
+    <text class="t-sub" x="392" y="214">retry ×3, 15s backoff</text>
+    <text class="t-sub" x="590" y="214">tokens from Secret Manager</text>
+    <text class="t-sub" x="820" y="214">URLs redacted before logging</text>
+    <g class="status-chip" id="ingest-status">
+      <rect x="984" y="198" width="82" height="22" rx="2"></rect>
+      <text class="t-sub" x="1025" y="213" text-anchor="middle" id="ingest-status-t">complete</text>
+    </g>
+
+    <path class="edge" id="p-i1" d="M570,228 V240" marker-end="url(#ah)"></path>
+
+    <rect class="n" x="60" y="244" width="1020" height="34" rx="3"></rect>
+    <text class="t-title" x="76" y="265">Validate</text>
+    <text class="t-sub" x="150" y="265">schema · required fields · row counts — a failed source is recorded, never fatal</text>
+    <text class="t-sub" x="1066" y="265" text-anchor="end">agents/ingest/validator.py</text>
+  </g>
+
+  <!-- ══ 02 LAND ══ -->
+  <g class="band" data-stage="2" data-accent="flow">
+    <rect class="band-bg" x="30" y="296" width="1080" height="98" rx="3"></rect>
+    <text class="t-stage" x="60" y="308">02 — Land</text>
+
+    <path class="edge" id="p-t1" d="M570,278 V300 H178 V314" marker-end="url(#ah)"></path>
+    <path class="edge" id="p-t2" d="M570,278 V300 H439 V314" marker-end="url(#ah)"></path>
+    <path class="edge" id="p-t3" d="M570,278 V300 H700 V314" marker-end="url(#ah)"></path>
+    <path class="edge" id="p-t4" d="M570,278 V300 H961 V314" marker-end="url(#ah)"></path>
+
+    <g><rect class="n" x="60" y="318" width="237" height="52" rx="3"></rect>
+      <text class="t-title" x="74" y="340">meta_ads_raw</text>
+      <text class="t-sub" x="74" y="356">insights by day × campaign</text></g>
+    <g><rect class="n" x="321" y="318" width="237" height="52" rx="3"></rect>
+      <text class="t-title" x="335" y="340">hubspot_deals_raw</text>
+      <text class="t-sub" x="335" y="356">stage · amount · contact_email</text></g>
+    <g><rect class="n" x="582" y="318" width="237" height="52" rx="3"></rect>
+      <text class="t-title" x="596" y="340">stripe_payments_raw</text>
+      <text class="t-sub" x="596" y="356">charges · customer email</text></g>
+    <g><rect class="n" x="843" y="318" width="237" height="52" rx="3"></rect>
+      <text class="t-title" x="857" y="340">ad_spend_normalized</text>
+      <text class="t-sub" x="857" y="356">all 4 platforms, one schema</text></g>
+  </g>
+
+  <!-- ══ 03 ATTRIBUTE ══ -->
+  <g class="band" data-stage="3" data-accent="revenue">
+    <rect class="band-bg" x="30" y="400" width="1080" height="168" rx="3"></rect>
+    <text class="t-stage" x="60" y="412">03 — Attribute</text>
+
+    <path class="edge" id="p-c1" d="M178,370 V392 H566 V414" marker-end="url(#ah)"></path>
+    <path class="edge" id="p-c2" d="M439,370 V392 H568 V414" marker-end="url(#ah)"></path>
+    <path class="edge" id="p-c3" d="M700,370 V392 H572 V414" marker-end="url(#ah)"></path>
+    <path class="edge" id="p-c4" d="M961,370 V392 H574 V414" marker-end="url(#ah)"></path>
+
+    <g><rect class="n" x="60" y="418" width="237" height="60" rx="3"></rect>
+      <text class="t-title" x="74" y="441">Conversions</text>
+      <text class="t-sub" x="74" y="457">closed/won deals</text>
+      <text class="t-sub" x="74" y="470">+ settled charges</text></g>
+
+    <path class="edge" id="p-a1" d="M297,448 H317" marker-end="url(#ah)"></path>
+
+    <g><rect class="n" x="321" y="418" width="237" height="60" rx="3"></rect>
+      <text class="t-title" x="335" y="441">Reconcile</text>
+      <text class="t-sub" x="335" y="457">match on deal_id, else email</text>
+      <text class="t-sub" x="335" y="470">cash from Stripe, utm from CRM</text></g>
+
+    <path class="edge" id="p-a2" d="M558,448 H578" marker-end="url(#ah)"></path>
+
+    <g><rect class="n" x="582" y="418" width="237" height="60" rx="3"></rect>
+      <text class="t-title" x="596" y="441">Journey</text>
+      <text class="t-sub" x="596" y="457">spend rows matching utm_source</text>
+      <text class="t-sub" x="596" y="470">inside a 90-day window</text></g>
+
+    <path class="edge" id="p-a3" d="M819,448 H839" marker-end="url(#ah)"></path>
+
+    <g><rect class="n" x="843" y="418" width="237" height="60" rx="3"></rect>
+      <text class="t-title" x="857" y="441">Allocate credit</text>
+      <text class="t-sub" x="857" y="457">last_touch · u_shape · w_shape</text>
+      <text class="t-sub" x="857" y="470">linear · first · time_decay</text></g>
+
+    <path class="edge" id="p-o1" d="M961,478 V490 H222 V498" marker-end="url(#ah)"></path>
+    <path class="edge" id="p-o2" d="M961,478 V490 H570 V498" marker-end="url(#ah)"></path>
+    <path class="edge" id="p-o3" d="M961,478 V490 H918 V498" marker-end="url(#ah)"></path>
+
+    <g><rect class="n" x="60" y="502" width="324" height="52" rx="3"></rect>
+      <text class="t-title" x="74" y="524">attribution_results</text>
+      <text class="t-sub" x="74" y="540">one row per conversion × touchpoint</text></g>
+    <g><rect class="n" x="408" y="502" width="324" height="52" rx="3"></rect>
+      <text class="t-title" x="422" y="524">channel_performance</text>
+      <text class="t-sub" x="422" y="540">spend vs attributed revenue → ROAS</text></g>
+    <g><rect class="n" x="756" y="502" width="324" height="52" rx="3"></rect>
+      <text class="t-title" x="770" y="524">unattributed</text>
+      <text class="t-sub" x="770" y="540">revenue with no touch in window — kept, not hidden</text></g>
+  </g>
+
+  <!-- ══ 04 REASON ══ -->
+  <g class="band" data-stage="4" data-accent="reason">
+    <rect class="band-bg" x="30" y="576" width="1080" height="160" rx="3"></rect>
+    <text class="t-stage" x="60" y="588">04 — Reason</text>
+
+    <path class="edge" id="p-r1" d="M222,554 V572 H566 V592" marker-end="url(#ah)"></path>
+    <path class="edge" id="p-r2" d="M570,554 V592" marker-end="url(#ah)"></path>
+    <path class="edge" id="p-r3" d="M918,554 V572 H574 V592" marker-end="url(#ah)"></path>
+
+    <rect class="n" x="60" y="596" width="1020" height="34" rx="3"></rect>
+    <text class="t-title" x="76" y="617">ModelGateway</text>
+    <text class="t-sub" x="196" y="617">model routing</text>
+    <text class="t-sub" x="320" y="617">semantic cache</text>
+    <text class="t-sub" x="452" y="617">budget reservation</text>
+    <text class="t-sub" x="612" y="617">cost ledger</text>
+    <text class="t-sub" x="726" y="617">injection detection</text>
+    <text class="t-sub" x="878" y="617">PII masking · JSON contract</text>
+
+    <path class="edge" id="p-g1" d="M222,630 V648" marker-end="url(#ah)"></path>
+    <path class="edge" id="p-g2" d="M570,630 V648" marker-end="url(#ah)"></path>
+    <path class="edge" id="p-g3" d="M918,630 V648" marker-end="url(#ah)"></path>
+
+    <g><rect class="n" x="60" y="652" width="324" height="60" rx="3"></rect>
+      <text class="t-title" x="74" y="675">revenue-analyst</text>
+      <text class="t-sub" x="74" y="691">sonnet — what moved, and why</text></g>
+
+    <path class="edge" id="p-h1" d="M384,682 H404" marker-end="url(#ah)"></path>
+
+    <g><rect class="n" x="408" y="652" width="324" height="60" rx="3"></rect>
+      <text class="t-title" x="422" y="675">executive-reporting</text>
+      <text class="t-sub" x="422" y="691">sonnet — client-ready JSON + narrative</text></g>
+
+    <path class="edge" id="p-h2" d="M732,682 H752" marker-end="url(#ah)"></path>
+
+    <g><rect class="n" x="756" y="652" width="324" height="60" rx="3"></rect>
+      <text class="t-title" x="770" y="675">governance-reviewer</text>
+      <text class="t-sub" x="770" y="691">haiku — advisory only, never blocks</text></g>
+
+    <text class="t-note" x="60" y="730">Prompts are versioned files in .claude/agents/</text>
+    <text class="t-note" x="612" y="730">A failed model call falls back to a deterministic template report</text>
+  </g>
+
+  <!-- ══ 05 DELIVER ══ -->
+  <g class="band" data-stage="5" data-accent="revenue">
+    <rect class="band-bg" x="30" y="744" width="1080" height="94" rx="3"></rect>
+    <text class="t-stage" x="60" y="756">05 — Deliver</text>
+
+    <path class="edge" id="p-x1" d="M570,712 V740 H222 V764" marker-end="url(#ah)"></path>
+    <path class="edge" id="p-x2" d="M570,712 V764" marker-end="url(#ah)"></path>
+    <path class="edge" id="p-x3" d="M570,712 V740 H918 V764" marker-end="url(#ah)"></path>
+
+    <g id="report-node"><rect class="n" x="60" y="768" width="324" height="58" rx="3"></rect>
+      <text class="t-title" x="74" y="791">White-labeled report</text>
+      <text class="t-sub" x="74" y="807" id="gate-note">sent once per client × month × model</text></g>
+    <g><rect class="n" x="408" y="768" width="324" height="58" rx="3"></rect>
+      <text class="t-title" x="422" y="791">ARIE Portal</text>
+      <text class="t-sub" x="422" y="807">run history · alerts · report preview</text></g>
+    <g><rect class="n" x="756" y="768" width="324" height="58" rx="3"></rect>
+      <text class="t-title" x="770" y="791">workspace.attribution_ops</text>
+      <text class="t-sub" x="770" y="807">pipeline_runs · insight_reports · cost_ledger</text></g>
+  </g>
+
+  <!-- ══ 06 CLOSE THE LOOP ══ -->
+  <g class="band" data-stage="6" data-accent="revenue">
+    <rect class="band-bg" x="18" y="840" width="1092" height="52" rx="3"></rect>
+    <path class="edge" id="p-loop" d="M918,826 V866 H22 V150 H56" marker-end="url(#ah)"></path>
+    <rect x="330" y="850" width="440" height="32" rx="3" fill="var(--surface)" stroke="var(--line)"></rect>
+    <text class="t-title" x="350" y="871">06 — Budget moves, next run measures it</text>
+  </g>
+</svg>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ THE JOIN ══════════════ -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">The mechanism</p>
+    <h2>How a Stripe payment finds the ad that caused it</h2>
+    <p>
+      This join is the whole product. Everything upstream exists to make it
+      possible; everything downstream is a description of its output.
+    </p>
+  </div>
+
+  <figure>
+    <div class="fig-body">
+<svg viewBox="0 0 1060 360" role="img"
+     aria-label="A HubSpot deal carries the utm identity and a Stripe charge carries the realized cash. They are matched on deal id or email into one conversion, which is then matched to ad spend rows on platform and campaign inside a ninety-day window before the close date.">
+  <defs>
+    <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <polygon class="ah" points="0,1.6 10,5 0,8.4"></polygon>
+    </marker>
+  </defs>
+
+  <!-- lookback ruler -->
+  <text class="t-edge" x="20" y="26">90-day lookback window, ending at the close date</text>
+  <line x1="20" y1="40" x2="700" y2="40" stroke="var(--line)" stroke-width="1"></line>
+  <line x1="20" y1="34" x2="20" y2="46" stroke="var(--line)" stroke-width="1"></line>
+  <line x1="700" y1="34" x2="700" y2="46" stroke="var(--line)" stroke-width="1"></line>
+  <text class="t-edge" x="20" y="60">day −90</text>
+  <text class="t-edge" x="700" y="60" text-anchor="end">close</text>
+
+  <!-- touchpoints -->
+  <g>
+    <rect class="n" x="20" y="76" width="150" height="48" rx="3"></rect>
+    <text class="t-title" x="32" y="97">LinkedIn Ads</text>
+    <text class="t-sub" x="32" y="113">day −45 · $9,880</text>
+  </g>
+  <g>
+    <rect class="n" x="190" y="76" width="150" height="48" rx="3"></rect>
+    <text class="t-title" x="202" y="97">Google Ads</text>
+    <text class="t-sub" x="202" y="113">day −21 · lead created</text>
+  </g>
+  <g>
+    <rect class="n" x="360" y="76" width="150" height="48" rx="3"></rect>
+    <text class="t-title" x="372" y="97">Meta Ads</text>
+    <text class="t-sub" x="372" y="113">day −9 · retargeting</text>
+  </g>
+  <g>
+    <rect class="n" x="530" y="76" width="170" height="48" rx="3"></rect>
+    <text class="t-title" x="542" y="97">Google Ads</text>
+    <text class="t-sub" x="542" y="113">day −2 · brand search</text>
+  </g>
+  <text class="t-note" x="20" y="146">ad_spend_normalized — collapsed to one touchpoint per (platform, campaign)</text>
+
+  <!-- match arrows up from the conversion -->
+  <path class="edge" d="M95,190 V128" marker-end="url(#ah2)"></path>
+  <path class="edge" d="M265,190 V128" marker-end="url(#ah2)"></path>
+  <path class="edge" d="M435,190 V128" marker-end="url(#ah2)"></path>
+  <path class="edge" d="M615,190 V128" marker-end="url(#ah2)"></path>
+  <text class="t-edge" x="712" y="182">matched on source_platform = platform_for(utm_source),</text>
+  <text class="t-edge" x="712" y="196">then on campaign — platform-level credit if the label drifts</text>
+
+  <!-- reconciled conversion -->
+  <rect class="n" x="20" y="194" width="680" height="52" rx="3" style="stroke:var(--revenue)"></rect>
+  <text class="t-title" x="34" y="217" style="fill:var(--revenue)">One conversion — $12,400 closed</text>
+  <text class="t-sub" x="34" y="234">utm_source=google · utm_campaign=q3-nonbrand · closed 2026-08-19</text>
+  <text class="t-sub" x="686" y="234" text-anchor="end">revenue_source: stripe+hubspot</text>
+
+  <!-- inputs -->
+  <path class="edge" d="M180,296 V250" marker-end="url(#ah2)"></path>
+  <path class="edge" d="M540,296 V250" marker-end="url(#ah2)"></path>
+  <text class="t-edge" x="196" y="276">utm identity</text>
+  <text class="t-edge" x="556" y="276">realized cash</text>
+
+  <g>
+    <rect class="n" x="20" y="300" width="320" height="52" rx="3"></rect>
+    <text class="t-title" x="34" y="322">HubSpot deal</text>
+    <text class="t-sub" x="34" y="339">stage = closed/won · deal_id · contact_email · utm_*</text>
+  </g>
+  <g>
+    <rect class="n" x="380" y="300" width="320" height="52" rx="3"></rect>
+    <text class="t-title" x="394" y="322">Stripe charge</text>
+    <text class="t-sub" x="394" y="339">amount · customer email · metadata.deal_id</text>
+  </g>
+
+  <line x1="345" y1="316" x2="375" y2="316" stroke="var(--revenue)" stroke-width="1.4"></line>
+  <line x1="345" y1="336" x2="375" y2="336" stroke="var(--revenue)" stroke-width="1.4"></line>
+  <text class="t-edge" x="360" y="374" text-anchor="middle" style="fill:var(--revenue)">match</text>
+
+  <!-- rules panel -->
+  <rect x="756" y="240" width="288" height="112" rx="3" fill="var(--surface-2)" stroke="var(--line)"></rect>
+  <text class="t-sub" x="772" y="262" style="fill:var(--ink-2)">reconcile_conversions(prefer=&#8220;stripe&#8221;)</text>
+  <text class="t-note" x="772" y="282">1 · match on deal_id, fall back to email</text>
+  <text class="t-note" x="772" y="300">2 · take the amount from Stripe (real cash)</text>
+  <text class="t-note" x="772" y="318">3 · inherit utm identity from the CRM</text>
+  <text class="t-note" x="772" y="336">4 · keep unmatched rows on both sides</text>
+</svg>
+    </div>
+    <figcaption>
+      <b>Stripe knows the money; HubSpot knows where it came from.</b> Neither
+      alone can close the loop. The reconcile step fuses them into one conversion
+      that carries both, and only then can a journey be built against ad spend.
+      Unmatched deals (contract revenue that never touched Stripe) and unmatched
+      charges (self-serve checkout with no CRM record) are both retained, so
+      totals stay whole.
+    </figcaption>
+  </figure>
+</section>
+
+<!-- ══════════════ MODELS ══════════════ -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">The choice that changes the answer</p>
+    <h2>Six ways to split one $12,400 deal</h2>
+    <p>
+      Same journey, same revenue, six defensible splits. Pick a model to see the
+      credit move — this is exactly what <span class="mono">allocate_credit()</span>
+      computes for every conversion in the run.
+    </p>
+  </div>
+
+  <div class="models">
+    <div class="model-picker" id="picker" role="group" aria-label="Attribution model"></div>
+    <p class="model-note" id="model-note"></p>
+    <div class="journey" id="journey"></div>
+  </div>
+</section>
+
+<!-- ══════════════ RELIABILITY ══════════════ -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">What keeps it honest</p>
+    <h2>Four rails that make a re-run safe</h2>
+    <p>
+      A monthly pipeline that touches money has to survive being interrupted and
+      started again. These four mechanisms sit around every client&#8217;s leg of the run.
+    </p>
+  </div>
+
+  <figure>
+    <div class="fig-body">
+<svg viewBox="0 0 1060 250" role="img"
+     aria-label="Four reliability mechanisms wrapped around a client run: a lease prevents concurrent runs, a saga rolls back partial writes, checkpoints let a resumed run skip completed steps, and an idempotency claim keyed on client, month and model prevents a duplicate email.">
+  <defs>
+    <marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <polygon class="ah" points="0,1.6 10,5 0,8.4"></polygon>
+    </marker>
+  </defs>
+
+  <text class="t-edge" x="20" y="20">the happy path</text>
+  <rect x="20" y="30" width="1020" height="60" rx="3" fill="var(--surface-2)" stroke="var(--line)"></rect>
+  <text class="t-title" x="40" y="54">ingest</text>
+  <text class="t-title" x="230" y="54">attribution sql</text>
+  <text class="t-title" x="470" y="54">generate report</text>
+  <text class="t-title" x="720" y="54">governance</text>
+  <text class="t-title" x="920" y="54">send</text>
+  <path class="edge" d="M110,50 H222" marker-end="url(#ah3)"></path>
+  <path class="edge" d="M340,50 H462" marker-end="url(#ah3)"></path>
+  <path class="edge" d="M582,50 H712" marker-end="url(#ah3)"></path>
+  <path class="edge" d="M800,50 H912" marker-end="url(#ah3)"></path>
+  <text class="t-sub" x="40" y="76">each step writes a checkpoint row before and after it runs</text>
+
+  <line x1="150" y1="90" x2="150" y2="118" stroke="var(--line)" stroke-width="1.4"></line>
+  <line x1="400" y1="90" x2="400" y2="118" stroke="var(--line)" stroke-width="1.4"></line>
+  <line x1="650" y1="90" x2="650" y2="118" stroke="var(--line)" stroke-width="1.4"></line>
+  <line x1="900" y1="90" x2="900" y2="118" stroke="var(--line)" stroke-width="1.4"></line>
+
+  <g><rect class="n" x="20" y="122" width="240" height="98" rx="3"></rect>
+    <text class="t-title" x="36" y="146">Client lease</text>
+    <text class="t-sub" x="36" y="166">one run per client at a time.</text>
+    <text class="t-sub" x="36" y="182">A second launch is refused,</text>
+    <text class="t-sub" x="36" y="198">not queued behind the first.</text></g>
+
+  <g><rect class="n" x="280" y="122" width="240" height="98" rx="3"></rect>
+    <text class="t-title" x="296" y="146">Saga</text>
+    <text class="t-sub" x="296" y="166">a raised exception unwinds</text>
+    <text class="t-sub" x="296" y="182">that client&#8217;s writes. The other</text>
+    <text class="t-sub" x="296" y="198">clients in the array continue.</text></g>
+
+  <g><rect class="n" x="540" y="122" width="240" height="98" rx="3"></rect>
+    <text class="t-title" x="556" y="146">Checkpoints</text>
+    <text class="t-sub" x="556" y="166">--resume-run-id replays the</text>
+    <text class="t-sub" x="556" y="182">run and skips every step</text>
+    <text class="t-sub" x="556" y="198">already marked complete.</text></g>
+
+  <g><rect class="n" x="800" y="122" width="240" height="98" rx="3" style="stroke:var(--revenue)"></rect>
+    <text class="t-title" x="816" y="146" style="fill:var(--revenue)">Delivery claim</text>
+    <text class="t-sub" x="816" y="166">keyed on client × month ×</text>
+    <text class="t-sub" x="816" y="182">model. A retry can send once;</text>
+    <text class="t-sub" x="816" y="198">a duplicate can never send.</text></g>
+</svg>
+    </div>
+    <figcaption>
+      <b>The claim is released only when the send actually fails.</b> That
+      asymmetry is deliberate: a report that went out and then lost its
+      bookkeeping stays claimed, because sending a client the same monthly
+      report twice is worse than a stuck row an operator can clear.
+    </figcaption>
+  </figure>
+</section>
+
+<!-- ══════════════ LEDGER ══════════════ -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">Stage ledger</p>
+    <h2>Where each stage lives, and what happens when it breaks</h2>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Stage</th><th>Runs</th><th>Writes</th><th>When it fails</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="stage"><b>00</b> Dispatch</td>
+          <td class="code"><span>flows/job_launcher.py</span><span>utils/work_manifest.py</span></td>
+          <td class="code">work manifest for the run_id</td>
+          <td class="fail">The launcher exits non-zero and no client task starts — nothing half-runs.</td>
+        </tr>
+        <tr>
+          <td class="stage"><b>01</b> Ingest</td>
+          <td class="code"><span>flows/ingest_flow.py</span><span>agents/ingest/*_connector.py</span></td>
+          <td class="code">frames in memory + source_failures</td>
+          <td class="fail">Three retries, then that source is marked failed and the run continues as <span class="mono">partial</span>.</td>
+        </tr>
+        <tr>
+          <td class="stage"><b>02</b> Land</td>
+          <td class="code"><span>utils/databricks_writer.py</span></td>
+          <td class="code"><span>meta_ads_raw · hubspot_deals_raw</span><span>stripe_payments_raw · ad_spend_normalized</span></td>
+          <td class="fail">The saga rolls that client back; completed steps stay checkpointed for a resume.</td>
+        </tr>
+        <tr>
+          <td class="stage"><b>03</b> Attribute</td>
+          <td class="code"><span>attribution_engine.run_attribution</span><span>attribution_models.allocate_credit</span></td>
+          <td class="code"><span>attribution_results</span><span>channel_performance</span></td>
+          <td class="fail">No touchpoint inside the window means the revenue lands in <span class="mono">unattributed</span> — it is never silently dropped.</td>
+        </tr>
+        <tr>
+          <td class="stage"><b>04</b> Reason</td>
+          <td class="code"><span>agents/intelligence/n8iv_agents.py</span><span>utils/model_gateway.py</span></td>
+          <td class="code"><span>insight_reports · cost_ledger</span><span>semantic_cache · agent_memory</span></td>
+          <td class="fail">A failed model call falls back to a deterministic template report built from the same tables.</td>
+        </tr>
+        <tr>
+          <td class="stage"><b>05</b> Deliver</td>
+          <td class="code"><span>agents/comms/comms_agent.py</span><span>utils/idempotency.py</span></td>
+          <td class="code"><span>idempotency_store · audit_log</span><span>pipeline_runs</span></td>
+          <td class="fail">Delivery is held when ingest was partial; an operator alert goes out instead of a misleading report.</td>
+        </tr>
+        <tr>
+          <td class="stage"><b>06</b> Close</td>
+          <td class="code"><span>flows/benchmark_finalizer.py</span><span>utils/memory_store.py</span></td>
+          <td class="code"><span>agency benchmarks · agent_memory</span></td>
+          <td class="fail">Per-client results are already durable; a finalizer failure costs the cross-client comparison, nothing else.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer>
+  <span>n8iv attribution agent — docs/platform-flow.html</span>
+  <span>Figures are a worked sample for demo_agency, not live client data</span>
+</footer>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ─── stage script ─────────────────────────────────────────── */
+  var STAGES = [
+    {
+      n: "00", title: "Dispatch", ms: 4200,
+      body: "Cloud Scheduler fires on the 1st at 9am ET. The launcher snapshots which clients are in scope into a work manifest, then starts one Cloud Run task per client. Freezing the client list first means a registry edit mid-run cannot change what this run is measuring.",
+      refs: ["<b>flows/job_launcher.py</b> — snapshot, launch, wait", "<b>utils/work_manifest.py</b> — one row per client", "Portal launches use Vercel OIDC → GCP Workload Identity Federation. No service-account keys."],
+      edges: ["p-d4"], color: ""
+    },
+    {
+      n: "01", title: "Ingest", ms: 5200,
+      body: "Six sources are pulled concurrently — four ad platforms for spend and touchpoints, HubSpot for deal stages and captured UTMs, Stripe for money that actually settled. Each pull retries three times with backoff. A source that still fails is recorded rather than raised, so one dead credential cannot take down a client's whole month.",
+      refs: ["<b>flows/ingest_flow.py</b> — ThreadPoolExecutor, 3 workers", "<b>agents/ingest/*_connector.py</b> — one per platform", "Meta's token rides in the URL, so exception text is scrubbed by <b>redact_secrets()</b> before it reaches any log."],
+      edges: ["p-s1", "p-s2", "p-s3", "p-s4", "p-s5", "p-s6", "p-i1"], color: ""
+    },
+    {
+      n: "02", title: "Land", ms: 4000,
+      body: "Validated frames are written to Delta tables in the client's own schema. The four ad platforms collapse into one ad_spend_normalized table with a shared schema, which is what makes cross-channel comparison possible at all. Compute is Cloud Run; only the SQL warehouse is Databricks.",
+      refs: ["<b>utils/databricks_writer.py</b> — HTTPS to the SQL warehouse", "Per-client schemas keep tenants isolated", "Compute left Databricks because its egress gateway blocked DNS to the ad and payment APIs."],
+      edges: ["p-t1", "p-t2", "p-t3", "p-t4"], color: ""
+    },
+    {
+      n: "03", title: "Attribute", ms: 6000,
+      body: "The closed loop closes here. Closed/won deals and settled charges become conversions; overlapping ones are reconciled into a single event that carries Stripe's cash and HubSpot's UTM identity. Each conversion's journey is the set of ad-spend rows on the matching platform inside a 90-day window, and the chosen model splits the revenue across them.",
+      refs: ["<b>attribution_engine.run_attribution</b>", "<b>reconcile_conversions(prefer=\"stripe\")</b>", "Revenue with no touchpoint in the window is reported as unattributed rather than force-fitted to a channel."],
+      edges: ["p-c1", "p-c2", "p-c3", "p-c4", "p-a1", "p-a2", "p-a3", "p-o1", "p-o2", "p-o3"], color: "rev"
+    },
+    {
+      n: "04", title: "Reason", ms: 5200,
+      body: "Two Claude agents run in sequence: revenue-analyst finds what moved and why, then executive-reporting turns those findings into client-ready JSON and narrative. A third agent reviews the result for evidence quality and client isolation — advisory only, so it warns an operator without ever holding a report hostage.",
+      refs: ["<b>.claude/agents/*.md</b> — versioned prompts, parsed at load", "<b>utils/model_gateway.py</b> — cache, budget, cost ledger", "<b>utils/guardrails.py</b> — injection detection, PII masking, JSON contract", "A failed model call falls back to a deterministic template report built from the same tables — the run never ships nothing."],
+      edges: ["p-r1", "p-r2", "p-r3", "p-g1", "p-g2", "p-g3", "p-h1", "p-h2"], color: "rsn"
+    },
+    {
+      n: "05", title: "Deliver", ms: 4600,
+      body: "The report goes out white-labeled under the agency's branding, gated by an idempotency claim keyed on client, month and model — a retry can send once, a duplicate never can. The same run writes its history, costs and audit trail to the ops schema, which is what the Portal reads back.",
+      refs: ["<b>agents/comms/comms_agent.send_agency_report</b>", "<b>utils/idempotency.claim_report_delivery</b>", "The browser never receives Databricks or GCP credentials — the Portal reads server-side."],
+      edges: ["p-x1", "p-x2", "p-x3"], color: "rev"
+    },
+    {
+      n: "06", title: "Close the loop", ms: 4600,
+      body: "The finalizer computes cross-client benchmarks and the run summary is written to agent memory, so next month's analyst starts with context instead of a cold read. Then the actual loop: the marketer moves budget toward the channels that produced closed revenue, and the next run measures whether that was right.",
+      refs: ["<b>flows/benchmark_finalizer.py</b> — agency-level rollups", "<b>utils/memory_store.py</b> — cross-run context", "This is the only feedback edge that leaves the system and comes back."],
+      edges: ["p-loop"], color: "rev"
+    }
+  ];
+
+  /* ─── worked-sample telemetry ──────────────────────────────── */
+  var RUN = {
+    complete: {
+      rows: "5,246", spend: "$95,770", conv: "149", attr: "$351,940",
+      cov: "85.3%", roas: "3.67×", report: "sent", status: "complete"
+    },
+    partial: {
+      rows: "3,828", spend: "$58,090", conv: "149", attr: "$212,500",
+      cov: "51.5%", roas: "3.66×", report: "held", status: "partial"
+    }
+  };
+  /* which stage first reveals which stat */
+  var REVEAL = { 1: ["rows"], 2: ["spend"], 3: ["conv", "attr", "cov", "roas"], 5: ["report"] };
+
+  var svg      = document.getElementById("flow");
+  var bands    = Array.prototype.slice.call(svg.querySelectorAll(".band"));
+  var stepsEl  = document.getElementById("steps");
+  var playBtn  = document.getElementById("play");
+  var progEl   = document.getElementById("progress");
+  var failEl   = document.getElementById("failmode");
+  var capTitle = document.getElementById("cap-title");
+  var capTag   = document.getElementById("cap-tag");
+  var capBody  = document.getElementById("cap-body");
+  var capRefs  = document.getElementById("cap-refs");
+
+  var statEls = {
+    rows: document.getElementById("s-rows"),
+    spend: document.getElementById("s-spend"),
+    conv: document.getElementById("s-conv"),
+    attr: document.getElementById("s-attr"),
+    cov: document.getElementById("s-cov"),
+    roas: document.getElementById("s-roas"),
+    report: document.getElementById("s-report")
+  };
+
+  /* ─── build the stepper ────────────────────────────────────── */
+  var stepBtns = STAGES.map(function (s, i) {
+    var b = document.createElement("button");
+    b.className = "step";
+    b.type = "button";
+    b.innerHTML = '<span class="num">' + s.n + '</span>' + s.title;
+    b.addEventListener("click", function () { goTo(i, true); });
+    stepsEl.appendChild(b);
+    return b;
+  });
+
+  /* ─── particle layer ───────────────────────────────────────── */
+  var dotLayer = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  svg.appendChild(dotLayer);
+  var dots = [];
+  for (var d = 0; d < 30; d++) {
+    var c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    c.setAttribute("r", "3");
+    c.setAttribute("class", "dot");
+    c.style.opacity = "0";
+    dotLayer.appendChild(c);
+    dots.push(c);
+  }
+
+  var pathCache = {};
+  function pathOf(id) {
+    if (!pathCache[id]) {
+      var el = document.getElementById(id);
+      pathCache[id] = el ? { el: el, len: el.getTotalLength() } : null;
+    }
+    return pathCache[id];
+  }
+
+  /* ─── state ────────────────────────────────────────────────── */
+  var cur = 0, playing = !reduce, t0 = performance.now(), elapsed = 0;
+
+  function mode() { return failEl.checked ? "partial" : "complete"; }
+
+  function paintStats() {
+    var data = RUN[mode()];
+    var shown = {};
+    for (var s = 0; s <= cur; s++) {
+      (REVEAL[s] || []).forEach(function (k) { shown[k] = true; });
+    }
+    Object.keys(statEls).forEach(function (k) {
+      var el = statEls[k];
+      if (shown[k]) {
+        el.textContent = data[k];
+        el.classList.remove("pending");
+        el.classList.toggle("held", k === "report" && data[k] === "held");
+      } else {
+        el.textContent = "—";
+        el.classList.add("pending");
+        el.classList.remove("held");
+      }
+    });
+  }
+
+  function paintMode() {
+    var m = mode();
+    svg.setAttribute("data-mode", m);
+    document.getElementById("ingest-status-t").textContent = RUN[m].status;
+    document.getElementById("gate-note").textContent = m === "partial"
+      ? "held — a source failed, coverage would mislead"
+      : "sent once per client × month × model";
+    paintStats();
+    if (cur >= 1) renderCaption();
+  }
+
+  function renderCaption() {
+    var s = STAGES[cur];
+    capTitle.textContent = s.title;
+    capTag.textContent = "stage " + s.n;
+    var body = s.body;
+    var refs = s.refs.slice();
+    if (mode() === "partial") {
+      if (cur === 1) {
+        body = "Google Ads and TikTok credentials have expired. Both pulls exhaust their retries, get recorded in source_failures, and the run is marked partial — the four healthy sources still land in full.";
+        refs = refs.concat(["<b>status: partial</b> — recorded, not raised"]);
+      }
+      if (cur === 3) {
+        body = "The join still runs, but it can only see spend it actually read. Two platforms are missing, so their revenue has no touchpoint in the window and falls to unattributed — coverage drops from 85% to 52%.";
+      }
+      if (cur === 5) {
+        body = "Delivery is held. A report claiming 52% coverage as if it were the whole picture would understate two live channels, so the pipeline sends an operator alert instead and the client sees nothing until the credentials are fixed.";
+        refs = ["<b>ARIE_ALLOW_PARTIAL_REPORT_DELIVERY</b> — off by default", "An operator alert names the failed sources and the action required", "The report itself is still generated and stored — only the send is gated."];
+      }
+    }
+    capBody.textContent = body;
+    capRefs.innerHTML = refs.map(function (r) { return "<li>" + r + "</li>"; }).join("");
+  }
+
+  function paint() {
+    bands.forEach(function (b, i) {
+      b.classList.toggle("is-active", i === cur);
+      b.classList.toggle("is-done", i < cur);
+    });
+    stepBtns.forEach(function (b, i) {
+      b.setAttribute("aria-current", i === cur ? "true" : "false");
+      b.setAttribute("data-state", i < cur ? "done" : (i === cur ? "now" : "todo"));
+    });
+    svg.querySelectorAll(".edge").forEach(function (e) { e.classList.remove("hot"); });
+    STAGES[cur].edges.forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.classList.add("hot");
+    });
+    renderCaption();
+    paintStats();
+  }
+
+  function goTo(i, byUser) {
+    cur = ((i % STAGES.length) + STAGES.length) % STAGES.length;
+    elapsed = 0;
+    t0 = performance.now();
+    if (byUser) { playing = false; playBtn.textContent = "Play"; progEl.style.width = "0%"; }
+    paint();
+    if (!playing) { dots.forEach(function (c) { c.style.opacity = "0"; }); }
+  }
+
+  playBtn.addEventListener("click", function () {
+    playing = !playing;
+    playBtn.textContent = playing ? "Pause" : "Play";
+    t0 = performance.now();
+    if (!playing) dots.forEach(function (c) { c.style.opacity = "0"; });
+  });
+  document.getElementById("restart").addEventListener("click", function () {
+    playing = true; playBtn.textContent = "Pause"; goTo(0, false);
+  });
+  failEl.addEventListener("change", paintMode);
+
+  /* ─── loop ─────────────────────────────────────────────────── */
+  var colorClass = { "": "dot", rev: "dot rev", rsn: "dot rsn" };
+
+  function frame(now) {
+    var dt = now - t0;
+    t0 = now;
+    if (playing) {
+      elapsed += dt;
+      var dur = STAGES[cur].ms;
+      if (elapsed >= dur) { goTo(cur + 1, false); }
+      progEl.style.width = ((elapsed / STAGES[cur].ms) * 100).toFixed(1) + "%";
+    }
+
+    if (playing && !reduce) {
+      var edges = STAGES[cur].edges;
+      var cls = colorClass[STAGES[cur].color] || "dot";
+      var perEdge = Math.max(1, Math.floor(dots.length / edges.length));
+      var used = 0;
+      for (var e = 0; e < edges.length && used < dots.length; e++) {
+        var p = pathOf(edges[e]);
+        if (!p) continue;
+        for (var k = 0; k < perEdge && used < dots.length; k++, used++) {
+          var phase = ((now / 1400) + (k / perEdge)) % 1;
+          var pt = p.el.getPointAtLength(p.len * phase);
+          var dot = dots[used];
+          dot.setAttribute("cx", pt.x);
+          dot.setAttribute("cy", pt.y);
+          dot.setAttribute("class", cls);
+          var fade = Math.min(1, Math.sin(phase * Math.PI) * 2.4);
+          dot.style.opacity = String(0.15 + 0.85 * fade);
+        }
+      }
+      for (; used < dots.length; used++) dots[used].style.opacity = "0";
+    }
+    requestAnimationFrame(frame);
+  }
+
+  paintMode();
+  paint();
+  if (reduce) { playBtn.textContent = "Play"; }
+  requestAnimationFrame(frame);
+
+  /* ═══════════════ MODEL EXPLORER ═══════════════ */
+  var DEAL = 12400;
+  var TOUCHES = [
+    { day: "−45", ch: "LinkedIn Ads", camp: "utm_campaign=abm-tier1", role: "" },
+    { day: "−21", ch: "Google Ads",   camp: "utm_campaign=q3-nonbrand", role: "lead created" },
+    { day: "−9",  ch: "Meta Ads",     camp: "utm_campaign=retarget-90d", role: "" },
+    { day: "−2",  ch: "Google Ads",   camp: "utm_campaign=brand-exact", role: "" }
+  ];
+  var MODELS = [
+    { id: "last_touch",  label: "Last touch",  w: [0, 0, 0, 100],
+      note: "Credits the final known touchpoint before conversion. Useful when the business wants to understand closing channels and near-term demand capture — and the reason brand search so often looks like a hero." },
+    { id: "first_touch", label: "First touch", w: [100, 0, 0, 0],
+      note: "Credits the first known touchpoint. Useful when the business is focused on awareness, lead creation, and top-of-funnel source quality." },
+    { id: "linear",      label: "Linear",      w: [25, 25, 25, 25],
+      note: "Splits credit evenly across all known touchpoints. Useful when the sales cycle has multiple meaningful interactions and no single touch should dominate." },
+    { id: "time_decay",  label: "Time decay",  w: [0.1, 4.6, 25.6, 69.7],
+      note: "Weights each touch by e^(−days before close ÷ 7). Useful for longer B2B cycles where recent touches are more likely to have influenced the close — note how a 45-day-old touch keeps almost nothing." },
+    { id: "u_shape",     label: "U-shape",     w: [40, 10, 10, 40],
+      note: "Gives 40% to first touch and 40% to last touch, with the remaining 20% shared by the middle. Useful when both source creation and the close matter." },
+    { id: "w_shape",     label: "W-shape",     w: [30, 30, 10, 30],
+      note: "Gives 30% each to first touch, lead creation and last touch, with the remaining 10% shared by the others. Useful for sales-led B2B journeys where the form fill is its own milestone." }
+  ];
+
+  var picker = document.getElementById("picker");
+  var journey = document.getElementById("journey");
+  var noteEl = document.getElementById("model-note");
+
+  journey.innerHTML = TOUCHES.map(function (t, i) {
+    return '<div class="touch">' +
+      '<div class="day">day ' + t.day + '</div>' +
+      '<div class="who"><strong>' + t.ch + '</strong><span>' + t.camp + '</span>' +
+        (t.role ? '<em>' + t.role + '</em>' : '') + '</div>' +
+      '<div class="track"><i data-bar="' + i + '"></i></div>' +
+      '<div class="pct" data-pct="' + i + '">0%</div>' +
+      '<div class="amt" data-amt="' + i + '">$0</div>' +
+    '</div>';
+  }).join("") +
+  '<div class="journey-foot"><span>one closed/won deal · $12,400 · reconciled from Stripe</span>' +
+  '<span>attribution_models.allocate_credit()</span></div>';
+
+  var bars = journey.querySelectorAll("[data-bar]");
+  var pcts = journey.querySelectorAll("[data-pct]");
+  var amts = journey.querySelectorAll("[data-amt]");
+
+  function money(n) {
+    return "$" + Math.round(n).toLocaleString("en-US");
+  }
+
+  var pickBtns = MODELS.map(function (m, i) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = m.label;
+    b.setAttribute("aria-pressed", "false");
+    b.addEventListener("click", function () { pickModel(i); });
+    picker.appendChild(b);
+    return b;
+  });
+
+  function pickModel(idx) {
+    var m = MODELS[idx];
+    pickBtns.forEach(function (b, i) { b.setAttribute("aria-pressed", i === idx ? "true" : "false"); });
+    noteEl.textContent = m.note;
+    var max = Math.max.apply(null, m.w);
+    m.w.forEach(function (w, i) {
+      bars[i].style.width = (max ? (w / max) * 100 : 0) + "%";
+      bars[i].style.opacity = w === 0 ? "0" : "1";
+      pcts[i].textContent = (w % 1 === 0 ? w : w.toFixed(1)) + "%";
+      amts[i].textContent = money(DEAL * w / 100);
+    });
+  }
+
+  pickModel(4);
+})();
+</script>
