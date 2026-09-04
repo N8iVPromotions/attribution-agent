@@ -79,6 +79,13 @@ except Exception:
 
 _GOVERNANCE_READY_DECISION = "READY FOR HUMAN REVIEW"
 _WAREHOUSE_ATTRIBUTION_MODEL = "last_touch"
+_DUPLICATE_COLUMN_ERROR_MARKERS = (
+    "already exists",
+    "column_already_exists",
+    "field_already_exists",
+    "fields_already_exists",
+    "duplicate column",
+)
 _REPORT_CHECKPOINT_REQUIRED_FIELDS = {
     "client_id",
     "client_name",
@@ -422,6 +429,23 @@ def run_agency_benchmark_sql(agency: AgencyConfig, *, fail_fast: bool = False) -
         logger.warning(f"[Agency] Benchmark SQL failed (non-fatal): {exc}")
 
 
+def _ensure_channel_performance_v2_schema(schema: str) -> None:
+    """Apply additive migrations needed by the cash-revenue scorecard."""
+    try:
+        _run_sql(
+            f"ALTER TABLE {schema}.channel_performance_v2 "
+            "ADD COLUMNS (refunded_revenue DOUBLE)"
+        )
+    except Exception as exc:
+        error = str(exc).lower()
+        if not any(marker in error for marker in _DUPLICATE_COLUMN_ERROR_MARKERS):
+            raise
+        logger.debug(
+            f"[Databricks] {schema}.channel_performance_v2.refunded_revenue "
+            "already exists"
+        )
+
+
 def run_client_attribution_sql(
     client_id: str,
     attribution_model: str,
@@ -439,8 +463,10 @@ def run_client_attribution_sql(
     config = get_client(client_id)
     sql_path = Path(_root) / "transforms" / "closed_revenue_attribution.sql"
     sql = sql_path.read_text()
+    schema = config.databricks_schema
+    cash_scorecard_insert = f"INSERT INTO {schema}.channel_performance_v2"
     for stmt in sql.format(
-        schema=config.databricks_schema,
+        schema=schema,
         attribution_model=selected_model,
         lookback_days=int(config.lookback_days),
         run_started_at=_utc_sql_timestamp(run_started_at),
@@ -455,6 +481,8 @@ def run_client_attribution_sql(
     ).split(";"):
         stmt = stmt.strip()
         if stmt:
+            if stmt.startswith(cash_scorecard_insert):
+                _ensure_channel_performance_v2_schema(schema)
             _run_sql(stmt)
     logger.info(
         f"[Attribution] Refreshed closed-revenue tables | "
