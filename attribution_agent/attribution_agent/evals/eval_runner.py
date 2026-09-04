@@ -6,6 +6,7 @@ CLI for running behavioral regression evals against golden datasets.
 Usage:
     python evals/eval_runner.py --agent revenue-analyst
     python evals/eval_runner.py --all-agents --ci-mode
+    python evals/eval_runner.py --all-agents --ci-mode --local-seed-file seed.json
 
 Exits with code 1 if any agent scores below 0.80 (regression).
 In CI mode, also exits 1 if score is worse than the most recent prior run.
@@ -187,27 +188,31 @@ def run_eval_for_agent(
     agent_name: str,
     ci_mode: bool = False,
     require_samples: bool = False,
+    samples: list[dict] | None = None,
+    persist_results: bool = True,
 ) -> tuple[bool, float]:
     """
     Run all active golden samples for an agent.
-    Returns (passed, avg_score). In CI mode, also checks for regression.
+
+    Warehouse-backed CI runs also compare the prior score. Explicit local
+    samples are hermetic and enforce their checked-in expected fields instead.
     """
     from evals.golden_dataset import GoldenDatasetManager
 
     manager = GoldenDatasetManager()
-    samples = manager.load_samples(agent_name)
+    resolved_samples = manager.load_samples(agent_name) if samples is None else samples
 
-    if not samples:
+    if not resolved_samples:
         level = logger.error if require_samples else logger.info
         level(f"[Eval] No golden samples for {agent_name}")
         return (not require_samples), (0.0 if require_samples else 1.0)
 
-    prior_score = _get_last_score(agent_name) if ci_mode else None
+    prior_score = _get_last_score(agent_name) if ci_mode and samples is None else None
     scores = []
     sample_passes = []
     any_regression = False
 
-    for sample in samples:
+    for sample in resolved_samples:
         try:
             actual = _call_agent_for_eval(agent_name, sample["input_summary"])
             eval_result = manager.evaluate(agent_name, actual, sample)
@@ -235,15 +240,16 @@ def run_eval_for_agent(
                     f"score={score:.2f} vs prior={prior_score:.2f}"
                 )
 
-            _write_result(
-                agent_name=agent_name,
-                sample_id=sample["sample_id"],
-                passed=passed,
-                score=score,
-                field_results=eval_result["field_results"],
-                regression=regression,
-                notes="",
-            )
+            if persist_results:
+                _write_result(
+                    agent_name=agent_name,
+                    sample_id=sample["sample_id"],
+                    passed=passed,
+                    score=score,
+                    field_results=eval_result["field_results"],
+                    regression=regression,
+                    notes="",
+                )
             scores.append(score)
             sample_passes.append(passed)
         except Exception as exc:
@@ -293,10 +299,16 @@ def main() -> None:
         action="store_true",
         help="Fail when an evaluated agent has no active golden samples",
     )
-    parser.add_argument(
+    seed_group = parser.add_mutually_exclusive_group()
+    seed_group.add_argument(
         "--seed-file",
         type=str,
         help="Upsert a PII-masked JSON/JSONL seed set before evaluation",
+    )
+    seed_group.add_argument(
+        "--local-seed-file",
+        type=str,
+        help="Evaluate a PII-masked JSON/JSONL seed set without warehouse access",
     )
     args = parser.parse_args()
 
@@ -304,7 +316,13 @@ def main() -> None:
 
     load_dotenv()
 
-    if args.seed_file:
+    local_samples = None
+    if args.local_seed_file:
+        from evals.golden_dataset import GoldenDatasetManager
+
+        local_samples = GoldenDatasetManager().load_seed_samples(args.local_seed_file)
+        logger.info("[Eval] Loaded %s local golden samples", len(local_samples))
+    elif args.seed_file:
         from evals.golden_dataset import GoldenDatasetManager
 
         count = GoldenDatasetManager().seed_file(args.seed_file)
@@ -316,10 +334,21 @@ def main() -> None:
 
     all_passed = True
     for agent_name in agents:
+        agent_samples = (
+            [
+                sample
+                for sample in local_samples
+                if sample.get("agent_name") == agent_name
+            ]
+            if local_samples is not None
+            else None
+        )
         passed, score = run_eval_for_agent(
             agent_name,
             ci_mode=args.ci_mode,
             require_samples=args.require_samples,
+            samples=agent_samples,
+            persist_results=local_samples is None,
         )
         if not passed:
             all_passed = False

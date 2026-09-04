@@ -1,7 +1,7 @@
 name: CI
 
 # push is limited to main so PR commits run CI once (via pull_request), not
-# twice — the ~57-min test job doubled the Actions bill on every PR push.
+# twice, which needlessly duplicates the full test and portal workload.
 on:
   push:
     branches: [main]
@@ -89,10 +89,7 @@ jobs:
         if: steps.ai-changes.outputs.run == 'true'
         run: >-
           python attribution_agent/attribution_agent/evals/eval_runner.py
-          --seed-file attribution_agent/attribution_agent/evals/seeds/multichannel_reporting.json
+          --local-seed-file attribution_agent/attribution_agent/evals/seeds/multichannel_reporting.json
           --all-agents --ci-mode --require-samples
         env:
-          DATABRICKS_SERVER_HOSTNAME: ${{ secrets.DATABRICKS_SERVER_HOSTNAME }}
-          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

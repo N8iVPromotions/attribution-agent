@@ -62,8 +62,6 @@ def _get_spark():
 
 
 def _get_connection():
-    from databricks import sql
-
     # DATABRICKS_HOST is auto-injected by Databricks Apps; strip the scheme if present
     host = _clean_env("DATABRICKS_SERVER_HOSTNAME") or _clean_env("DATABRICKS_HOST")
     hostname = host.replace("https://", "").replace("http://", "").rstrip("/")
@@ -79,6 +77,23 @@ def _get_connection():
     # instead uses the OAuth (M2M) service-principal credentials it auto-injects
     # as DATABRICKS_CLIENT_ID / DATABRICKS_CLIENT_SECRET (picked up by Config()).
     access_token = _clean_env("DATABRICKS_TOKEN")
+    placeholder_fields = [
+        name
+        for name, value in (
+            ("DATABRICKS_SERVER_HOSTNAME", hostname),
+            ("DATABRICKS_HTTP_PATH", http_path),
+            ("DATABRICKS_TOKEN", access_token),
+        )
+        if value.casefold() == "mock"
+    ]
+    if placeholder_fields:
+        raise EnvironmentError(
+            "Databricks configuration contains placeholder values for "
+            + ", ".join(placeholder_fields)
+        )
+
+    from databricks import sql
+
     if access_token:
         return sql.connect(
             server_hostname=hostname,

@@ -23,6 +23,23 @@ _OPS_SCHEMA = os.environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_op
 
 
 class GoldenDatasetManager:
+    @staticmethod
+    def _read_seed_records(path: str | Path) -> list[dict]:
+        source_path = Path(path)
+        if source_path.suffix == ".jsonl":
+            samples = [
+                json.loads(line)
+                for line in source_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        else:
+            samples = json.loads(source_path.read_text(encoding="utf-8"))
+        if not isinstance(samples, list):
+            raise ValueError("Golden seed file must contain a JSON array or JSONL")
+        if not all(isinstance(sample, dict) for sample in samples):
+            raise ValueError("Every golden seed sample must be a JSON object")
+        return samples
+
     def promote_sample(
         self,
         agent_name: str,
@@ -75,17 +92,7 @@ class GoldenDatasetManager:
 
     def seed_file(self, path: str | Path) -> int:
         """Idempotently upsert fully masked samples from JSON or JSONL."""
-        source_path = Path(path)
-        if source_path.suffix == ".jsonl":
-            samples = [
-                json.loads(line)
-                for line in source_path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
-        else:
-            samples = json.loads(source_path.read_text(encoding="utf-8"))
-        if not isinstance(samples, list):
-            raise ValueError("Golden seed file must contain a JSON array or JSONL")
+        samples = self._read_seed_records(path)
 
         for sample in samples:
             identity = f"{sample['agent_name']}:{sample['input_text']}"
@@ -102,6 +109,45 @@ class GoldenDatasetManager:
                 raise_on_error=True,
             )
         return len(samples)
+
+    def load_seed_samples(self, path: str | Path) -> list[dict]:
+        """Load masked seed samples in the same shape as warehouse rows."""
+        from utils.pii_masker import PIIMasker
+
+        masker = PIIMasker()
+        prepared = []
+        for sample in self._read_seed_records(path):
+            agent_name = str(sample["agent_name"])
+            input_text = str(sample["input_text"])
+            expected_output = str(sample["expected_output"])
+            expected_fields = sample.get("expected_fields", {})
+            tolerance = sample.get("tolerance", {})
+            if not isinstance(expected_fields, dict) or not isinstance(tolerance, dict):
+                raise ValueError(
+                    "Golden seed fields and tolerance must be JSON objects"
+                )
+
+            masked_input, _ = masker.mask(input_text)
+            masked_output, _ = masker.mask(expected_output)
+            masked_fields, _ = masker.mask_dict(expected_fields)
+            identity = f"{agent_name}:{input_text}"
+            prepared.append(
+                {
+                    "sample_id": hashlib.sha256(identity.encode()).hexdigest()[:32],
+                    "agent_name": agent_name,
+                    "input_hash": hashlib.sha256(masked_input.encode()).hexdigest()[
+                        :32
+                    ],
+                    "input_summary": masked_input,
+                    "expected_output": masked_output,
+                    "expected_fields": json.dumps(masked_fields),
+                    "tolerance_json": json.dumps(tolerance),
+                    "source": str(sample.get("source", "seed")),
+                    "run_id": str(sample.get("run_id", "")),
+                    "is_active": True,
+                }
+            )
+        return prepared
 
     def load_samples(self, agent_name: str) -> list[dict]:
         try:

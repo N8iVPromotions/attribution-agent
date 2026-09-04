@@ -6,6 +6,21 @@ import pytest
 from utils import databricks_writer as db
 
 
+def test_connection_rejects_mock_credentials_before_network(monkeypatch):
+    from databricks import sql
+
+    monkeypatch.setenv("DATABRICKS_SERVER_HOSTNAME", "mock")
+    monkeypatch.setenv("DATABRICKS_HTTP_PATH", "mock")
+    monkeypatch.setenv("DATABRICKS_TOKEN", "mock")
+    connect_calls = []
+    monkeypatch.setattr(sql, "connect", lambda **kwargs: connect_calls.append(kwargs))
+
+    with pytest.raises(EnvironmentError, match="placeholder"):
+        db._get_connection()
+
+    assert connect_calls == []
+
+
 def test_ops_migration_ignores_only_existing_tiktok_column(monkeypatch):
     statements: list[str] = []
 
