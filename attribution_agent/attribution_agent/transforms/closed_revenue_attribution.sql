@@ -86,7 +86,7 @@ deal_identity_inputs AS (
         ) AS source_detail_key,
         CASE
             -- HubSpot's drill-down meanings vary by source category:
-            -- Paid Search detail 1 is campaign; Paid Social detail 2 is campaign.
+            -- Paid Search detail 1 is campaign. Paid Social detail 2 is campaign.
             WHEN LOWER(TRIM(COALESCE(hs_source, ''))) = 'paid_search'
              AND LOWER(TRIM(COALESCE(hs_source_detail_1, '')))
                     NOT IN ('', 'nan', 'none', 'null')
