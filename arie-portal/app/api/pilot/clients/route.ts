@@ -8,10 +8,11 @@ import type {
 
 export const runtime = "nodejs";
 
-const models = new Set(["last_touch", "first_touch", "linear", "time_decay", "u_shape", "w_shape"]);
+const models = new Set(["last_touch"]);
 const clientIdPattern = /^[a-z][a-z0-9_]{0,62}$/;
 const accountIdPattern = /^[A-Za-z0-9:_-]{0,180}$/;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const defaultHubspotClosedWonStageIds = ["closedwon", "won"];
 
 type PlatformInput = {
   enabled?: unknown;
@@ -25,6 +26,7 @@ type ControlClient = {
   client_name: string;
   agency_id: string;
   attribution_model: string;
+  reporting_currency: string;
   client_report_email: string;
   lookback_days: number;
   databricks_schema: string;
@@ -46,10 +48,12 @@ type ControlClient = {
   tiktok_secret_configured: boolean;
   hubspot_enabled: boolean;
   hubspot_pipeline_id: string;
+  hubspot_closed_won_stage_ids: string[];
   hubspot_token_expires_at: string;
   hubspot_secret_configured: boolean;
   stripe_enabled: boolean;
   stripe_account_id: string;
+  stripe_history_start_date: string;
   stripe_token_expires_at: string;
   stripe_secret_configured: boolean;
 };
@@ -91,14 +95,60 @@ function expiry(value: unknown) {
   return result;
 }
 
+function historyStartDate(value: unknown) {
+  const result = text(value, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(result)) {
+    throw new Error("Stripe history start date is required and must use YYYY-MM-DD.");
+  }
+  const parsed = new Date(`${result}T00:00:00Z`);
+  if (Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== result) {
+    throw new Error("Stripe history start date must be a valid calendar date.");
+  }
+  if (result > new Date().toISOString().slice(0, 10)) {
+    throw new Error("Stripe history start date cannot be in the future.");
+  }
+  return result;
+}
+
+function hubspotClosedWonStageIds(value: unknown): string[] {
+  const rawValues = value === undefined
+    ? defaultHubspotClosedWonStageIds
+    : Array.isArray(value)
+      ? value
+      : typeof value === "string"
+        ? value.split(/[\n,]+/)
+        : [];
+  if (!rawValues.length || rawValues.length > 20) {
+    throw new Error("Provide between 1 and 20 HubSpot closed-won stage IDs.");
+  }
+
+  const stageIds: string[] = [];
+  for (const rawValue of rawValues) {
+    if (typeof rawValue !== "string" || rawValue.length > 100) {
+      throw new Error("Each HubSpot closed-won stage ID must be at most 100 characters.");
+    }
+    const normalized = rawValue.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+    if (!normalized) {
+      throw new Error("HubSpot closed-won stage IDs cannot be blank.");
+    }
+    if (!stageIds.includes(normalized)) stageIds.push(normalized);
+  }
+  return stageIds;
+}
+
 function safeResponse(client: ControlClient): PilotClientConfiguration {
   return {
     clientId: client.client_id,
     clientName: client.client_name,
     agencyId: client.agency_id,
     attributionModel: client.attribution_model,
+    reportingCurrency: client.reporting_currency || "USD",
     reportEmail: client.client_report_email,
     lookbackDays: Number(client.lookback_days || 30),
+    stripeHistoryStartDate: client.stripe_history_start_date || "",
+    hubspotClosedWonStageIds: hubspotClosedWonStageIds(
+      client.hubspot_closed_won_stage_ids
+    ),
     databricksSchema: client.databricks_schema,
     platforms: {
       meta: {
@@ -187,7 +237,9 @@ export async function POST(request: NextRequest) {
     if (clientName.length < 2) throw new Error("Business name is required.");
     if (!clientIdPattern.test(agencyId)) throw new Error("Select a valid agency.");
     if (!emailPattern.test(reportEmail)) throw new Error("A valid report email is required.");
-    if (!models.has(attributionModel)) throw new Error("Select a supported attribution model.");
+    if (!models.has(attributionModel)) {
+      throw new Error("Production client configuration supports only CRM Source Match.");
+    }
     if (!Number.isInteger(lookbackDays) || lookbackDays < 7 || lookbackDays > 365) {
       throw new Error("Lookback must be between 7 and 365 days.");
     }
@@ -198,6 +250,11 @@ export async function POST(request: NextRequest) {
     const tiktok = platform(body, "tiktok");
     const hubspot = platform(body, "hubspot");
     const stripe = platform(body, "stripe");
+    const stripeEnabled = boolean(stripe.enabled);
+    const stripeHistoryInput = text(body.stripeHistoryStartDate, 10);
+    const stripeHistoryStartDate = stripeEnabled || stripeHistoryInput
+      ? historyStartDate(stripeHistoryInput)
+      : "";
 
     const payload = {
       client_name: clientName,
@@ -205,6 +262,7 @@ export async function POST(request: NextRequest) {
       agency_id: agencyId,
       client_report_email: reportEmail,
       attribution_model: attributionModel,
+      reporting_currency: "USD",
       lookback_days: lookbackDays,
       databricks_schema: "",
       meta_enabled: boolean(meta.enabled),
@@ -225,10 +283,14 @@ export async function POST(request: NextRequest) {
       tiktok_token_expires_at: expiry(tiktok.expiresAt),
       hubspot_enabled: boolean(hubspot.enabled),
       hubspot_pipeline_id: accountId(hubspot.accountId, "HubSpot pipeline ID"),
+      hubspot_closed_won_stage_ids: hubspotClosedWonStageIds(
+        body.hubspotClosedWonStageIds
+      ),
       hubspot_access_token: credential(hubspot.credential),
       hubspot_token_expires_at: expiry(hubspot.expiresAt),
-      stripe_enabled: boolean(stripe.enabled),
+      stripe_enabled: stripeEnabled,
       stripe_account_id: accountId(stripe.accountId, "Stripe account ID"),
+      stripe_history_start_date: stripeHistoryStartDate,
       stripe_secret_key: credential(stripe.credential),
       stripe_token_expires_at: expiry(stripe.expiresAt)
     };

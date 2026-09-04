@@ -134,10 +134,20 @@ class MetaValidator:
 
 
 class HubSpotValidator:
-    REQUIRED_COLUMNS = {"deal_id", "deal_stage", "amount", "create_date"}
+    REQUIRED_COLUMNS = {
+        "deal_id",
+        "deal_stage",
+        "amount",
+        "deal_currency_code",
+        "create_date",
+        "hs_source",
+        "hs_source_detail_1",
+        "hs_source_detail_2",
+    }
 
-    def __init__(self, client_id: str) -> None:
+    def __init__(self, client_id: str, expected_currency: str = "USD") -> None:
         self.client_id = client_id
+        self.expected_currency = expected_currency.strip().upper()
 
     def validate(self, df: pd.DataFrame) -> tuple[pd.DataFrame, ValidationReport]:
         report = ValidationReport(source="hubspot", client_id=self.client_id)
@@ -174,13 +184,60 @@ class HubSpotValidator:
             if negative_amounts > 0:
                 report.add_error(f"{negative_amounts} deals with negative amounts")
 
-        # ── 6. UTM coverage check ─────────────────────────────────────────────
-        if "utm_campaign" in df.columns:
-            utm_coverage = df["utm_campaign"].notna().mean()
-            if utm_coverage < 0.50:
+        monetary_rows = df["amount"].notna() & df["amount"].ne(0)
+        currencies = (
+            df.loc[monetary_rows, "deal_currency_code"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
+        if currencies.eq("").any():
+            report.add_error(
+                "HubSpot deal currency is missing; USD-only reporting cannot be "
+                "verified"
+            )
+        unexpected = sorted(
+            set(currencies[currencies.ne("") & currencies.ne(self.expected_currency)])
+        )
+        if unexpected:
+            report.add_error(
+                "HubSpot contains non-USD monetary deals: " + ", ".join(unexpected)
+            )
+
+        # ── 6. Deal-level paid-source identity coverage ───────────────────────
+        source_keys = df["hs_source"].fillna("").astype(str).str.strip().str.upper()
+        paid_rows = source_keys.isin({"PAID_SEARCH", "PAID_SOCIAL"})
+        if paid_rows.any():
+            detail_1 = (
+                df.loc[paid_rows, "hs_source_detail_1"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+            )
+            paid_sources = source_keys.loc[paid_rows]
+            missing_platform = paid_sources.eq("PAID_SOCIAL") & detail_1.eq("")
+            if missing_platform.any():
                 report.add_warning(
-                    f"Only {utm_coverage:.0%} of deals have utm_campaign set — "
-                    "UTM tagging on paid campaigns may be incomplete"
+                    f"{missing_platform.mean():.0%} of paid-source deals lack the "
+                    "HubSpot network detail required for platform matching"
+                )
+
+            detail_2 = (
+                df.loc[paid_rows, "hs_source_detail_2"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+            )
+            has_campaign = (paid_sources.eq("PAID_SEARCH") & detail_1.ne("")) | (
+                paid_sources.eq("PAID_SOCIAL") & detail_2.ne("")
+            )
+            campaign_coverage = has_campaign.mean()
+            if campaign_coverage < 0.50:
+                report.add_warning(
+                    f"Only {campaign_coverage:.0%} of paid-source deals have a "
+                    "HubSpot deal-level campaign identity — remaining matches are "
+                    "limited to the recorded platform"
                 )
 
         logger.info(report.summary())
@@ -206,18 +263,35 @@ def validate_meta(
 def validate_hubspot(
     df: pd.DataFrame,
     client_id: str,
+    expected_currency: str = "USD",
 ) -> tuple[pd.DataFrame, ValidationReport]:
-    return HubSpotValidator(client_id=client_id).validate(df)
+    return HubSpotValidator(
+        client_id=client_id, expected_currency=expected_currency
+    ).validate(df)
 
 
 # ─── STRIPE VALIDATOR ─────────────────────────────────────────────────────────
 
 
 class StripeValidator:
-    REQUIRED_COLUMNS = {"payment_id", "customer_email", "amount_paid", "status"}
+    REQUIRED_COLUMNS = {
+        "payment_id",
+        "hubspot_deal_id",
+        "amount_paid",
+        "currency",
+        "livemode",
+        "status",
+    }
 
-    def __init__(self, client_id: str) -> None:
+    def __init__(
+        self,
+        client_id: str,
+        expected_currency: str = "USD",
+        require_live_mode: bool = False,
+    ) -> None:
         self.client_id = client_id
+        self.expected_currency = expected_currency.strip().upper()
+        self.require_live_mode = require_live_mode
 
     def validate(self, df: pd.DataFrame) -> tuple[pd.DataFrame, ValidationReport]:
         report = ValidationReport(source="stripe", client_id=self.client_id)
@@ -238,24 +312,57 @@ class StripeValidator:
         if negative > 0:
             report.add_error(f"{negative} payments with negative amount_paid")
 
+        currencies = df["currency"].fillna("").astype(str).str.strip().str.upper()
+        if currencies.eq("").any():
+            report.add_error(
+                "Stripe payment currency is missing; USD-only reporting cannot be "
+                "verified"
+            )
+        unexpected = sorted(
+            set(currencies[currencies.ne("") & currencies.ne(self.expected_currency)])
+        )
+        if unexpected:
+            report.add_error(
+                "Stripe contains non-USD payments: " + ", ".join(unexpected)
+            )
+        if (
+            self.require_live_mode
+            and not df["livemode"].fillna(False).astype(bool).all()
+        ):
+            report.add_error(
+                "Stripe test-mode payments cannot be used for live report delivery"
+            )
+
         # ── 4. Duplicate payment IDs ───────────────────────────────────────────
         dupes = df["payment_id"].duplicated().sum()
         if dupes > 0:
             report.add_warning(f"{dupes} duplicate payment_id rows — deduplicating")
             df = df.drop_duplicates(subset=["payment_id"], keep="last")
 
-        # ── 5. Missing customer email (required for HubSpot join) ──────────────
-        missing_email = df["customer_email"].isna() | (df["customer_email"] == "")
-        missing_email_pct = missing_email.mean()
-        if missing_email_pct == 1.0:
+        # ── 5. Exact HubSpot deal ID coverage ──────────────────────────────────
+        deal_ids = df["hubspot_deal_id"].fillna("").astype(str).str.strip()
+        missing_deal_id_pct = deal_ids.eq("").mean()
+        if missing_deal_id_pct == 1.0:
             report.add_error(
-                "All payments missing customer_email — HubSpot revenue join impossible"
+                "All payments missing hubspot_deal_id — exact HubSpot revenue join "
+                "is impossible"
             )
-        elif missing_email_pct > 0.10:
+        elif missing_deal_id_pct > 0:
             report.add_warning(
-                f"{missing_email_pct:.0%} of payments missing customer_email — "
-                "HubSpot join coverage will be reduced"
+                f"{missing_deal_id_pct:.0%} of payments missing hubspot_deal_id — "
+                "those payments will remain unattributed"
             )
+
+        # Email is diagnostic only; production attribution never substitutes it
+        # for the explicit deal identifier.
+        if "customer_email" in df.columns:
+            emails = df["customer_email"].fillna("").astype(str).str.strip()
+            missing_email_pct = emails.eq("").mean()
+            if missing_email_pct > 0:
+                report.add_warning(
+                    f"{missing_email_pct:.0%} of payments missing optional "
+                    "customer_email"
+                )
 
         # ── 6. Refund rate anomaly ─────────────────────────────────────────────
         if "refund_amount" in df.columns:
@@ -276,8 +383,14 @@ class StripeValidator:
 def validate_stripe(
     df: pd.DataFrame,
     client_id: str,
+    expected_currency: str = "USD",
+    require_live_mode: bool = False,
 ) -> tuple[pd.DataFrame, ValidationReport]:
-    return StripeValidator(client_id=client_id).validate(df)
+    return StripeValidator(
+        client_id=client_id,
+        expected_currency=expected_currency,
+        require_live_mode=require_live_mode,
+    ).validate(df)
 
 
 def validate_record_batch(

@@ -33,9 +33,12 @@ export const mockCommandCenterData: CommandCenterData = {
       name: "N8iV Promotions",
       agencyId: "n8iv_agency",
       attributionModel: "w_shape",
+      reportingCurrency: "USD",
       reportEmail: "ops@n8ivpromotions.com",
       active: true,
       lookbackDays: 60,
+      stripeHistoryStartDate: "2010-01-01",
+      hubspotClosedWonStageIds: ["closedwon", "won"],
       platforms: { meta: true, google: true, linkedin: true, tiktok: false, hubspot: true, stripe: true },
       updatedAt: ago(3_600_000)
     },
@@ -44,9 +47,12 @@ export const mockCommandCenterData: CommandCenterData = {
       name: "Agency Pilot Account",
       agencyId: "n8iv_agency",
       attributionModel: "linear",
+      reportingCurrency: "USD",
       reportEmail: "ops@example.com",
       active: true,
       lookbackDays: 30,
+      stripeHistoryStartDate: "2022-01-01",
+      hubspotClosedWonStageIds: ["closedwon", "won"],
       platforms: { meta: true, google: false, linkedin: true, tiktok: false, hubspot: true, stripe: true },
       updatedAt: ago(86_400_000)
     },
@@ -55,9 +61,12 @@ export const mockCommandCenterData: CommandCenterData = {
       name: "B2B SaaS Demo",
       agencyId: "n8iv_agency",
       attributionModel: "time_decay",
+      reportingCurrency: "USD",
       reportEmail: "revenue@example.com",
       active: true,
       lookbackDays: 90,
+      stripeHistoryStartDate: "2020-01-01",
+      hubspotClosedWonStageIds: ["closedwon", "won"],
       platforms: { meta: false, google: true, linkedin: true, tiktok: false, hubspot: true, stripe: true },
       updatedAt: ago(172_800_000)
     },
@@ -66,9 +75,12 @@ export const mockCommandCenterData: CommandCenterData = {
       name: "Luxe Aesthetics MedSpa",
       agencyId: "n8iv_agency",
       attributionModel: "u_shape",
+      reportingCurrency: "USD",
       reportEmail: "marketing@example.com",
       active: true,
       lookbackDays: 45,
+      stripeHistoryStartDate: "2023-01-01",
+      hubspotClosedWonStageIds: ["closedwon", "won"],
       platforms: { meta: true, google: true, linkedin: false, tiktok: true, hubspot: true, stripe: true },
       updatedAt: ago(259_200_000)
     }
@@ -91,7 +103,7 @@ export const mockCommandCenterData: CommandCenterData = {
       startedAt: ago(180_000),
       finishedAt: "",
       outputSchema: "workspace.attribution_b2b_saas",
-      sourceRows: { meta: 0, google: 412, linkedin: 0, hubspot: 0, stripe: 0, normalized: 412 }
+      sourceRows: { meta: 0, google: 412, linkedin: 0, tiktok: 0, hubspot: 0, stripe: 0, normalized: 412 }
     },
     {
       runId: "demo-partial-03",
@@ -110,7 +122,7 @@ export const mockCommandCenterData: CommandCenterData = {
       startedAt: ago(7_200_000),
       finishedAt: ago(6_780_000),
       outputSchema: "workspace.attribution_agency_pilot",
-      sourceRows: { meta: 0, google: 0, linkedin: 190, hubspot: 46, stripe: 21, normalized: 190 }
+      sourceRows: { meta: 0, google: 0, linkedin: 190, tiktok: 0, hubspot: 46, stripe: 21, normalized: 190 }
     },
     {
       runId: "demo-success-02",
@@ -129,7 +141,7 @@ export const mockCommandCenterData: CommandCenterData = {
       startedAt: ago(25_200_000),
       finishedAt: ago(24_840_000),
       outputSchema: "workspace.attribution_n8iv_promotions",
-      sourceRows: { meta: 830, google: 410, linkedin: 520, hubspot: 74, stripe: 31, normalized: 1760 }
+      sourceRows: { meta: 830, google: 410, linkedin: 520, tiktok: 0, hubspot: 74, stripe: 31, normalized: 1760 }
     },
     {
       runId: "demo-success-01",
@@ -148,7 +160,7 @@ export const mockCommandCenterData: CommandCenterData = {
       startedAt: ago(90_000_000),
       finishedAt: ago(89_640_000),
       outputSchema: "workspace.attribution_luxe_medspa",
-      sourceRows: { meta: 1240, google: 680, linkedin: 0, hubspot: 96, stripe: 54, normalized: 1920 }
+      sourceRows: { meta: 1240, google: 680, linkedin: 0, tiktok: 0, hubspot: 96, stripe: 54, normalized: 1920 }
     }
   ],
   checkpoints: [
@@ -175,7 +187,7 @@ export const mockCommandCenterData: CommandCenterData = {
     { eventId: "audit-1", eventTime: ago(180_000), eventType: "PIPELINE_STARTED", actor: "command-center", clientId: "b2b_saas", resource: "pipeline", action: "dry_run", outcome: "accepted", runId: "demo-running-04" },
     { eventId: "audit-2", eventTime: ago(6_780_000), eventType: "REPORT_SUPPRESSED", actor: "agency_flow", clientId: "agency_pilot", resource: "email", action: "suppress", outcome: "partial_ingestion", runId: "demo-partial-03" }
   ],
-  approvals: [{ actionId: "approval-1", createdAt: ago(6_500_000), actor: "governance-reviewer", description: "Review partial July report before delivery retry", actionType: "report_release", status: "pending", channel: "email" }],
+  approvals: [{ actionId: "approval-1", createdAt: ago(6_500_000), actor: "governance-reviewer", description: "Review partial July report before delivery retry", actionType: "report_release", status: "pending", channel: "email", reportId: "demo-report-1", recipientEmail: "client@example.com", deliveryConfigFingerprint: "demo-envelope" }],
   lifecycleOperations: [],
   recommendations: [
     { severity: "critical", title: "Resolve Google Ads credentials", body: "Agency Pilot cannot produce complete paid-search attribution until the refresh token is restored." },

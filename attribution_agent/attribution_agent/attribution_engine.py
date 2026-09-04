@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import re
 
 import pandas as pd
 
@@ -84,6 +85,19 @@ def _norm(value: object) -> str:
     return "" if text in ("nan", "none", "null") else text
 
 
+def _identifier(value: object) -> str:
+    """Return a stable external ID without lowercasing it."""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() in ("nan", "none", "null") else text
+
+
+def _stage_key(value: object) -> str:
+    """Canonicalize a CRM stage for exact, false-positive-safe comparison."""
+    return re.sub(r"[^a-z0-9]+", "", _norm(value))
+
+
 def _platform_for(utm_source: str, utm_medium: str = "") -> str:
     """Resolve a platform from utm_source (falling back to utm_medium hints)."""
     src = _norm(utm_source)
@@ -99,10 +113,10 @@ def _platform_for(utm_source: str, utm_medium: str = "") -> str:
 
 
 def _as_datetime(value: object) -> datetime | None:
-    ts = pd.to_datetime(value, errors="coerce")
+    ts = pd.to_datetime(value, errors="coerce", utc=True)
     if ts is None or pd.isna(ts):
         return None
-    return ts.to_pydatetime()
+    return ts.tz_convert(None).to_pydatetime()
 
 
 # ── Conversion builders ──────────────────────────────────────────────────────
@@ -116,11 +130,11 @@ def conversions_from_hubspot(
     """Build conversions from HubSpot deals whose stage is closed/won."""
     if df is None or df.empty:
         return []
-    stage_tokens = tuple(_norm(s) for s in closed_won_stages)
+    stage_tokens = {_stage_key(s) for s in closed_won_stages if _stage_key(s)}
     conversions: list[Conversion] = []
     for _, row in df.iterrows():
-        stage = _norm(row.get("deal_stage"))
-        if not stage or not any(tok and tok in stage for tok in stage_tokens):
+        stage = _stage_key(row.get("deal_stage"))
+        if not stage or stage not in stage_tokens:
             continue
         revenue = float(row.get("amount") or 0.0)
         if revenue <= 0:
@@ -130,7 +144,7 @@ def conversions_from_hubspot(
         )
         if occurred_at is None:
             continue
-        deal_id = str(row.get("deal_id") or "")
+        deal_id = _identifier(row.get("deal_id"))
         conversions.append(
             Conversion(
                 conversion_id=f"hubspot:{deal_id}",
@@ -173,7 +187,10 @@ def conversions_from_stripe(df: pd.DataFrame, client_id: str) -> list[Conversion
                 occurred_at=occurred_at,
                 revenue=revenue,
                 email=_norm(row.get("customer_email")),
-                deal_id=str(row.get("deal_id") or ""),
+                deal_id=(
+                    _identifier(row.get("hubspot_deal_id"))
+                    or _identifier(row.get("deal_id"))
+                ),
                 revenue_source="stripe",
             )
         )
@@ -189,22 +206,20 @@ def reconcile_conversions(
     """
     Merge CRM and Stripe conversions into one deduplicated set.
 
-    A Stripe payment that links to a HubSpot deal (by deal_id, else by email) is
-    treated as the *same* closed/won event: we keep one conversion, take its
-    revenue from the preferred source (Stripe = realized cash, by default), and
-    inherit the CRM's captured UTM identity so the payment is attributable.
+    A Stripe payment that links to a HubSpot deal by exact deal_id is treated as
+    the *same* closed/won event: we keep one conversion, take its revenue from
+    the preferred source (Stripe = realized cash, by default), and inherit the
+    CRM's captured source identity so the payment is attributable. Email is
+    diagnostic only and is never an attribution join key.
 
     Unmatched HubSpot deals (e.g. contract/invoice revenue never run through
     Stripe) and unmatched Stripe payments (e.g. checkout with no CRM record) are
     both retained so revenue totals stay complete.
     """
     by_deal: dict[str, Conversion] = {}
-    by_email: dict[str, Conversion] = {}
     for hc in hubspot_convs:
         if hc.deal_id:
             by_deal[hc.deal_id] = hc
-        if hc.email:
-            by_email.setdefault(hc.email, hc)
 
     reconciled: list[Conversion] = []
     consumed_hubspot: set[str] = set()
@@ -213,8 +228,6 @@ def reconcile_conversions(
         match = None
         if sc.deal_id and sc.deal_id in by_deal:
             match = by_deal[sc.deal_id]
-        elif sc.email and sc.email in by_email:
-            match = by_email[sc.email]
 
         if match is None:
             reconciled.append(sc)
@@ -268,27 +281,34 @@ def build_journey(
     if not platform:
         return []
 
-    window_start = conversion.occurred_at - timedelta(days=lookback_days)
+    occurred_at = _as_datetime(conversion.occurred_at)
+    if occurred_at is None:
+        return []
+    window_start = occurred_at - timedelta(days=lookback_days)
     conv_campaign = _norm(conversion.utm_campaign)
 
     frame = ads.copy()
     frame = frame[_norm_series(frame.get("client_id")) == _norm(conversion.client_id)]
     frame = frame[_norm_series(frame.get("source_platform")) == platform]
-    dates = pd.to_datetime(frame.get("date"), errors="coerce")
-    frame = frame[(dates >= window_start) & (dates <= conversion.occurred_at)]
+    dates = pd.to_datetime(frame.get("date"), errors="coerce", utc=True).dt.tz_convert(
+        None
+    )
+    frame = frame[(dates >= window_start) & (dates <= occurred_at)]
     if frame.empty:
         return []
 
-    frame = frame.assign(_date=pd.to_datetime(frame["date"], errors="coerce"))
+    frame = frame.assign(_date=dates)
     frame["_campaign"] = frame.apply(
         lambda r: _norm(r.get("utm_campaign")) or _norm(r.get("campaign_name")), axis=1
     )
     if conv_campaign:
+        # A stated campaign that does not match is a data-quality failure, not
+        # permission to spread revenue over every campaign on the platform.
+        # Keep the conversion in the explicit unattributed bucket instead.
         matched = frame[frame["_campaign"] == conv_campaign]
-        # Fall back to platform-level credit if the campaign label doesn't line up.
-        if matched.empty:
-            matched = frame
     else:
+        # Platform-only attribution is allowed only when the CRM supplied no
+        # campaign identity at all.
         matched = frame
     if matched.empty:
         return []

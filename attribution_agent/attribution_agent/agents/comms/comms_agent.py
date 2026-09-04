@@ -1,27 +1,28 @@
 """
 agents/comms/comms_agent.py
 ----------------------------
-Takes an InsightReport and emails it to the client.
+Renders an InsightReport and delivers it through the governed agency flow.
 
 Provider selection (COMMS_PROVIDER env var):
   sendgrid  — transactional ESP; requires SENDGRID_API_KEY (default)
   gmail     — Gmail SMTP fallback; requires GMAIL_SENDER + GMAIL_APP_PASSWORD
 
-Run standalone:
-    python agents/comms/comms_agent.py --client demo_client --to client@example.com
-
-Or import and call send_report(report, recipient_email) from a flow.
+Direct and standalone delivery are intentionally disabled. External delivery must
+go through flows/agency_flow.py so approval, governance, and idempotency gates run.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 import smtplib
 import sys
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from html import escape
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -38,8 +39,57 @@ except NameError:
 sys.path.insert(0, _root)
 
 from config.agency_config import AgencyConfig
-from agents.insight.insight_agent import InsightReport, generate_insight_report
+from agents.insight.insight_agent import InsightReport
 from attribution_models import ATTRIBUTION_MODEL_LABELS
+
+
+class DeliveryNotAcceptedError(RuntimeError):
+    """The provider definitively did not accept the delivery attempt."""
+
+
+class DeliveryAuthorizationError(RuntimeError):
+    """Delivery was attempted outside the governed agency flow."""
+
+
+class _AgencyFlowDeliveryAuthorization:
+    """Opaque capability held only by the governed agency delivery path."""
+
+
+_AGENCY_FLOW_DELIVERY_AUTHORIZATION = _AgencyFlowDeliveryAuthorization()
+_HEX_COLOR = re.compile(r"[0-9a-fA-F]{6}\Z")
+
+
+def _safe_http_url(value: str) -> str:
+    """Return an absolute HTTP(S) URL or an empty string."""
+    candidate = str(value or "").strip()
+    if not candidate or any(char.isspace() or ord(char) == 127 for char in candidate):
+        return ""
+    try:
+        parsed = urlsplit(candidate)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError:
+        return ""
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        return ""
+    return candidate
+
+
+def _safe_brand_color(value: str) -> str:
+    candidate = str(value or "")
+    return f"#{candidate}" if _HEX_COLOR.fullmatch(candidate) else "#1a1a1a"
+
+
+def _safe_header_value(value: str, field_name: str) -> str:
+    candidate = str(value or "")
+    if "\r" in candidate or "\n" in candidate:
+        raise DeliveryNotAcceptedError(f"Invalid newline in email {field_name}")
+    return candidate
 
 
 # ─── HTML EMAIL TEMPLATE ──────────────────────────────────────
@@ -50,18 +100,23 @@ def _build_html(
     powerbi_url: str = "",
     agency_config: AgencyConfig | None = None,
 ) -> str:
-    findings_html = "".join(f"<li>{f}</li>" for f in report.key_findings)
+    findings_html = "".join(
+        f"<li>{escape(str(finding))}</li>" for finding in report.key_findings
+    )
 
-    narrative_html = report.narrative.replace("\n\n", "</p><p>").replace("\n", "<br>")
+    narrative_html = escape(str(report.narrative)).replace("\r\n", "\n")
+    narrative_html = narrative_html.replace("\r", "\n")
+    narrative_html = narrative_html.replace("\n\n", "</p><p>").replace("\n", "<br>")
 
     effective_powerbi_url = powerbi_url or (
         agency_config.powerbi_workspace_url if agency_config else ""
     )
+    safe_powerbi_url = _safe_http_url(effective_powerbi_url)
     powerbi_section = ""
-    if effective_powerbi_url:
+    if safe_powerbi_url:
         powerbi_section = f"""
         <div class="cta">
-            <a href="{effective_powerbi_url}" class="btn">View Live Dashboard →</a>
+            <a href="{escape(safe_powerbi_url, quote=True)}" class="btn">View Live Dashboard →</a>
         </div>
         """
 
@@ -71,26 +126,36 @@ def _build_html(
         report.attribution_model, report.attribution_model
     )
 
-    header_bg = f"#{agency_config.brand_color}" if agency_config else "#1a1a1a"
-    header_label = (
+    header_bg = (
+        _safe_brand_color(agency_config.brand_color) if agency_config else "#1a1a1a"
+    )
+    header_label = escape(
         agency_config.sender_name
         if agency_config and agency_config.sender_name
         else "Attribution Report"
     )
+    safe_logo_url = _safe_http_url(
+        agency_config.brand_logo_url if agency_config else ""
+    )
     logo_html = (
-        f'<img src="{agency_config.brand_logo_url}" '
+        f'<img src="{escape(safe_logo_url, quote=True)}" '
         f'style="max-height:40px; margin-bottom:12px; display:block;"><br>'
-        if agency_config and agency_config.brand_logo_url
+        if safe_logo_url
         else ""
     )
     footer_text = (
-        f"This report is delivered by {agency_config.agency_name}.<br>"
+        f"This report is delivered by {escape(str(agency_config.agency_name))}.<br>"
         "Questions? Reply to this email."
         if agency_config
-        else f"This report was automatically generated on {report.generated_at[:10]}"
+        else "This report was automatically generated on "
+        f"{escape(str(report.generated_at)[:10])}"
         " by ARIE, your Automatic Revenue Intelligence Engine.<br>"
         "Questions? Reply to this email."
     )
+    client_name = escape(str(report.client_name))
+    report_month = escape(str(report.report_month))
+    top_channel = escape(str(report.top_channel))
+    safe_model_label = escape(str(model_label))
 
     return f"""
 <!DOCTYPE html>
@@ -238,8 +303,8 @@ def _build_html(
 
     <div class="header">
         {logo_html}<div class="label">{header_label}</div>
-        <h1>{report.client_name}</h1>
-        <div class="month">{report.report_month}</div>
+        <h1>{client_name}</h1>
+        <div class="month">{report_month}</div>
     </div>
 
     <div class="metrics">
@@ -260,10 +325,10 @@ def _build_html(
     <div class="body">
 
         <div class="section-title">Top Channel</div>
-        <span class="top-channel">↑ {report.top_channel}</span>
+        <span class="top-channel">↑ {top_channel}</span>
 
         <div class="section-title">Attribution Model</div>
-        <p>{model_label}</p>
+        <p>{safe_model_label}</p>
 
         <div class="section-title">Executive Summary</div>
         <p>{narrative_html}</p>
@@ -305,7 +370,9 @@ def _send_via_sendgrid(
 
     api_key = os.environ.get("SENDGRID_API_KEY", "")
     if not api_key:
-        raise ValueError("SENDGRID_API_KEY not set — cannot use SendGrid provider")
+        raise DeliveryNotAcceptedError(
+            "SENDGRID_API_KEY not set — cannot use SendGrid provider"
+        )
 
     message = Mail(
         from_email=Email(sender_email, sender_display),
@@ -321,7 +388,7 @@ def _send_via_sendgrid(
     response = sg.send(message)
 
     if response.status_code not in (200, 202):
-        raise RuntimeError(
+        raise DeliveryNotAcceptedError(
             f"SendGrid returned HTTP {response.status_code}: {response.body}"
         )
     logger.info(f"[Comms] SendGrid accepted delivery to {recipient_email}")
@@ -339,7 +406,9 @@ def _send_via_gmail(
     """Send via Gmail SMTP. Raises on failure."""
     app_password = os.environ.get("GMAIL_APP_PASSWORD", "")
     if not app_password:
-        raise ValueError("GMAIL_APP_PASSWORD not set — cannot use Gmail provider")
+        raise DeliveryNotAcceptedError(
+            "GMAIL_APP_PASSWORD not set — cannot use Gmail provider"
+        )
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -353,11 +422,15 @@ def _send_via_gmail(
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
         smtp.login(sender_email, app_password)
-        smtp.sendmail(sender_email, recipient_email, msg.as_string())
+        refused = smtp.sendmail(sender_email, recipient_email, msg.as_string())
+        if refused:
+            raise DeliveryNotAcceptedError(
+                f"Gmail refused delivery to {recipient_email}"
+            )
     logger.info(f"[Comms] Gmail delivered to {recipient_email}")
 
 
-def send_report(
+def _deliver_report(
     report: InsightReport,
     recipient_email: str,
     powerbi_url: str = "",
@@ -371,25 +444,31 @@ def send_report(
     """
     provider = os.environ.get("COMMS_PROVIDER", "sendgrid").lower()
 
-    sender_email = (
+    sender_email = _safe_header_value(
         agency_config.sender_email
         if agency_config and agency_config.sender_email
-        else os.environ.get("GMAIL_SENDER", "")
+        else os.environ.get("GMAIL_SENDER", ""),
+        "sender",
     )
     if not sender_email:
-        raise ValueError(
+        raise DeliveryNotAcceptedError(
             "Sender email not configured (GMAIL_SENDER or agency_config.sender_email)"
         )
 
-    sender_display = (
+    sender_display = _safe_header_value(
         agency_config.sender_name
         if agency_config and agency_config.sender_name
-        else "ARIE"
+        else "ARIE",
+        "sender display name",
     )
-    reply_to = (
-        agency_config.reply_to if agency_config and agency_config.reply_to else ""
+    recipient_email = _safe_header_value(recipient_email, "recipient")
+    reply_to = _safe_header_value(
+        agency_config.reply_to if agency_config and agency_config.reply_to else "",
+        "reply-to",
     )
-    subject = f"Attribution Report — {report.client_name} — {report.report_month}"
+    subject_client_name = _safe_header_value(report.client_name, "subject")
+    subject_report_month = _safe_header_value(report.report_month, "subject")
+    subject = f"Attribution Report — {subject_client_name} — {subject_report_month}"
 
     plain_text = (
         f"Attribution Report | {report.client_name} | {report.report_month}\n\n"
@@ -417,7 +496,7 @@ def send_report(
             html_content,
             reply_to,
         )
-    else:
+    elif provider == "gmail":
         _send_via_gmail(
             subject,
             sender_email,
@@ -427,12 +506,26 @@ def send_report(
             html_content,
             reply_to,
         )
+    else:
+        raise DeliveryNotAcceptedError(f"Unsupported COMMS_PROVIDER: {provider!r}")
 
     logger.info(f"[Comms] Report delivered to {recipient_email}")
     return True
 
 
-# ─── FULL PIPELINE ────────────────────────────────────────────
+def send_report(
+    report: InsightReport,
+    recipient_email: str,
+    powerbi_url: str = "",
+    agency_config: AgencyConfig | None = None,
+) -> bool:
+    """Reject direct delivery that would bypass agency-flow safety gates."""
+    raise DeliveryAuthorizationError(
+        "Direct report delivery is disabled; use flows.agency_flow.run_agency_pipeline"
+    )
+
+
+# ─── DISABLED LEGACY PIPELINE ─────────────────────────────────
 
 
 def run_full_pipeline(
@@ -441,34 +534,12 @@ def run_full_pipeline(
     powerbi_url: str = "",
     attribution_model: str | None = None,
 ) -> dict:
-    """
-    End-to-end: generate insight report + send email.
-    This is what the monthly Databricks Job calls.
-    """
-    logger.info(f"[Comms] Running full pipeline for {client_id}")
-
-    # 1. Generate insight report
-    report = generate_insight_report(
-        client_id=client_id,
-        attribution_model=attribution_model,
+    """Reject the legacy delivery path that bypassed production safety gates."""
+    raise DeliveryAuthorizationError(
+        "Standalone delivery is disabled; use "
+        "flows.agency_flow.run_agency_pipeline so approval, governance, and "
+        "idempotency gates run"
     )
-
-    # 2. Send email
-    sent = send_report(
-        report=report,
-        recipient_email=recipient_email,
-        powerbi_url=powerbi_url,
-    )
-
-    return {
-        "client_id": client_id,
-        "report_month": report.report_month,
-        "recipient": recipient_email,
-        "email_sent": sent,
-        "top_channel": report.top_channel,
-        "total_pipeline": report.total_pipeline,
-        "attribution_model": report.attribution_model,
-    }
 
 
 # ─── AGENCY CONVENIENCE WRAPPER ──────────────────────────────
@@ -479,9 +550,15 @@ def send_agency_report(
     recipient_email: str,
     agency_config: AgencyConfig,
     powerbi_url: str = "",
+    *,
+    delivery_authorization: object | None = None,
 ) -> bool:
-    """Send a white-labeled report under agency branding."""
-    return send_report(
+    """Send a white-labeled report when invoked by the governed agency flow."""
+    if delivery_authorization is not _AGENCY_FLOW_DELIVERY_AUTHORIZATION:
+        raise DeliveryAuthorizationError(
+            "Agency report delivery requires authorization from agency_flow"
+        )
+    return _deliver_report(
         report=report,
         recipient_email=recipient_email,
         powerbi_url=powerbi_url,
@@ -492,27 +569,7 @@ def send_agency_report(
 # ─── CLI ENTRYPOINT ───────────────────────────────────────────
 
 if __name__ == "__main__":
-    import argparse
-
-    logging.basicConfig(level=logging.INFO)
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--client", type=str, required=True)
-    parser.add_argument("--to", type=str, required=True, help="Recipient email address")
-    parser.add_argument(
-        "--powerbi", type=str, default="", help="Power BI dashboard URL (optional)"
+    raise SystemExit(
+        "Direct delivery is disabled. Run flows/agency_flow.py so approval, "
+        "governance, and idempotency gates are enforced."
     )
-    parser.add_argument("--attribution-model", type=str, default=None)
-    args = parser.parse_args()
-
-    result = run_full_pipeline(
-        client_id=args.client,
-        recipient_email=args.to,
-        powerbi_url=args.powerbi,
-        attribution_model=args.attribution_model,
-    )
-
-    print(f"\nReport sent to {result['recipient']}")
-    print(f"  Month:    {result['report_month']}")
-    print(f"  Pipeline: ${result['total_pipeline']:,.0f}")
-    print(f"  Channel:  {result['top_channel']}")

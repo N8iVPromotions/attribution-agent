@@ -13,6 +13,8 @@ import os
 import uuid
 from datetime import datetime, timezone
 
+from utils.sql import sql_literal
+
 logger = logging.getLogger(__name__)
 
 _OPS_SCHEMA = os.environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_ops")
@@ -53,7 +55,16 @@ class Checkpointer:
         step_name: str,
         error: str = "",
     ) -> None:
-        self._upsert_step(run_id, client_id, step_name, "failed", error_detail=error)
+        try:
+            self._upsert_step(
+                run_id, client_id, step_name, "failed", error_detail=error
+            )
+        except Exception as exc:
+            logger.warning(
+                "[Checkpoint] best-effort failure record failed for %s: %s",
+                step_name,
+                exc,
+            )
 
     def get_completed_steps(self, run_id: str, client_id: str) -> set[str]:
         """Return names of steps that completed successfully for this run+client."""
@@ -66,7 +77,8 @@ class Checkpointer:
 
             query = (
                 f"SELECT step_name FROM {_OPS_SCHEMA}.pipeline_checkpoints "
-                f"WHERE run_id = '{run_id}' AND client_id = '{client_id}' "
+                f"WHERE run_id = {sql_literal(run_id)} "
+                f"AND client_id = {sql_literal(client_id)} "
                 f"AND status = 'completed'"
             )
             if _is_databricks():
@@ -80,8 +92,10 @@ class Checkpointer:
             conn.close()
             return steps
         except Exception as exc:
-            logger.debug(f"[Checkpoint] get_completed_steps failed: {exc}")
-            return set()
+            logger.error(f"[Checkpoint] get_completed_steps failed: {exc}")
+            raise RuntimeError(
+                f"Unable to read checkpoints for {client_id}; refusing to rerun steps"
+            ) from exc
 
     def get_step_result(self, run_id: str, client_id: str, step_name: str) -> dict:
         """Return a completed step's stored result."""
@@ -96,13 +110,15 @@ class Checkpointer:
 
             query = (
                 f"SELECT result_json FROM {_OPS_SCHEMA}.pipeline_checkpoints "
-                f"WHERE run_id = '{run_id}' AND client_id = '{client_id}' "
-                f"AND step_name = '{step_name}' AND status = 'completed' "
+                f"WHERE run_id = {sql_literal(run_id)} "
+                f"AND client_id = {sql_literal(client_id)} "
+                f"AND step_name = {sql_literal(step_name)} "
+                f"AND status = 'completed' "
                 "ORDER BY completed_at DESC LIMIT 1"
             )
             if _is_databricks():
                 rows = _get_spark().sql(query).collect()
-                value = rows[0]["result_json"] if rows else "{}"
+                value = rows[0]["result_json"] if rows else None
             else:
                 conn = _get_connection()
                 cursor = conn.cursor()
@@ -110,7 +126,7 @@ class Checkpointer:
                 row = cursor.fetchone()
                 cursor.close()
                 conn.close()
-                value = row[0] if row else "{}"
+                value = row[0] if row else None
             if not value:
                 raise RuntimeError(
                     f"No completed checkpoint result for {client_id}/{step_name}"
@@ -136,34 +152,34 @@ class Checkpointer:
         result_json: str = "{}",
         error_detail: str = "",
     ) -> None:
-        try:
-            import pandas as pd
-            from utils.databricks_writer import _upsert_dataframe
+        import pandas as pd
+        from utils.databricks_writer import _upsert_dataframe
 
-            now = datetime.now(timezone.utc)
-            df = pd.DataFrame(
-                [
-                    {
-                        "checkpoint_id": checkpoint_id,
-                        "run_id": run_id,
-                        "agency_id": agency_id,
-                        "client_id": client_id,
-                        "step_name": step_name,
-                        "status": status,
-                        "started_at": now,
-                        "completed_at": now
-                        if status in ("completed", "failed")
-                        else None,
-                        "result_json": result_json,
-                        "error_detail": error_detail,
-                    }
-                ]
-            )
+        now = datetime.now(timezone.utc)
+        df = pd.DataFrame(
+            [
+                {
+                    "checkpoint_id": checkpoint_id,
+                    "run_id": run_id,
+                    "agency_id": agency_id,
+                    "client_id": client_id,
+                    "step_name": step_name,
+                    "status": status,
+                    "started_at": now,
+                    "completed_at": now if status in ("completed", "failed") else None,
+                    "result_json": result_json,
+                    "error_detail": error_detail,
+                }
+            ]
+        )
+        try:
             _upsert_dataframe(
                 df, _OPS_SCHEMA, "pipeline_checkpoints", ["checkpoint_id"]
             )
         except Exception as exc:
-            logger.debug(f"[Checkpoint] write failed for {step_name}: {exc}")
+            raise RuntimeError(
+                f"Unable to persist checkpoint start for {client_id}/{step_name}"
+            ) from exc
 
     def _upsert_step(
         self,
@@ -174,18 +190,32 @@ class Checkpointer:
         result_json: str = "{}",
         error_detail: str = "",
     ) -> None:
-        try:
-            from utils.databricks_writer import _run_sql
+        from utils.databricks_writer import _fetch_rows, _run_sql
 
-            now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
+        try:
             _run_sql(
                 f"UPDATE {_OPS_SCHEMA}.pipeline_checkpoints "
-                f"SET status = '{status}', "
-                f"    completed_at = CAST('{now}' AS TIMESTAMP), "
-                f"    result_json = '{result_json.replace(chr(39), '')}', "
-                f"    error_detail = '{error_detail.replace(chr(39), '')}' "
-                f"WHERE run_id = '{run_id}' AND client_id = '{client_id}' "
-                f"AND step_name = '{step_name}' AND status = 'started'"
+                f"SET status = {sql_literal(status)}, "
+                f"    completed_at = CAST({sql_literal(now)} AS TIMESTAMP), "
+                f"    result_json = {sql_literal(result_json)}, "
+                f"    error_detail = {sql_literal(error_detail)} "
+                f"WHERE run_id = {sql_literal(run_id)} "
+                f"AND client_id = {sql_literal(client_id)} "
+                f"AND step_name = {sql_literal(step_name)} AND status = 'started'"
             )
+            rows = _fetch_rows(
+                f"SELECT status FROM {_OPS_SCHEMA}.pipeline_checkpoints "
+                f"WHERE run_id = {sql_literal(run_id)} "
+                f"AND client_id = {sql_literal(client_id)} "
+                f"AND step_name = {sql_literal(step_name)} "
+                f"AND status = {sql_literal(status)} "
+                f"AND completed_at = CAST({sql_literal(now)} AS TIMESTAMP) "
+                "ORDER BY completed_at DESC LIMIT 1"
+            )
+            if not rows:
+                raise RuntimeError("checkpoint update matched no started step")
         except Exception as exc:
-            logger.debug(f"[Checkpoint] upsert_step failed: {exc}")
+            raise RuntimeError(
+                f"Unable to persist checkpoint state for {client_id}/{step_name}"
+            ) from exc

@@ -24,6 +24,7 @@ from agents.ingest.ad_sources import (
     normalize_linkedin_ads,
     normalize_meta_ads,
 )
+from agents.ingest.hubspot_connector import HubSpotConnector
 from agents.ingest.validator import HubSpotValidator, MetaValidator, StripeValidator
 
 
@@ -99,6 +100,7 @@ def hubspot_raw() -> pd.DataFrame:
             "deal_stage": ["closedwon"] * 3,
             "pipeline": ["default"] * 3,
             "amount": [5000.0, 10000.0, 7500.0],
+            "deal_currency_code": ["USD"] * 3,
             "close_date": pd.to_datetime(["2026-01-15", "2026-01-20", "2026-01-25"]),
             "create_date": pd.to_datetime(["2026-01-01", "2026-01-05", "2026-01-10"]),
             "stage_probability": [1.0, 1.0, 1.0],
@@ -133,6 +135,7 @@ def stripe_raw() -> pd.DataFrame:
             "customer_email": ["a@x.com", "b@x.com", "c@x.com"],
             "amount_paid": [5000.0, 10000.0, 7500.0],
             "currency": ["usd"] * 3,
+            "livemode": [True] * 3,
             "status": ["succeeded"] * 3,
             "refunded": [False, False, True],
             "refund_amount": [0.0, 0.0, 500.0],
@@ -142,6 +145,39 @@ def stripe_raw() -> pd.DataFrame:
             "source": ["stripe"] * 3,
         }
     )
+
+
+def _hubspot_api_payload(
+    *,
+    close_date: object,
+    deal_create_date: object,
+    contact_create_date: object,
+) -> tuple[list[dict], dict[str, dict]]:
+    deals = [
+        {
+            "id": "deal-1",
+            "properties": {
+                "dealname": "Deal One",
+                "dealstage": "closedwon",
+                "pipeline": "default",
+                "amount": "1000",
+                "deal_currency_code": "USD",
+                "hs_analytics_source": "PAID_SOCIAL",
+                "hs_analytics_source_data_1": "facebook",
+                "hs_analytics_source_data_2": "launch",
+                "closedate": close_date,
+                "createdate": deal_create_date,
+            },
+            "associations": {"contacts": {"results": [{"id": "contact-1"}]}},
+        }
+    ]
+    contacts = {
+        "contact-1": {
+            "email": "buyer@example.test",
+            "createdate": contact_create_date,
+        }
+    }
+    return deals, contacts
 
 
 # ─── META CONNECTOR CONTRACT ──────────────────────────────────────────────────
@@ -293,7 +329,61 @@ class TestLinkedInConnectorContract:
         assert (result["conversions"] == 0).all()
 
 
-# ─── HUBSPOT VALIDATOR CONTRACT ───────────────────────────────────────────────
+# ─── HUBSPOT CONNECTOR + VALIDATOR CONTRACT ───────────────────────────────────
+
+
+class TestHubSpotConnectorDateContract:
+    def test_normalize_accepts_iso_8601_property_dates(self):
+        deals, contacts = _hubspot_api_payload(
+            close_date="2026-01-15T18:30:00.000Z",
+            deal_create_date="2026-01-05T12:00:00.000Z",
+            contact_create_date="2026-01-01T12:00:00.000Z",
+        )
+
+        row = HubSpotConnector()._normalize(deals, contacts).iloc[0]
+
+        assert row["close_date"] == pd.Timestamp("2026-01-15 18:30:00")
+        assert row["close_datetime"] == pd.Timestamp("2026-01-15 18:30:00")
+        assert row["create_date"] == pd.Timestamp("2026-01-05 12:00:00")
+        assert row["lead_create_date"] == pd.Timestamp("2026-01-01 12:00:00")
+        assert row["days_to_deal"] == 4
+        assert row["hs_source"] == "PAID_SOCIAL"
+        assert row["hs_source_detail_1"] == "facebook"
+        assert row["hs_source_detail_2"] == "launch"
+        assert row["deal_currency_code"] == "USD"
+
+    def test_normalize_accepts_numeric_epoch_milliseconds(self):
+        close_date = pd.Timestamp("2026-01-15T18:30:00Z")
+        deal_create_date = pd.Timestamp("2026-01-05T12:00:00Z")
+        contact_create_date = pd.Timestamp("2026-01-01T12:00:00Z")
+        deals, contacts = _hubspot_api_payload(
+            close_date=int(close_date.timestamp() * 1000),
+            deal_create_date=str(int(deal_create_date.timestamp() * 1000)),
+            contact_create_date=int(contact_create_date.timestamp() * 1000),
+        )
+
+        row = HubSpotConnector()._normalize(deals, contacts).iloc[0]
+
+        assert row["close_date"] == close_date.tz_convert(None)
+        assert row["close_datetime"] == close_date.tz_convert(None)
+        assert row["create_date"] == deal_create_date.tz_convert(None)
+        assert row["lead_create_date"] == contact_create_date.tz_convert(None)
+        assert row["days_to_deal"] == 4
+
+    def test_normalize_keeps_invalid_dates_missing(self):
+        deals, contacts = _hubspot_api_payload(
+            close_date="not-a-date",
+            deal_create_date="",
+            contact_create_date="also-not-a-date",
+        )
+
+        row = HubSpotConnector()._normalize(deals, contacts).iloc[0]
+
+        assert row["close_date"] is None
+        assert row["close_datetime"] is None
+        assert row["create_date"] is None
+        assert row["lead_create_date"] is None
+        assert row["days_to_deal"] is None
 
 
 class TestHubSpotValidatorContract:
@@ -313,19 +403,35 @@ class TestHubSpotValidatorContract:
         assert len(result_df) == len(hubspot_raw)
         assert any("duplicate" in w.lower() for w in report.warnings)
 
-    def test_warns_on_low_utm_coverage(self):
+    def test_rejects_non_usd_deal_amounts(self, hubspot_raw):
+        hubspot_raw.loc[0, "deal_currency_code"] = "EUR"
+        _, report = HubSpotValidator("test").validate(hubspot_raw)
+        assert not report.passed
+        assert any("non-USD" in error for error in report.errors)
+
+    def test_warns_on_low_deal_campaign_coverage(self):
         no_utm = pd.DataFrame(
             {
                 "deal_id": [f"d{i}" for i in range(10)],
                 "deal_stage": ["closedwon"] * 10,
                 "amount": [1000.0] * 10,
+                "deal_currency_code": ["USD"] * 10,
                 "create_date": pd.to_datetime(["2026-01-01"] * 10),
                 "hs_source": ["PAID_SOCIAL"] * 10,
-                "utm_campaign": [None] * 10,
+                "hs_source_detail_1": ["facebook"] * 10,
+                "hs_source_detail_2": [None] * 10,
             }
         )
         _, report = HubSpotValidator("test").validate(no_utm)
-        assert any("utm_campaign" in w for w in report.warnings)
+        assert any("campaign identity" in warning for warning in report.warnings)
+
+    def test_catches_missing_deal_level_source_contract(self, hubspot_raw):
+        bad = hubspot_raw.drop(columns=["hs_source_detail_2"])
+
+        _, report = HubSpotValidator("test").validate(bad)
+
+        assert not report.passed
+        assert any("hs_source_detail_2" in error for error in report.errors)
 
 
 # ─── STRIPE VALIDATOR CONTRACT ────────────────────────────────────────────────
@@ -335,6 +441,48 @@ class TestStripeValidatorContract:
     def test_passes_on_clean_data(self, stripe_raw):
         _, report = StripeValidator("test").validate(stripe_raw)
         assert report.passed
+
+    def test_rejects_non_usd_payments(self, stripe_raw):
+        stripe_raw.loc[0, "currency"] = "eur"
+
+        _, report = StripeValidator("test").validate(stripe_raw)
+
+        assert not report.passed
+        assert any("non-USD" in error and "EUR" in error for error in report.errors)
+
+    def test_missing_currency_is_not_also_reported_as_non_usd(self, stripe_raw):
+        stripe_raw.loc[0, "currency"] = ""
+
+        _, report = StripeValidator("test").validate(stripe_raw)
+
+        currency_errors = [error for error in report.errors if "currency" in error]
+        assert currency_errors == [
+            "Stripe payment currency is missing; USD-only reporting cannot be verified"
+        ]
+
+    def test_live_delivery_rejects_test_mode_payments(self, stripe_raw):
+        stripe_raw.loc[0, "livemode"] = False
+
+        _, report = StripeValidator("test", require_live_mode=True).validate(stripe_raw)
+
+        assert not report.passed
+        assert any("test-mode" in error for error in report.errors)
+
+    def test_passes_without_email_when_exact_deal_id_is_present(self, stripe_raw):
+        exact_id_only = stripe_raw.drop(columns=["customer_email"])
+
+        _, report = StripeValidator("test").validate(exact_id_only)
+
+        assert report.passed
+
+    def test_fails_with_email_when_exact_deal_id_is_missing(self, stripe_raw):
+        email_only = stripe_raw.copy()
+        email_only["hubspot_deal_id"] = ""
+
+        _, report = StripeValidator("test").validate(email_only)
+
+        assert not report.passed
+        assert any("hubspot_deal_id" in error for error in report.errors)
 
     def test_catches_missing_required_columns(self):
         bad = pd.DataFrame({"payment_id": ["pi_1"], "amount_paid": [100.0]})
@@ -346,6 +494,7 @@ class TestStripeValidatorContract:
             {
                 "payment_id": ["pi_1"],
                 "customer_email": ["a@x.com"],
+                "hubspot_deal_id": ["d1"],
                 "amount_paid": [-100.0],
                 "status": ["succeeded"],
             }

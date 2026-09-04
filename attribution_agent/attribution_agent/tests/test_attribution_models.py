@@ -2,7 +2,18 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from attribution_models import Touchpoint, allocate_credit
+from attribution_models import (
+    ATTRIBUTION_MODEL_DESCRIPTIONS,
+    ATTRIBUTION_MODEL_LABELS,
+    Touchpoint,
+    allocate_credit,
+)
+
+
+def test_production_slug_is_labeled_as_crm_source_match():
+    assert ATTRIBUTION_MODEL_LABELS["last_touch"] == "CRM Source Match"
+    assert "CRM-recorded paid source" in ATTRIBUTION_MODEL_DESCRIPTIONS["last_touch"]
+    assert "final known touchpoint" not in ATTRIBUTION_MODEL_DESCRIPTIONS["last_touch"]
 
 
 def _journey(count=4):
@@ -45,6 +56,19 @@ def test_w_shape_weights_first_lead_and_last_touch():
     credits = [item.credit for item in result]
     assert credits == pytest.approx([0.3, 0.3, 0.1, 0.3])
     assert sum(credits) == pytest.approx(1.0)
+
+
+def test_w_shape_without_observed_lead_creation_degrades_to_u_shape():
+    journey = [
+        Touchpoint(
+            touchpoint_id=f"tp-{idx}",
+            occurred_at=datetime(2026, 1, 1) + timedelta(days=idx),
+            channel=f"Channel {idx}",
+        )
+        for idx in range(4)
+    ]
+    credits = [item.credit for item in allocate_credit(journey, "w_shape")]
+    assert credits == pytest.approx([0.4, 0.1, 0.1, 0.4])
 
 
 def test_time_decay_sums_to_one_and_favors_recent_touchpoints():

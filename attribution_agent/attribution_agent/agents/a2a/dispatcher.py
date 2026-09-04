@@ -77,7 +77,7 @@ def _executive_reporting(inp: dict) -> dict:
     )
 
 
-def _governance_reviewer(inp: dict) -> list[str]:
+def _governance_reviewer(inp: dict) -> dict:
     from agents.intelligence.n8iv_agents import run_governance_review
 
     return run_governance_review(

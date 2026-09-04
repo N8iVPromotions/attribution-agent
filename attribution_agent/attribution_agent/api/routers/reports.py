@@ -1,7 +1,9 @@
 from __future__ import annotations
 import json
+import logging
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException
+from agents.insight.insight_agent import generate_insight_report
 from api.auth import (
     AuthPrincipal,
     require_auth,
@@ -9,10 +11,13 @@ from api.auth import (
     require_permission,
 )
 from api.models import InsightReportResponse
+from config.client_config import get_client
 from config.rbac_config import Permission
+from utils.databricks_writer import write_insight_report
 from utils.sql import sql_literal
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+logger = logging.getLogger(__name__)
 
 
 def _row_to_response(row: dict) -> InsightReportResponse:
@@ -41,6 +46,7 @@ def _row_to_response(row: dict) -> InsightReportResponse:
         run_id=row.get("run_id", ""),
         prompt_version=row.get("prompt_version", ""),
         model_id=row.get("model_id", ""),
+        status=row.get("status") or "generated",
     )
 
 
@@ -71,6 +77,37 @@ def _fetch_reports(client_id: str, limit: int = 1) -> list[dict]:
         return []
 
 
+def _generate_and_store_report(client_id: str, run_id: str) -> str:
+    report = generate_insight_report(client_id, run_id=run_id)
+    has_attribution = bool(
+        report.report_month
+        and report.report_month != "N/A"
+        and (report.total_pipeline > 0 or report.collected_revenue > 0)
+    )
+    if not has_attribution:
+        raise RuntimeError(
+            "Report generation produced no attribution data; persistence blocked."
+        )
+
+    config = get_client(client_id)
+    return write_insight_report(
+        {
+            **report.to_dict(),
+            "agency_id": config.agency_id,
+            "run_id": run_id,
+            "status": "generated",
+        }
+    )
+
+
+def _run_report_generation(client_id: str, run_id: str) -> str:
+    try:
+        return _generate_and_store_report(client_id, run_id)
+    except Exception:
+        logger.exception("[ReportAPI] Report generation failed for %s", client_id)
+        raise
+
+
 @router.get("/{client_id}/latest", response_model=InsightReportResponse)
 async def get_latest_report(
     client_id: str,
@@ -98,10 +135,9 @@ async def list_reports(
     return [_row_to_response(r) for r in rows]
 
 
-@router.post("/{client_id}/generate", status_code=202)
+@router.post("/{client_id}/generate", status_code=201)
 async def trigger_report_generation(
     client_id: str,
-    background_tasks: BackgroundTasks,
     principal: AuthPrincipal = Depends(require_auth),
 ) -> dict:
     require_permission(principal, Permission.RUN_PIPELINE_DRY)
@@ -112,26 +148,24 @@ async def trigger_report_generation(
     if client_id not in CLIENT_REGISTRY:
         raise HTTPException(status_code=404, detail=f"Client '{client_id}' not found")
 
-    run_id = str(uuid.uuid4())[:8]
-
-    def _generate():
-        try:
-            from agents.insight.insight_agent import InsightAgent
-            from config.client_config import get_client
-
-            cfg = get_client(client_id)
-            agent = InsightAgent(cfg)
-            agent.generate_and_store()
-        except Exception as exc:
-            import logging
-
-            logging.getLogger(__name__).warning(
-                f"[ReportAPI] Background generation failed for {client_id}: {exc}"
-            )
-
-    background_tasks.add_task(_generate)
+    run_id = str(uuid.uuid4())
+    try:
+        report_id = _run_report_generation(client_id, run_id)
+    except RuntimeError as exc:
+        if "no attribution data" in str(exc).lower():
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=502,
+            detail="Report generation failed; inspect the run logs and retry.",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Report generation failed; inspect the run logs and retry.",
+        ) from exc
     return {
         "run_id": run_id,
-        "status": "accepted",
-        "message": "Report generation started",
+        "report_id": report_id,
+        "status": "generated",
+        "message": "Report generated and persisted",
     }

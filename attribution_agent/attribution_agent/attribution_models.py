@@ -23,7 +23,9 @@ AttributionModel = Literal[
 ]
 
 ATTRIBUTION_MODEL_LABELS: dict[str, str] = {
-    "last_touch": "Last Touch",
+    # The persisted slug remains for backward compatibility. Production uses
+    # CRM source evidence, not an observed final touchpoint journey.
+    "last_touch": "CRM Source Match",
     "first_touch": "First Touch",
     "linear": "Linear",
     "time_decay": "Time Decay",
@@ -33,8 +35,9 @@ ATTRIBUTION_MODEL_LABELS: dict[str, str] = {
 
 ATTRIBUTION_MODEL_DESCRIPTIONS: dict[str, str] = {
     "last_touch": (
-        "Credits the final known touchpoint before conversion. Useful when the "
-        "business wants to understand closing channels and near-term demand capture."
+        "Credits a closed-won deal only when its CRM-recorded paid source has "
+        "matching ad evidence. A supplied campaign must match exactly; when the "
+        "CRM has no campaign identity, matching is limited to the recorded platform."
     ),
     "first_touch": (
         "Credits the first known touchpoint. Useful when the business is focused "
@@ -129,17 +132,31 @@ def allocate_credit(
             weights = [0.40] + [middle_credit] * (count - 2) + [0.40]
     elif selected_model == "w_shape":
         lead_idx = _lead_creation_index(ordered)
-        key_indices = sorted({0, lead_idx, count - 1})
-        if len(key_indices) == count:
-            weights = [1.0 / count] * count
+        # W-shape requires an observed lead-creation milestone.  Inventing one
+        # from the middle of a journey makes the output look more precise than
+        # the source data supports, so degrade honestly to U-shape when that
+        # milestone is unavailable.
+        if lead_idx is None:
+            middle_credit = 0.20 / (count - 2) if count > 2 else 0.0
+            weights = (
+                [0.5, 0.5]
+                if count == 2
+                else [0.40] + [middle_credit] * (count - 2) + [0.40]
+            )
         else:
-            weights = [0.0] * count
-            for idx in key_indices:
-                weights[idx] = 0.30
-            remaining_indices = [idx for idx in range(count) if idx not in key_indices]
-            remaining_credit = 1.0 - sum(weights)
-            for idx in remaining_indices:
-                weights[idx] = remaining_credit / len(remaining_indices)
+            key_indices = sorted({0, lead_idx, count - 1})
+            if len(key_indices) == count:
+                weights = [1.0 / count] * count
+            else:
+                weights = [0.0] * count
+                for idx in key_indices:
+                    weights[idx] = 0.30
+                remaining_indices = [
+                    idx for idx in range(count) if idx not in key_indices
+                ]
+                remaining_credit = 1.0 - sum(weights)
+                for idx in remaining_indices:
+                    weights[idx] = remaining_credit / len(remaining_indices)
     else:  # pragma: no cover - normalize_model prevents this
         raise ValueError(f"Unsupported attribution model: {selected_model}")
 
@@ -153,8 +170,8 @@ def allocate_credit(
     ]
 
 
-def _lead_creation_index(touchpoints: list[Touchpoint]) -> int:
+def _lead_creation_index(touchpoints: list[Touchpoint]) -> int | None:
     for idx, touchpoint in enumerate(touchpoints):
         if touchpoint.role == "lead_creation":
             return idx
-    return len(touchpoints) // 2
+    return None

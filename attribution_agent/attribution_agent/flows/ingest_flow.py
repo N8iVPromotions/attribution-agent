@@ -31,7 +31,12 @@ except NameError:
 sys.path.insert(0, _root)
 
 
-from config.client_config import ClientConfig, get_client, list_clients
+from config.client_config import (
+    ClientConfig,
+    get_client,
+    list_clients,
+    stripe_history_start_datetime,
+)
 from agents.ingest.meta_connector import iter_meta_data_batches, pull_meta_data
 from agents.ingest.google_ads_connector import (
     iter_google_ads_batches,
@@ -83,6 +88,7 @@ from utils.operator_alerts import (
     build_validation_alerts,
     dispatch_alerts,
 )
+from utils.report_period import extraction_lookback_days, resolve_report_period
 
 
 @dataclass
@@ -180,6 +186,9 @@ def _process_stream_source(
                     delay=15,
                     label=f"write-{plan.name}-normalized",
                 )
+    if result.source_rows == 0 and plan.validator:
+        _, report = plan.validator(pd.DataFrame())
+        result.reports.append(report)
     return result
 
 
@@ -189,14 +198,19 @@ def step_setup(schema: str) -> None:
     _with_retry(lambda: ensure_tables(schema), label="setup-tables")
 
 
-def step_pull_meta(config: ClientConfig, meta_token: str, run_id: str = ""):
+def step_pull_meta(
+    config: ClientConfig,
+    meta_token: str,
+    run_id: str = "",
+    lookback_days: int | None = None,
+):
     if not config.meta_enabled:
         logger.info("[Meta] Not enabled — skipping")
         return None
     return _with_retry(
         lambda: pull_meta_data(
             ad_account_id=config.meta_ad_account_id,
-            lookback_days=config.lookback_days,
+            lookback_days=lookback_days or config.lookback_days,
             access_token=meta_token,
             client_id=config.client_id,
             run_id=run_id,
@@ -207,13 +221,18 @@ def step_pull_meta(config: ClientConfig, meta_token: str, run_id: str = ""):
     )
 
 
-def step_pull_hubspot(config: ClientConfig, hubspot_token: str, run_id: str = ""):
+def step_pull_hubspot(
+    config: ClientConfig,
+    hubspot_token: str,
+    run_id: str = "",
+    lookback_days: int | None = None,
+):
     if not config.hubspot_enabled:
         logger.info("[HubSpot] Not enabled — skipping")
         return None
     return _with_retry(
         lambda: pull_hubspot_data(
-            lookback_days=config.lookback_days,
+            lookback_days=lookback_days or config.lookback_days,
             pipeline_id=config.hubspot_pipeline_id,
             access_token=hubspot_token,
             client_id=config.client_id,
@@ -225,14 +244,19 @@ def step_pull_hubspot(config: ClientConfig, hubspot_token: str, run_id: str = ""
     )
 
 
-def step_pull_google_ads(config: ClientConfig, google_token: str, run_id: str = ""):
+def step_pull_google_ads(
+    config: ClientConfig,
+    google_token: str,
+    run_id: str = "",
+    lookback_days: int | None = None,
+):
     if not getattr(config, "google_ads_enabled", False):
         logger.info("[Google Ads] Not enabled — skipping")
         return None
     return _with_retry(
         lambda: pull_google_ads_data(
             customer_id=config.google_ads_customer_id,
-            lookback_days=config.lookback_days,
+            lookback_days=lookback_days or config.lookback_days,
             access_token=google_token,
             client_id=config.client_id,
             run_id=run_id,
@@ -243,14 +267,19 @@ def step_pull_google_ads(config: ClientConfig, google_token: str, run_id: str = 
     )
 
 
-def step_pull_linkedin_ads(config: ClientConfig, linkedin_token: str, run_id: str = ""):
+def step_pull_linkedin_ads(
+    config: ClientConfig,
+    linkedin_token: str,
+    run_id: str = "",
+    lookback_days: int | None = None,
+):
     if not getattr(config, "linkedin_ads_enabled", False):
         logger.info("[LinkedIn Ads] Not enabled — skipping")
         return None
     return _with_retry(
         lambda: pull_linkedin_ads_data(
             account_id=config.linkedin_ads_account_id,
-            lookback_days=config.lookback_days,
+            lookback_days=lookback_days or config.lookback_days,
             access_token=linkedin_token,
             client_id=config.client_id,
             run_id=run_id,
@@ -261,14 +290,19 @@ def step_pull_linkedin_ads(config: ClientConfig, linkedin_token: str, run_id: st
     )
 
 
-def step_pull_tiktok_ads(config: ClientConfig, tiktok_token: str, run_id: str = ""):
+def step_pull_tiktok_ads(
+    config: ClientConfig,
+    tiktok_token: str,
+    run_id: str = "",
+    lookback_days: int | None = None,
+):
     if not getattr(config, "tiktok_ads_enabled", False):
         logger.info("[TikTok Ads] Not enabled — skipping")
         return None
     return _with_retry(
         lambda: pull_tiktok_ads_data(
             advertiser_id=config.tiktok_ads_advertiser_id,
-            lookback_days=config.lookback_days,
+            lookback_days=lookback_days or config.lookback_days,
             access_token=tiktok_token,
             client_id=config.client_id,
             run_id=run_id,
@@ -293,7 +327,11 @@ def step_validate_meta(df, config: ClientConfig):
 def step_validate_hubspot(df, config: ClientConfig):
     if df is None:
         return None, None
-    return validate_hubspot(df=df, client_id=config.client_id)
+    return validate_hubspot(
+        df=df,
+        client_id=config.client_id,
+        expected_currency=config.reporting_currency,
+    )
 
 
 def step_write_meta(validated_result, config: ClientConfig) -> int:
@@ -326,16 +364,30 @@ def step_write_hubspot(validated_result, config: ClientConfig) -> int:
     )
 
 
-def step_pull_stripe(config: ClientConfig, stripe_token: str, run_id: str = ""):
+def step_pull_stripe(
+    config: ClientConfig,
+    stripe_token: str,
+    run_id: str = "",
+    lookback_days: int | None = None,
+    require_live_mode: bool = False,
+):
     if not config.stripe_enabled:
         logger.info("[Stripe] Not enabled — skipping")
         return None
+    if not config.stripe_account_id.strip():
+        raise ValueError("stripe_account_id is required when Stripe is enabled")
+    history_start = stripe_history_start_datetime(
+        getattr(config, "stripe_history_start_date", "")
+    )
     return _with_retry(
         lambda: pull_stripe_data(
-            lookback_days=config.lookback_days,
+            lookback_days=lookback_days or config.lookback_days,
             access_token=stripe_token,
             client_id=config.client_id,
             run_id=run_id,
+            start_datetime=history_start,
+            expected_account_id=config.stripe_account_id,
+            require_live_mode=require_live_mode,
         ),
         retries=3,
         delay=30,
@@ -343,10 +395,15 @@ def step_pull_stripe(config: ClientConfig, stripe_token: str, run_id: str = ""):
     )
 
 
-def step_validate_stripe(df, config: ClientConfig):
+def step_validate_stripe(df, config: ClientConfig, *, require_live_mode: bool = False):
     if df is None:
         return None, None
-    return validate_stripe(df=df, client_id=config.client_id)
+    return validate_stripe(
+        df=df,
+        client_id=config.client_id,
+        expected_currency=config.reporting_currency,
+        require_live_mode=require_live_mode,
+    )
 
 
 def step_write_stripe(validated_result, config: ClientConfig) -> int:
@@ -410,6 +467,7 @@ def step_build_attribution(
             hubspot_df=hubspot_df,
             stripe_df=stripe_df,
             lookback_days=config.lookback_days,
+            closed_won_stages=config.hubspot_closed_won_stage_ids,
         )
         scorecard = result.channel_performance
         rows_written = _with_retry(
@@ -504,8 +562,13 @@ def _run_data_quality_reports(
 
 
 def _stream_source_plans(
-    config: ClientConfig, tokens: dict[str, str], run_id: str
+    config: ClientConfig,
+    tokens: dict[str, str],
+    run_id: str,
+    lookback_days: int | None = None,
+    require_live_mode: bool = False,
 ) -> list[StreamSourcePlan]:
+    source_lookback = lookback_days or config.lookback_days
     plans: list[StreamSourcePlan] = []
     if config.meta_enabled:
         plans.append(
@@ -513,7 +576,7 @@ def _stream_source_plans(
                 name="meta",
                 batches=iter_meta_data_batches(
                     config.meta_ad_account_id,
-                    config.lookback_days,
+                    source_lookback,
                     tokens["meta"],
                     config.client_id,
                     run_id,
@@ -534,7 +597,7 @@ def _stream_source_plans(
                 name="google-ads",
                 batches=iter_google_ads_batches(
                     config.google_ads_customer_id,
-                    config.lookback_days,
+                    source_lookback,
                     tokens["google_ads"],
                     config.client_id,
                     run_id,
@@ -548,7 +611,7 @@ def _stream_source_plans(
                 name="linkedin-ads",
                 batches=iter_linkedin_ads_batches(
                     config.linkedin_ads_account_id,
-                    config.lookback_days,
+                    source_lookback,
                     tokens["linkedin_ads"],
                     config.client_id,
                     run_id,
@@ -562,7 +625,7 @@ def _stream_source_plans(
                 name="tiktok-ads",
                 batches=iter_tiktok_ads_batches(
                     config.tiktok_ads_advertiser_id,
-                    config.lookback_days,
+                    source_lookback,
                     tokens["tiktok_ads"],
                     config.client_id,
                     run_id,
@@ -575,39 +638,83 @@ def _stream_source_plans(
             StreamSourcePlan(
                 name="hubspot",
                 batches=iter_hubspot_batches(
-                    config.lookback_days,
+                    source_lookback,
                     config.hubspot_pipeline_id,
                     tokens["hubspot"],
                     config.client_id,
                     run_id,
                 ),
                 raw_writer=write_hubspot_batches,
-                validator=lambda frame: validate_hubspot(frame, config.client_id),
+                validator=lambda frame: validate_hubspot(
+                    frame,
+                    config.client_id,
+                    expected_currency=config.reporting_currency,
+                ),
             )
         )
     if config.stripe_enabled:
         plans.append(
             StreamSourcePlan(
                 name="stripe",
-                batches=iter_stripe_batches(
-                    config.lookback_days,
-                    tokens["stripe"],
-                    config.client_id,
-                    run_id,
+                batches=_iter_stripe_history_batches(
+                    config=config,
+                    stripe_token=tokens["stripe"],
+                    run_id=run_id,
+                    lookback_days=source_lookback,
+                    require_live_mode=require_live_mode,
                 ),
                 raw_writer=write_stripe_batches,
-                validator=lambda frame: validate_stripe(frame, config.client_id),
+                validator=lambda frame: validate_stripe(
+                    frame,
+                    config.client_id,
+                    expected_currency=config.reporting_currency,
+                    require_live_mode=require_live_mode,
+                ),
             )
         )
     return plans
 
 
-def _stream_ingest(config: ClientConfig, tokens: dict[str, str], run_id: str) -> dict:
+def _iter_stripe_history_batches(
+    *,
+    config: ClientConfig,
+    stripe_token: str,
+    run_id: str,
+    lookback_days: int,
+    require_live_mode: bool = False,
+) -> Iterable[pa.RecordBatch]:
+    """Defer config validation so streaming records it as a Stripe failure."""
+    history_start = stripe_history_start_datetime(
+        getattr(config, "stripe_history_start_date", "")
+    )
+    if not config.stripe_account_id.strip():
+        raise ValueError("stripe_account_id is required when Stripe is enabled")
+    yield from iter_stripe_batches(
+        lookback_days,
+        stripe_token,
+        config.client_id,
+        run_id,
+        start_datetime=history_start,
+        expected_account_id=config.stripe_account_id,
+        require_live_mode=require_live_mode,
+    )
+
+
+def _stream_ingest(
+    config: ClientConfig,
+    tokens: dict[str, str],
+    run_id: str,
+    report_month: str,
+    lookback_days: int,
+    require_live_mode: bool = False,
+) -> dict:
     source_results: dict[str, StreamSourceResult] = {}
     source_failures: dict[str, str] = {}
     reports: list[ValidationReport] = []
 
-    for plan in _stream_source_plans(config, tokens, run_id):
+    for plan in _stream_source_plans(
+        config, tokens, run_id, lookback_days, require_live_mode
+    ):
         try:
             _raise_staging_vendor_error(plan.name, config.client_id)
             result = _process_stream_source(plan, config)
@@ -631,6 +738,8 @@ def _stream_ingest(config: ClientConfig, tokens: dict[str, str], run_id: str) ->
     summary = {
         "client_id": config.client_id,
         "run_id": run_id,
+        "report_month": report_month,
+        "extraction_lookback_days": lookback_days,
         "meta_rows": source_rows("meta", "raw_rows"),
         "google_rows": source_rows("google-ads"),
         "linkedin_rows": source_rows("linkedin-ads"),
@@ -672,12 +781,23 @@ def ingest_flow(
     client_id: str,
     run_id: str = "",
     attribution_model: str | None = None,
+    report_month: str | None = None,
+    require_live_mode: bool = False,
 ) -> dict:
     logger.info(f"{'=' * 50}")
     logger.info(f"Ingest Flow START | client={client_id}")
     logger.info(f"{'=' * 50}")
 
     config = get_client(client_id)
+    period = resolve_report_period(
+        report_month or os.environ.get("ARIE_REPORT_MONTH") or None
+    )
+    source_lookback = extraction_lookback_days(period, config.lookback_days)
+    logger.info(
+        "[Ingest] report_month=%s extraction_lookback_days=%s",
+        period.month,
+        source_lookback,
+    )
 
     meta_token = config.meta_access_token
     hubspot_token = config.hubspot_access_token
@@ -704,7 +824,14 @@ def ingest_flow(
 
     step_setup(config.databricks_schema)
     if _streaming_enabled():
-        return _stream_ingest(config, tokens, run_id)
+        return _stream_ingest(
+            config,
+            tokens,
+            run_id,
+            period.month,
+            source_lookback,
+            require_live_mode,
+        )
 
     source_failures: dict = {}
     try:
@@ -715,14 +842,41 @@ def ingest_flow(
         logger.warning("[Ingest] Invalid ARIE_INGEST_SOURCE_WORKERS; using 3")
         source_workers = 3
     with concurrent.futures.ThreadPoolExecutor(max_workers=source_workers) as pool:
-        meta_future = pool.submit(step_pull_meta, config, meta_token, run_id)
-        google_future = pool.submit(step_pull_google_ads, config, google_token, run_id)
-        linkedin_future = pool.submit(
-            step_pull_linkedin_ads, config, linkedin_token, run_id
+        meta_future = pool.submit(
+            step_pull_meta, config, meta_token, run_id, source_lookback
         )
-        tiktok_future = pool.submit(step_pull_tiktok_ads, config, tiktok_token, run_id)
-        hubspot_future = pool.submit(step_pull_hubspot, config, hubspot_token, run_id)
-        stripe_future = pool.submit(step_pull_stripe, config, stripe_token, run_id)
+        google_future = pool.submit(
+            step_pull_google_ads, config, google_token, run_id, source_lookback
+        )
+        linkedin_future = pool.submit(
+            step_pull_linkedin_ads,
+            config,
+            linkedin_token,
+            run_id,
+            source_lookback,
+        )
+        tiktok_future = pool.submit(
+            step_pull_tiktok_ads,
+            config,
+            tiktok_token,
+            run_id,
+            source_lookback,
+        )
+        hubspot_future = pool.submit(
+            step_pull_hubspot,
+            config,
+            hubspot_token,
+            run_id,
+            source_lookback,
+        )
+        stripe_future = pool.submit(
+            step_pull_stripe,
+            config,
+            stripe_token,
+            run_id,
+            source_lookback,
+            require_live_mode,
+        )
         meta_df = _collect(meta_future, "pull-meta", source_failures)
         google_df = _collect(google_future, "pull-google-ads", source_failures)
         linkedin_df = _collect(linkedin_future, "pull-linkedin-ads", source_failures)
@@ -732,21 +886,34 @@ def ingest_flow(
 
     meta_validated = step_validate_meta(meta_df, config)
     hubspot_validated = step_validate_hubspot(hubspot_df, config)
-    stripe_validated = step_validate_stripe(stripe_df, config)
+    stripe_validated = step_validate_stripe(
+        stripe_df, config, require_live_mode=require_live_mode
+    )
+    for source_name, validated_result in (
+        ("meta", meta_validated),
+        ("hubspot", hubspot_validated),
+        ("stripe", stripe_validated),
+    ):
+        report = validated_result[1] if validated_result else None
+        if report and not report.passed:
+            source_failures[f"validate-{source_name}"] = "; ".join(report.errors)
+    validated_meta_df = meta_validated[0]
+    validated_hubspot_df = hubspot_validated[0]
+    validated_stripe_df = stripe_validated[0]
 
     meta_rows = step_write_meta(meta_validated, config)
     hubspot_rows = step_write_hubspot(hubspot_validated, config)
     stripe_rows = step_write_stripe(stripe_validated, config)
     normalized_ads = build_normalized_ads(
-        meta_df, google_df, linkedin_df, tiktok_df, config
+        validated_meta_df, google_df, linkedin_df, tiktok_df, config
     )
     normalized_ad_rows = step_write_normalized_ads(normalized_ads, config)
 
     # Closed-loop join: attribute closed/won revenue back to ad touchpoints.
     attribution = step_build_attribution(
         normalized_ads,
-        hubspot_df,
-        stripe_df,
+        validated_hubspot_df,
+        validated_stripe_df,
         config,
         attribution_model=attribution_model,
     )
@@ -756,6 +923,8 @@ def ingest_flow(
     summary = {
         "client_id": client_id,
         "run_id": run_id,
+        "report_month": period.month,
+        "extraction_lookback_days": source_lookback,
         "meta_rows": meta_rows,
         "google_rows": 0 if google_df is None else len(google_df),
         "linkedin_rows": 0 if linkedin_df is None else len(linkedin_df),
@@ -792,10 +961,10 @@ def ingest_flow(
     return summary
 
 
-def ingest_all_clients() -> list[dict]:
+def ingest_all_clients(report_month: str | None = None) -> list[dict]:
     results = []
     for client_id in list_clients():
-        result = ingest_flow(client_id)
+        result = ingest_flow(client_id, report_month=report_month)
         results.append(result)
     return results
 
@@ -806,14 +975,18 @@ if __name__ == "__main__":
         from databricks.sdk.runtime import dbutils
 
         client_id = dbutils.widgets.get("client")
-        ingest_flow(client_id=client_id)
+        ingest_flow(
+            client_id=client_id,
+            report_month=os.environ.get("ARIE_REPORT_MONTH") or None,
+        )
     else:
         import argparse
 
         parser = argparse.ArgumentParser()
         parser.add_argument("--client", type=str, default=None)
+        parser.add_argument("--report-month")
         args, _ = parser.parse_known_args()
         if args.client:
-            ingest_flow(client_id=args.client)
+            ingest_flow(client_id=args.client, report_month=args.report_month)
         else:
-            ingest_all_clients()
+            ingest_all_clients(report_month=args.report_month)

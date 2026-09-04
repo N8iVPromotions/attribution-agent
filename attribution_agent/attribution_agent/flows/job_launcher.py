@@ -8,7 +8,11 @@ import os
 import time
 
 from flows.agency_flow import build_client_work_items
-from utils.work_manifest import create_work_manifest
+from utils.report_period import resolve_report_period
+from utils.work_manifest import (
+    create_work_manifest,
+    validate_warehouse_attribution_model,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,10 +106,12 @@ def launch(
     client_filter: list[str] | None,
     dry_run: bool,
     attribution_model: str,
+    report_month: str | None = None,
     expected_client_count: int | None = None,
     simulate_vendor_error: str | None = None,
     simulate_vendor_error_client: str | None = None,
 ) -> dict:
+    selected_model = validate_warehouse_attribution_model(attribution_model)
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("PROJECT_ID")
     if not project_id:
         raise RuntimeError("GOOGLE_CLOUD_PROJECT or PROJECT_ID is required")
@@ -119,13 +125,19 @@ def launch(
         raise RuntimeError(
             f"Expected {expected_client_count} clients, found {len(work_items)}"
         )
+    period = resolve_report_period(report_month)
     manifest_uri, manifest = create_work_manifest(
         work_items,
         dry_run=dry_run,
-        attribution_model=attribution_model,
+        attribution_model=selected_model,
+        report_month=period.month,
     )
     environment = {
+        "ARIE_PERIOD_END": period.end.isoformat(),
+        "ARIE_PERIOD_START": period.start.isoformat(),
         "ARIE_WORK_MANIFEST_URI": manifest_uri,
+        "ARIE_REPORT_MONTH": period.month,
+        "ARIE_REPORT_TIMEZONE": period.timezone_name,
         "ARIE_STREAMING_INGEST": "true",
     }
     if simulate_vendor_error:
@@ -153,11 +165,18 @@ def launch(
         project_id=project_id,
         region=region,
         job_name=finalizer_job,
-        environment={"ARIE_WORK_MANIFEST_URI": manifest_uri},
+        environment={
+            "ARIE_PERIOD_END": period.end.isoformat(),
+            "ARIE_PERIOD_START": period.start.isoformat(),
+            "ARIE_REPORT_MONTH": period.month,
+            "ARIE_REPORT_TIMEZONE": period.timezone_name,
+            "ARIE_WORK_MANIFEST_URI": manifest_uri,
+        },
     )
     return {
         "run_id": manifest["run_id"],
         "manifest_uri": manifest_uri,
+        "report_month": period.month,
         "task_count": len(work_items),
         "pipeline_execution": pipeline_execution["name"],
         "finalizer_execution": finalizer_execution["name"],
@@ -170,6 +189,7 @@ def main() -> None:
     parser.add_argument("--client", action="append", dest="clients")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--attribution-model", default="last_touch")
+    parser.add_argument("--report-month")
     parser.add_argument("--expected-client-count", type=int)
     parser.add_argument("--simulate-vendor-error")
     parser.add_argument("--simulate-vendor-error-client")
@@ -181,6 +201,7 @@ def main() -> None:
             client_filter=args.clients,
             dry_run=args.dry_run,
             attribution_model=args.attribution_model,
+            report_month=args.report_month,
             expected_client_count=args.expected_client_count,
             simulate_vendor_error=args.simulate_vendor_error,
             simulate_vendor_error_client=args.simulate_vendor_error_client,

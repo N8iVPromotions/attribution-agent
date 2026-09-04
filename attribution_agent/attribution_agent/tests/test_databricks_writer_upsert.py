@@ -1,8 +1,50 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from utils import databricks_writer as db
+
+
+def test_connection_rejects_mock_credentials_before_network(monkeypatch):
+    from databricks import sql
+
+    monkeypatch.setenv("DATABRICKS_SERVER_HOSTNAME", "mock")
+    monkeypatch.setenv("DATABRICKS_HTTP_PATH", "mock")
+    monkeypatch.setenv("DATABRICKS_TOKEN", "mock")
+    connect_calls = []
+    monkeypatch.setattr(sql, "connect", lambda **kwargs: connect_calls.append(kwargs))
+
+    with pytest.raises(EnvironmentError, match="placeholder"):
+        db._get_connection()
+
+    assert connect_calls == []
+
+
+def test_ops_migration_ignores_only_existing_tiktok_column(monkeypatch):
+    statements: list[str] = []
+
+    def run_sql(statement: str):
+        statements.append(statement)
+        if "ADD COLUMNS (tiktok_rows BIGINT)" in statement:
+            raise RuntimeError("[COLUMN_ALREADY_EXISTS] tiktok_rows already exists")
+
+    monkeypatch.setattr(db, "_run_sql", run_sql)
+
+    db.ensure_ops_tables()
+
+    assert any("operator_alerts" in statement for statement in statements)
+
+
+def test_ops_migration_propagates_unexpected_alter_failure(monkeypatch):
+    def run_sql(statement: str):
+        if "ADD COLUMNS (tiktok_rows BIGINT)" in statement:
+            raise RuntimeError("permission denied")
+
+    monkeypatch.setattr(db, "_run_sql", run_sql)
+
+    with pytest.raises(RuntimeError, match="permission denied"):
+        db.ensure_ops_tables()
 
 
 def test_sql_upsert_uses_unique_staging_table(monkeypatch):

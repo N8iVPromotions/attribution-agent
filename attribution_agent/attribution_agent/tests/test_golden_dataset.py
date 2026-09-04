@@ -51,3 +51,34 @@ def test_evaluate_fails_changed_nonnumeric_field():
         "governance-reviewer", '{"decision":"READY"}', sample
     )
     assert result["passed"] is False
+
+
+def test_load_seed_samples_is_local_untruncated_and_pii_masked(tmp_path):
+    seed_path = tmp_path / "seed.json"
+    long_input = "contact=analyst@example.com " + ("multi-channel-row " * 80)
+    seed_path.write_text(
+        json.dumps(
+            [
+                {
+                    "agent_name": "revenue-analyst",
+                    "input_text": long_input,
+                    "expected_output": '{"owner":"analyst@example.com"}',
+                    "expected_fields": {"owner": "analyst@example.com"},
+                    "tolerance": {},
+                    "source": "test-seed",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    samples = GoldenDatasetManager().load_seed_samples(seed_path)
+
+    assert len(samples) == 1
+    sample = samples[0]
+    assert sample["agent_name"] == "revenue-analyst"
+    assert len(sample["input_summary"]) > 500
+    assert "analyst@example.com" not in sample["input_summary"]
+    assert "analyst@example.com" not in sample["expected_output"]
+    assert "analyst@example.com" not in sample["expected_fields"]
+    assert sample["source"] == "test-seed"

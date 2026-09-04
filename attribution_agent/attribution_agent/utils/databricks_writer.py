@@ -5,6 +5,8 @@ Runs via SQL Connector when local, Spark when inside Databricks.
 """
 
 from __future__ import annotations
+import hashlib
+import json
 import logging
 import os
 import re
@@ -49,16 +51,17 @@ def _get_spark():
 
     spark = SparkSession.getActiveSession()
     if spark is not None:
+        spark.conf.set("spark.sql.session.timeZone", "UTC")
         return spark
     # Databricks App — use serverless Databricks Connect
     from databricks.connect import DatabricksSession
 
-    return DatabricksSession.builder.serverless().getOrCreate()
+    spark = DatabricksSession.builder.serverless().getOrCreate()
+    spark.conf.set("spark.sql.session.timeZone", "UTC")
+    return spark
 
 
 def _get_connection():
-    from databricks import sql
-
     # DATABRICKS_HOST is auto-injected by Databricks Apps; strip the scheme if present
     host = _clean_env("DATABRICKS_SERVER_HOSTNAME") or _clean_env("DATABRICKS_HOST")
     hostname = host.replace("https://", "").replace("http://", "").rstrip("/")
@@ -74,11 +77,29 @@ def _get_connection():
     # instead uses the OAuth (M2M) service-principal credentials it auto-injects
     # as DATABRICKS_CLIENT_ID / DATABRICKS_CLIENT_SECRET (picked up by Config()).
     access_token = _clean_env("DATABRICKS_TOKEN")
+    placeholder_fields = [
+        name
+        for name, value in (
+            ("DATABRICKS_SERVER_HOSTNAME", hostname),
+            ("DATABRICKS_HTTP_PATH", http_path),
+            ("DATABRICKS_TOKEN", access_token),
+        )
+        if value.casefold() == "mock"
+    ]
+    if placeholder_fields:
+        raise EnvironmentError(
+            "Databricks configuration contains placeholder values for "
+            + ", ".join(placeholder_fields)
+        )
+
+    from databricks import sql
+
     if access_token:
         return sql.connect(
             server_hostname=hostname,
             http_path=http_path,
             access_token=access_token,
+            session_configuration={"timezone": "UTC"},
         )
 
     from databricks.sdk.core import Config, oauth_service_principal
@@ -88,6 +109,7 @@ def _get_connection():
         server_hostname=hostname,
         http_path=http_path,
         credentials_provider=lambda: oauth_service_principal(cfg),
+        session_configuration={"timezone": "UTC"},
     )
 
 
@@ -141,7 +163,9 @@ CREATE TABLE IF NOT EXISTS {schema}.hubspot_deals_raw (
     deal_stage          STRING,
     pipeline            STRING,
     amount              DOUBLE,
+    deal_currency_code  STRING,
     close_date          DATE,
+    close_datetime      TIMESTAMP,
     create_date         TIMESTAMP,
     stage_probability   DOUBLE,
     contact_id          STRING,
@@ -171,6 +195,7 @@ CREATE TABLE IF NOT EXISTS {schema}.stripe_payments_raw (
     customer_email      STRING,
     amount_paid         DOUBLE,
     currency            STRING,
+    livemode            BOOLEAN,
     status              STRING,
     refunded            BOOLEAN,
     refund_amount       DOUBLE,
@@ -240,6 +265,7 @@ CREATE TABLE IF NOT EXISTS {ops_schema}.pipeline_runs (
     meta_rows           BIGINT,
     google_rows         BIGINT,
     linkedin_rows       BIGINT,
+    tiktok_rows         BIGINT,
     hubspot_rows        BIGINT,
     stripe_rows         BIGINT,
     normalized_ad_rows  BIGINT,
@@ -280,6 +306,7 @@ INSIGHT_REPORTS_DDL = """
 CREATE TABLE IF NOT EXISTS {ops_schema}.insight_reports (
     report_id           STRING,
     client_id           STRING,
+    client_name         STRING,
     agency_id           STRING,
     report_month        STRING,
     narrative           STRING,
@@ -292,6 +319,7 @@ CREATE TABLE IF NOT EXISTS {ops_schema}.insight_reports (
     refund_rate         DOUBLE,
     true_roi            DOUBLE,
     attribution_model   STRING,
+    data_version        STRING,
     generated_at        TIMESTAMP,
     run_id              STRING,
     prompt_version      STRING,
@@ -648,13 +676,43 @@ def ensure_tables(schema: str) -> None:
     _run_sql(STRIPE_TABLE_DDL.format(schema=schema))
     _run_sql(NORMALIZED_AD_TABLE_DDL.format(schema=schema))
     _run_sql(ATTRIBUTION_RESULTS_TABLE_DDL.format(schema=schema))
-    # contact_email was added in v2 — backfill the column on existing tables
+    # Additive migrations for existing client schemas.
+    for column_definition in (
+        "contact_email STRING",
+        "close_datetime TIMESTAMP",
+        "deal_currency_code STRING",
+    ):
+        try:
+            _run_sql(
+                f"ALTER TABLE {schema}.hubspot_deals_raw "
+                f"ADD COLUMNS ({column_definition})"
+            )
+        except Exception as exc:
+            error = str(exc).lower()
+            duplicate_column_markers = (
+                "already exists",
+                "column_already_exists",
+                "field_already_exists",
+                "fields_already_exists",
+                "duplicate column",
+            )
+            if not any(marker in error for marker in duplicate_column_markers):
+                raise
     try:
         _run_sql(
-            f"ALTER TABLE {schema}.hubspot_deals_raw ADD COLUMNS (contact_email STRING)"
+            f"ALTER TABLE {schema}.stripe_payments_raw ADD COLUMNS (livemode BOOLEAN)"
         )
-    except Exception:
-        pass  # column already present
+    except Exception as exc:
+        error = str(exc).lower()
+        duplicate_column_markers = (
+            "already exists",
+            "column_already_exists",
+            "field_already_exists",
+            "fields_already_exists",
+            "duplicate column",
+        )
+        if not any(marker in error for marker in duplicate_column_markers):
+            raise
     set_table_retention_policies(schema)
     logger.info(f"[Databricks] Tables ready: {schema}")
 
@@ -665,7 +723,28 @@ def ensure_audit_log_table() -> None:
 
 
 def ensure_insight_reports_table() -> None:
+    _run_sql(f"CREATE SCHEMA IF NOT EXISTS {_OPS_SCHEMA}")
     _run_sql(INSIGHT_REPORTS_DDL.format(ops_schema=_OPS_SCHEMA))
+    for column_definition in (
+        "client_name STRING",
+        "data_version STRING",
+    ):
+        try:
+            _run_sql(
+                f"ALTER TABLE {_OPS_SCHEMA}.insight_reports "
+                f"ADD COLUMNS ({column_definition})"
+            )
+        except Exception as exc:
+            error = str(exc).lower()
+            duplicate_column_markers = (
+                "already exists",
+                "column_already_exists",
+                "field_already_exists",
+                "fields_already_exists",
+                "duplicate column",
+            )
+            if not any(marker in error for marker in duplicate_column_markers):
+                raise
     logger.debug(f"[Databricks] insight_reports ready: {_OPS_SCHEMA}.insight_reports")
 
 
@@ -805,6 +884,22 @@ def run_delta_maintenance(
 def ensure_ops_tables() -> None:
     _run_sql(f"CREATE SCHEMA IF NOT EXISTS {_OPS_SCHEMA}")
     _run_sql(RUN_HISTORY_TABLE_DDL.format(ops_schema=_OPS_SCHEMA))
+    try:
+        _run_sql(
+            f"ALTER TABLE {_OPS_SCHEMA}.pipeline_runs ADD COLUMNS (tiktok_rows BIGINT)"
+        )
+    except Exception as exc:
+        error = str(exc).lower()
+        duplicate_column_markers = (
+            "already exists",
+            "column_already_exists",
+            "field_already_exists",
+            "fields_already_exists",
+            "duplicate column",
+        )
+        if not any(marker in error for marker in duplicate_column_markers):
+            raise
+        logger.debug("[Databricks] pipeline_runs.tiktok_rows already exists")
     _run_sql(TELEGRAM_EVENTS_DDL.format(ops_schema=_OPS_SCHEMA))
     _run_sql(OPERATOR_ALERTS_DDL.format(ops_schema=_OPS_SCHEMA))
     _run_sql(AUTH_USERS_DDL.format(ops_schema=_OPS_SCHEMA))
@@ -1088,6 +1183,8 @@ def _upsert_dataframe_via_sql_connector(
     update_set: str,
     insert_cols: str,
     insert_vals: str,
+    *,
+    update_on_match: bool,
 ) -> None:
     staging_table = f"{schema}.{table}_staging_{uuid.uuid4().hex}"
     conn = _get_connection()
@@ -1111,11 +1208,16 @@ def _upsert_dataframe_via_sql_connector(
                 f"INSERT INTO {staging_table} ({col_str}) VALUES ({ph})",
                 batch,
             )
+        matched_clause = (
+            f"WHEN MATCHED THEN UPDATE SET {update_set}"
+            if update_on_match and update_set
+            else ""
+        )
         merge_sql = f"""
             MERGE INTO {full_table} AS t
             USING {staging_table} AS s
             ON {merge_condition}
-            WHEN MATCHED THEN UPDATE SET {update_set}
+            {matched_clause}
             WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})
         """
         cursor.execute(merge_sql)
@@ -1133,6 +1235,8 @@ def _upsert_dataframe(
     table: str,
     merge_keys: list[str],
     target_predicate: str | None = None,
+    *,
+    update_on_match: bool = True,
 ) -> int:
     full_table = f"{schema}.{table}"
     non_key_cols = [c for c in df.columns if c not in merge_keys]
@@ -1148,11 +1252,16 @@ def _upsert_dataframe(
         spark = _get_spark()
         spark_df = spark.createDataFrame(df)
         spark_df.createOrReplaceTempView(staging_view)
+        matched_clause = (
+            f"WHEN MATCHED THEN UPDATE SET {update_set}"
+            if update_on_match and update_set
+            else ""
+        )
         merge_sql = f"""
             MERGE INTO {full_table} AS t
             USING {staging_view} AS s
             ON {merge_condition}
-            WHEN MATCHED THEN UPDATE SET {update_set}
+            {matched_clause}
             WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})
         """
         spark.sql(merge_sql)
@@ -1172,6 +1281,7 @@ def _upsert_dataframe(
                     update_set,
                     insert_cols,
                     insert_vals,
+                    update_on_match=update_on_match,
                 )
                 break
             except Exception as exc:
@@ -1235,7 +1345,13 @@ def write_hubspot_data(df: pd.DataFrame, schema: str) -> int:
     df["ingested_at"] = pd.Timestamp.utcnow()
 
     # Convert NaT to None so Databricks SQL connector handles nulls correctly
-    timestamp_cols = ["close_date", "create_date", "lead_create_date", "ingested_at"]
+    timestamp_cols = [
+        "close_date",
+        "close_datetime",
+        "create_date",
+        "lead_create_date",
+        "ingested_at",
+    ]
     for col in timestamp_cols:
         if col in df.columns:
             df[col] = df[col].astype(object).where(df[col].notna(), None)
@@ -1467,6 +1583,169 @@ def fetch_recent_operator_alerts(
         return []
 
 
+_INSIGHT_REPORT_STATUSES = {
+    "generated",
+    "suppressed",
+    "delivered",
+}
+
+
+def _normalized_report_findings(value: object) -> list[str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = [value] if value else []
+    if not isinstance(value, list):
+        raise ValueError("Insight report key_findings must be a list")
+    return [str(item) for item in value]
+
+
+def _canonical_insight_report(record: dict) -> dict:
+    """Return the immutable client-visible report artifact in canonical form."""
+    raw_generated_at = record.get("generated_at")
+    if raw_generated_at is None or (
+        isinstance(raw_generated_at, str) and not raw_generated_at.strip()
+    ):
+        raise ValueError("Insight report requires generated_at")
+    generated_at = pd.to_datetime(
+        raw_generated_at,
+        utc=True,
+        errors="raise",
+    )
+    if pd.isna(generated_at):
+        raise ValueError("Insight report requires a valid generated_at")
+    artifact = {
+        "client_id": str(record.get("client_id") or "").strip(),
+        "client_name": str(record.get("client_name") or ""),
+        "agency_id": str(record.get("agency_id") or "").strip(),
+        "report_month": str(record.get("report_month") or "").strip(),
+        "narrative": str(record.get("narrative") or ""),
+        "key_findings": _normalized_report_findings(record.get("key_findings") or []),
+        "top_channel": str(record.get("top_channel") or ""),
+        "total_pipeline": float(record.get("total_pipeline") or 0.0),
+        "total_spend": float(record.get("total_spend") or 0.0),
+        "overall_roi": float(record.get("overall_roi") or 0.0),
+        "collected_revenue": float(record.get("collected_revenue") or 0.0),
+        "refund_rate": float(record.get("refund_rate") or 0.0),
+        "true_roi": float(record.get("true_roi") or 0.0),
+        "attribution_model": str(record.get("attribution_model") or "").strip(),
+        "data_version": str(record.get("data_version") or ""),
+        "generated_at": generated_at.isoformat(),
+    }
+    required = (
+        "client_id",
+        "client_name",
+        "agency_id",
+        "report_month",
+        "attribution_model",
+        "generated_at",
+    )
+    if not all(artifact[field] for field in required):
+        raise ValueError(
+            "Insight report requires client, agency, month, model, and generated_at"
+        )
+    return artifact
+
+
+def insight_report_id(record: dict) -> str:
+    """Return a content address for the immutable report artifact."""
+    canonical = _canonical_insight_report(record)
+    encoded = json.dumps(
+        canonical,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _insight_report_id(record: dict) -> str:
+    """Backward-compatible private alias for callers and tests."""
+    return insight_report_id(record)
+
+
+def write_insight_report(record: dict) -> str:
+    """Insert one immutable report artifact if its content address is new."""
+    status = str(record.get("status") or "").strip()
+    if status not in _INSIGHT_REPORT_STATUSES:
+        raise ValueError(f"Unsupported insight report status: {status!r}")
+
+    artifact = _canonical_insight_report(record)
+    generated_at = pd.to_datetime(artifact["generated_at"], utc=True, errors="raise")
+    report_id = insight_report_id(record)
+    row = {
+        "report_id": report_id,
+        "client_id": artifact["client_id"],
+        "client_name": artifact["client_name"],
+        "agency_id": artifact["agency_id"],
+        "report_month": artifact["report_month"],
+        "narrative": artifact["narrative"],
+        "key_findings": json.dumps(
+            artifact["key_findings"], ensure_ascii=False, separators=(",", ":")
+        ),
+        "top_channel": artifact["top_channel"],
+        "total_pipeline": artifact["total_pipeline"],
+        "total_spend": artifact["total_spend"],
+        "overall_roi": artifact["overall_roi"],
+        "collected_revenue": artifact["collected_revenue"],
+        "refund_rate": artifact["refund_rate"],
+        "true_roi": artifact["true_roi"],
+        "attribution_model": artifact["attribution_model"],
+        "data_version": artifact["data_version"],
+        "generated_at": generated_at,
+        "run_id": str(record.get("run_id") or ""),
+        "prompt_version": str(record.get("prompt_version") or ""),
+        "model_id": str(record.get("model_id") or ""),
+        "input_tokens": int(record.get("input_tokens") or 0),
+        "output_tokens": int(record.get("output_tokens") or 0),
+        "cache_read_tokens": int(record.get("cache_read_tokens") or 0),
+        "status": status,
+    }
+    ensure_insight_reports_table()
+    _upsert_dataframe(
+        pd.DataFrame([row]),
+        _OPS_SCHEMA,
+        "insight_reports",
+        ["report_id"],
+        update_on_match=False,
+    )
+    logger.info(
+        "[Databricks] Persisted insight report %s with status=%s",
+        report_id,
+        status,
+    )
+    return report_id
+
+
+def update_insight_report_status(report_id: str, status: str) -> None:
+    """Update only delivery state; immutable artifact fields never change."""
+    normalized_status = str(status or "").strip()
+    if normalized_status not in _INSIGHT_REPORT_STATUSES:
+        raise ValueError(f"Unsupported insight report status: {normalized_status!r}")
+    if not report_id:
+        raise ValueError("report_id is required")
+    ensure_insight_reports_table()
+    _run_sql(
+        f"UPDATE {_OPS_SCHEMA}.insight_reports "
+        f"SET status = {_sql_literal(normalized_status)} "
+        f"WHERE report_id = {_sql_literal(report_id)}"
+    )
+    rows = _fetch_rows(
+        f"SELECT status FROM {_OPS_SCHEMA}.insight_reports "
+        f"WHERE report_id = {_sql_literal(report_id)} LIMIT 1"
+    )
+    if not rows or str(rows[0].get("status") or "") != normalized_status:
+        raise RuntimeError(
+            f"Insight report {report_id} status did not persist as {normalized_status}"
+        )
+    logger.info(
+        "[Databricks] Updated insight report %s to status=%s",
+        report_id,
+        normalized_status,
+    )
+
+
 def write_pipeline_run(record: dict) -> None:
     ensure_ops_tables()
     now = datetime.now(timezone.utc)
@@ -1481,6 +1760,7 @@ def write_pipeline_run(record: dict) -> None:
         "meta_rows": int(record.get("meta_rows", 0) or 0),
         "google_rows": int(record.get("google_rows", 0) or 0),
         "linkedin_rows": int(record.get("linkedin_rows", 0) or 0),
+        "tiktok_rows": int(record.get("tiktok_rows", 0) or 0),
         "hubspot_rows": int(record.get("hubspot_rows", 0) or 0),
         "stripe_rows": int(record.get("stripe_rows", 0) or 0),
         "normalized_ad_rows": int(record.get("normalized_ad_rows", 0) or 0),
@@ -1504,7 +1784,8 @@ def fetch_recent_pipeline_runs(limit: int = 20) -> list[dict]:
         ensure_ops_tables()
         query = (
             "SELECT run_id, agency_id, client_id, run_mode, attribution_model, status, "
-            "dry_run, meta_rows, google_rows, linkedin_rows, hubspot_rows, stripe_rows, "
+            "dry_run, meta_rows, google_rows, linkedin_rows, "
+            "COALESCE(tiktok_rows, 0) AS tiktok_rows, hubspot_rows, stripe_rows, "
             "normalized_ad_rows, total_pipeline, top_channel, email_sent, warnings, error, "
             f"started_at, finished_at, output_schema "
             f"FROM {_OPS_SCHEMA}.pipeline_runs "

@@ -277,6 +277,7 @@ def _create_business(sql: SqlExecutor, request: LifecycleRequest) -> tuple[str, 
         "tiktok_ads_enabled": False,
         "hubspot_enabled": False,
         "stripe_enabled": False,
+        "stripe_history_start_date": "",
     }
     config_json = json.dumps(config, sort_keys=True)
     sql(

@@ -1,4 +1,11 @@
-export type RunStatus = "success" | "partial" | "failed" | "running" | "queued" | "warning";
+export type RunStatus =
+  | "success"
+  | "partial"
+  | "failed"
+  | "running"
+  | "queued"
+  | "warning"
+  | "awaiting_approval";
 
 export type ClientPlatformKey = "meta" | "google" | "linkedin" | "tiktok" | "hubspot" | "stripe";
 
@@ -12,6 +19,7 @@ export type SourceRows = {
   meta: number;
   google: number;
   linkedin: number;
+  tiktok: number;
   hubspot: number;
   stripe: number;
   normalized: number;
@@ -53,9 +61,12 @@ export type ClientAccount = {
   name: string;
   agencyId: string;
   attributionModel: string;
+  reportingCurrency: string;
   reportEmail: string;
   active: boolean;
   lookbackDays: number;
+  stripeHistoryStartDate: string;
+  hubspotClosedWonStageIds: string[];
   platforms: {
     meta: boolean;
     google: boolean;
@@ -73,8 +84,11 @@ export type PilotClientConfiguration = {
   clientName: string;
   agencyId: string;
   attributionModel: string;
+  reportingCurrency: string;
   reportEmail: string;
   lookbackDays: number;
+  stripeHistoryStartDate: string;
+  hubspotClosedWonStageIds: string[];
   databricksSchema: string;
   platforms: Record<
     ClientPlatformKey,
@@ -193,6 +207,9 @@ export type ApprovalItem = {
   actionType: string;
   status: string;
   channel: string;
+  reportId: string;
+  recipientEmail: string;
+  deliveryConfigFingerprint: string;
 };
 
 export type Recommendation = {
@@ -262,6 +279,7 @@ export type PipelineTriggerInput = {
   attributionModel: string;
   dryRun: boolean;
   runMode: string;
+  reportMonth: string;
   confirmation?: string;
 };
 

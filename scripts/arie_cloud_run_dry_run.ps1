@@ -6,7 +6,8 @@ param(
     [string]$AgencyId,
 
     [string]$Region = "us-central1",
-    [string]$AttributionModel = "w_shape",
+    [string]$AttributionModel = "last_touch",
+    [string]$ReportMonth = "",
     [string[]]$ClientIds = @()
 )
 
@@ -29,6 +30,11 @@ $argsList = @(
     $AttributionModel
 )
 
+if ($ReportMonth) {
+    $argsList += "--report-month"
+    $argsList += $ReportMonth
+}
+
 if ($ClientIds.Count -gt 0) {
     foreach ($clientId in $ClientIds) {
         $argsList += "--client"
@@ -44,6 +50,7 @@ Write-Host "Project: $ProjectId"
 Write-Host "Region:  $Region"
 Write-Host "Agency:  $AgencyId"
 Write-Host "Model:   $AttributionModel"
+Write-Host "Period:  $(if ($ReportMonth) { $ReportMonth } else { 'previous completed month' })"
 if ($ClientIds.Count -gt 0) {
     Write-Host "Clients: $($ClientIds -join ', ')"
 } else {

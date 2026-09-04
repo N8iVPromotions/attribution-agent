@@ -15,26 +15,40 @@ import type {
 
 type Props = { initialData: CommandCenterData };
 type View = "Overview" | "Pilot Room" | "Pipeline" | "Tenants" | "Reports" | "Alerts" | "Governance" | "Audit";
+type ReportStatusPresentation = { status: RunStatus; label: string };
 
-const views: Array<{ id: View; code: string; description: string }> = [
-  { id: "Overview", code: "01", description: "Fleet health" },
-  { id: "Pilot Room", code: "02", description: "Configure & prove" },
-  { id: "Pipeline", code: "03", description: "Execute & inspect" },
-  { id: "Tenants", code: "04", description: "Source readiness" },
-  { id: "Reports", code: "05", description: "Revenue intelligence" },
-  { id: "Alerts", code: "06", description: "Operator action" },
-  { id: "Governance", code: "07", description: "Cost & quality" },
-  { id: "Audit", code: "08", description: "Control history" }
+const views: Array<{ id: View; description: string }> = [
+  { id: "Overview", description: "Fleet health" },
+  { id: "Pilot Room", description: "Configure and prove" },
+  { id: "Pipeline", description: "Execute and inspect" },
+  { id: "Tenants", description: "Source readiness" },
+  { id: "Reports", description: "Revenue intelligence" },
+  { id: "Alerts", description: "Operator action" },
+  { id: "Governance", description: "Cost and quality" },
+  { id: "Audit", description: "Control history" }
 ];
 
 const modelLabels: Record<string, string> = {
-  last_touch: "Last Touch",
+  last_touch: "CRM Source Match",
   first_touch: "First Touch",
   linear: "Linear",
   time_decay: "Time Decay",
   u_shape: "U-Shape",
   w_shape: "W-Shape"
 };
+
+const executableModelLabels = { last_touch: modelLabels.last_touch };
+
+function previousCompletedMonth() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit"
+  }).formatToParts(new Date());
+  const year = Number(parts.find((part) => part.type === "year")?.value);
+  const month = Number(parts.find((part) => part.type === "month")?.value);
+  return new Date(Date.UTC(year, month - 2, 1)).toISOString().slice(0, 7);
+}
 
 const sourceLabels: Record<string, string> = {
   meta: "Meta",
@@ -50,6 +64,7 @@ const sourceOrder: Array<keyof PipelineRun["sourceRows"]> = [
   "meta",
   "google",
   "linkedin",
+  "tiktok",
   "hubspot",
   "stripe",
   "normalized"
@@ -77,6 +92,19 @@ function environmentCopy(source: CommandCenterData["source"]) {
     return { title: "Live data unavailable", detail: "Sample data suppressed" };
   }
   return { title: "Isolated demo", detail: "No live data or actions" };
+}
+
+export function reportStatusPresentation(
+  reportStatus: string,
+  deliverySuppressed = false
+): ReportStatusPresentation {
+  if (deliverySuppressed || reportStatus === "suppressed") {
+    return { status: "partial", label: "Delivery suppressed" };
+  }
+  return {
+    status: reportStatus === "delivered" ? "success" : "queued",
+    label: reportStatus
+  };
 }
 
 function shortDate(value: string) {
@@ -107,6 +135,7 @@ export function CommandCenter({ initialData }: Props) {
   );
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState("");
+  const [toast, setToast] = useState("");
 
   const refresh = useCallback(async (quiet = false) => {
     if (!quiet) setRefreshing(true);
@@ -115,6 +144,7 @@ export function CommandCenter({ initialData }: Props) {
       if (!response.ok) throw new Error(`Refresh failed with HTTP ${response.status}`);
       setData((await response.json()) as CommandCenterData);
       setRefreshError("");
+      if (!quiet) setToast("Command Center data refreshed.");
     } catch (error) {
       setRefreshError(error instanceof Error ? error.message : "Refresh failed");
     } finally {
@@ -128,6 +158,16 @@ export function CommandCenter({ initialData }: Props) {
     }, 12_000);
     return () => window.clearInterval(interval);
   }, [refresh]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(""), 3200);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, [activeView]);
 
   const agencies = data.agencies;
 
@@ -157,21 +197,21 @@ export function CommandCenter({ initialData }: Props) {
 
   return (
     <main className="shell">
-      <aside className="sidebar">
+      <header className="app-header">
         <div className="brand">
-          <div className="brand-wordmark">
+          <div className="brand-mark">
             <Image
-              src="/n8iv-promotions-wordmark.png"
-              alt="N8iV Promotions"
-              width={1050}
-              height={600}
+              src="/n8iv-mark.png"
+              alt="N8iV Promotions logo"
+              width={2000}
+              height={2000}
               priority
               unoptimized
             />
           </div>
           <div className="brand-product">
-            <span>ARIE</span>
-            <small>Revenue intelligence command</small>
+            <strong>ARIE</strong>
+            <span>Automatic Revenue Intelligence Engine</span>
           </div>
         </div>
 
@@ -190,9 +230,15 @@ export function CommandCenter({ initialData }: Props) {
               key={view.id}
               onClick={() => setActiveView(view.id)}
               type="button"
+              title={view.description}
+              aria-current={activeView === view.id ? "page" : undefined}
             >
-              <span className="nav-code">{view.code}</span>
-              <span><strong>{view.id}</strong><small>{view.description}</small></span>
+              <strong>{view.id}</strong>
+              {view.id === "Alerts" && scoped.alerts.length > 0 ? (
+                <span className="nav-badge" aria-label={`${scoped.alerts.length} open alerts`}>
+                  {scoped.alerts.length > 99 ? "99+" : scoped.alerts.length}
+                </span>
+              ) : null}
             </button>
           ))}
         </nav>
@@ -203,23 +249,13 @@ export function CommandCenter({ initialData }: Props) {
           <div><span>CTRL</span><strong>{data.capabilities.approvalActions ? "ONLINE" : "READ ONLY"}</strong></div>
           <div><span>CFG</span><strong>{data.capabilities.clientConfiguration ? "SECURE" : "LOCKED"}</strong></div>
         </div>
-      </aside>
+      </header>
 
       <section className="workspace">
         <header className="topbar">
           <div className="view-identity">
-            <div className="brand-symbol" aria-hidden="true">
-              <Image
-                src="/n8iv-logo-transparent.png"
-                alt=""
-                width={3000}
-                height={650}
-                priority
-                unoptimized
-              />
-            </div>
             <div>
-              <p className="eyebrow">N8iV / Automatic Revenue Intelligence Engine</p>
+              <p className="eyebrow">Operations / {activeAgency || "Portfolio"}</p>
               <h1>{activeView}</h1>
             </div>
           </div>
@@ -233,7 +269,14 @@ export function CommandCenter({ initialData }: Props) {
             </label>
             <div className="refresh-block">
               <small>Updated {shortDate(data.generatedAt)}</small>
-              <button className="button ghost" onClick={() => void refresh()} disabled={refreshing} type="button">
+              <button
+                className={refreshing ? "button secondary refresh-action is-loading" : "button secondary refresh-action"}
+                onClick={() => void refresh()}
+                disabled={refreshing}
+                type="button"
+                aria-busy={refreshing}
+              >
+                <span className="refresh-icon" aria-hidden="true">↻</span>
                 {refreshing ? "Refreshing…" : "Refresh data"}
               </button>
             </div>
@@ -274,13 +317,14 @@ export function CommandCenter({ initialData }: Props) {
           />
         )}
         {activeView === "Tenants" && <TenantView data={data} clients={scoped.clients} runs={scoped.runs} agencyId={activeAgency} onRefresh={refresh} />}
-        {activeView === "Reports" && <ReportsView data={data} reports={scoped.reports} />}
-        {activeView === "Alerts" && <AlertsView data={data} alerts={scoped.alerts} onRefresh={refresh} />}
+        {activeView === "Reports" && <ReportsView data={data} reports={scoped.reports} onLaunch={() => setActiveView("Pipeline")} />}
+        {activeView === "Alerts" && <AlertsView key={activeAgency} data={data} alerts={scoped.alerts} onRefresh={refresh} onNotify={setToast} />}
         {activeView === "Governance" && (
-          <GovernanceView data={data} costs={scoped.costs} approvals={scoped.approvals} onRefresh={refresh} />
+          <GovernanceView data={data} costs={scoped.costs} approvals={scoped.approvals} onRefresh={refresh} onNotify={setToast} />
         )}
         {activeView === "Audit" && <AuditView data={data} audits={scoped.audits} />}
       </section>
+      {toast ? <div className="toast" role="status" aria-live="polite">{toast}</div> : null}
     </main>
   );
 }
@@ -357,7 +401,8 @@ function PipelineView({
   onRefresh: (quiet?: boolean) => Promise<void>;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set(clients.map((client) => client.clientId)));
-  const [model, setModel] = useState("w_shape");
+  const [model, setModel] = useState("last_touch");
+  const [reportMonth, setReportMonth] = useState(previousCompletedMonth);
   const [dryRun, setDryRun] = useState(true);
   const [confirmation, setConfirmation] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -383,6 +428,7 @@ function PipelineView({
           agencyId,
           clientIds: [...selected],
           attributionModel: model,
+          reportMonth,
           dryRun,
           confirmation: dryRun ? undefined : confirmation
         })
@@ -419,8 +465,9 @@ function PipelineView({
           <div className="control-section">
             <div className="section-label"><span>02</span><strong>Configure run</strong></div>
             <div className="form-grid">
-              <label className="field"><span>Attribution model</span><select value={model} onChange={(event) => setModel(event.target.value)}>{Object.entries(modelLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
-              <label className="mode-toggle"><input type="checkbox" checked={!dryRun} onChange={(event) => { setDryRun(!event.target.checked); setConfirmation(""); }} /><span><strong>{dryRun ? "Preview mode" : "Live delivery mode"}</strong><small>{dryRun ? "Generate output; suppress email" : "Client email may be delivered"}</small></span></label>
+              <label className="field"><span>Attribution model</span><select value={model} onChange={(event) => setModel(event.target.value)}>{Object.entries(executableModelLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><small>Uses the source and campaign recorded in CRM; multi-touch requires observed journey events.</small></label>
+              <label className="field"><span>Completed report month</span><input type="month" max={previousCompletedMonth()} value={reportMonth} onChange={(event) => setReportMonth(event.target.value)} /></label>
+              <label className="mode-toggle"><input type="checkbox" checked={!dryRun} onChange={(event) => { setDryRun(!event.target.checked); setConfirmation(""); }} /><span><strong>{dryRun ? "Preview mode" : "Live delivery mode"}</strong><small>{dryRun ? "Generate output; suppress email" : "Only the exact human-approved draft can be delivered"}</small></span></label>
             </div>
             {!dryRun && (
               <label className="field danger-field"><span>Type RUN LIVE to arm delivery</span><input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="RUN LIVE" autoComplete="off" /></label>
@@ -428,13 +475,13 @@ function PipelineView({
           </div>
 
           <div className="execution-footer">
-            <div><span className="eyebrow">Execution manifest</span><strong>{selected.size} tenant{selected.size === 1 ? "" : "s"} / {modelLabels[model]} / {dryRun ? "preview" : "live"}</strong></div>
+            <div><span className="eyebrow">Execution manifest</span><strong>{selected.size} tenant{selected.size === 1 ? "" : "s"} / {reportMonth} / {modelLabels[model]} / {dryRun ? "preview" : "live"}</strong></div>
             <button className={dryRun ? "button primary" : "button danger"} disabled={!armed || submitting} onClick={() => void execute()} type="button">
               {submitting ? "Submitting job…" : dryRun ? "Launch preview run" : "Launch live run"}
             </button>
           </div>
           {!data.capabilities.pipelineExecution && <div className="inline-warning">Execution is read-only until Cloud Run OIDC or the ARIE pipeline API is configured.</div>}
-          {result && <div className={result.ok ? "notice success" : "notice warning"}><strong>{result.ok ? "Execution accepted" : "Execution blocked"}</strong><span>{result.message}</span>{result.operation && <code>{result.operation}</code>}</div>}
+          {result && <div className={result.ok ? "notice success" : "notice warning"}><strong>{result.ok ? "Execution accepted" : "Execution blocked"}</strong><span>{result.message}</span>{result.operation && <code>{result.operation}</code>}{result.ok && !dryRun && <span>An unapproved draft will be queued in Governance without sending client email.</span>}</div>}
         </div>
       </Panel>
 
@@ -576,12 +623,13 @@ function LifecycleDialog({ state, agencyId, onClose, onAccepted }: { state: Life
   );
 }
 
-function ReportsView({ data, reports }: { data: CommandCenterData; reports: CommandCenterData["reports"] }) {
+function ReportsView({ data, reports, onLaunch }: { data: CommandCenterData; reports: CommandCenterData["reports"]; onLaunch: () => void }) {
   const [selectedId, setSelectedId] = useState(reports[0]?.reportId || "");
   const effectiveSelectedId = reports.some((report) => report.reportId === selectedId) ? selectedId : reports[0]?.reportId || "";
   const selected = reports.find((report) => report.reportId === effectiveSelectedId);
-  if (!selected) return <Empty title="No insight reports" body="Reports will appear after a successful attribution run completes." />;
+  if (!selected) return <div className="reports-empty reveal"><Empty title="No insight reports" body="Reports will appear after a successful attribution run completes." action={<button className="button primary" onClick={onLaunch} type="button">Launch attribution run</button>} /></div>;
   const run = data.runs.find((item) => item.runId === selected.runId);
+  const statusPresentation = reportStatusPresentation(selected.status, run?.deliverySuppressed);
 
   return (
     <div className="report-layout reveal">
@@ -589,9 +637,9 @@ function ReportsView({ data, reports }: { data: CommandCenterData; reports: Comm
         <div className="report-list">{reports.map((report) => <button className={effectiveSelectedId === report.reportId ? "report-item active" : "report-item"} onClick={() => setSelectedId(report.reportId)} key={report.reportId}><span><strong>{clientName(report.clientId, data.clients)}</strong><small>{report.reportMonth} / {modelLabels[report.attributionModel] || report.attributionModel}</small></span><span><strong>{money(report.totalPipeline)}</strong><small>{report.status}</small></span></button>)}</div>
       </Panel>
       <article className="report-sheet">
-        <header><div><span className="eyebrow">Executive revenue intelligence / {selected.reportMonth}</span><h2>{clientName(selected.clientId, data.clients)}</h2><p>Generated {shortDate(selected.generatedAt)} · {selected.modelId} · {selected.promptVersion}</p></div><StatusChip status={run?.deliverySuppressed ? "partial" : selected.status === "delivered" ? "success" : "queued"} label={run?.deliverySuppressed ? "Delivery suppressed" : selected.status} /></header>
+        <header><div><span className="eyebrow">Executive revenue intelligence / {selected.reportMonth}</span><h2>{clientName(selected.clientId, data.clients)}</h2><p>Generated {shortDate(selected.generatedAt)} · {selected.modelId} · {selected.promptVersion}</p></div><StatusChip status={statusPresentation.status} label={statusPresentation.label} /></header>
         <section className="report-metrics"><div><span>Pipeline</span><strong>{money(selected.totalPipeline)}</strong></div><div><span>Spend</span><strong>{money(selected.totalSpend)}</strong></div><div><span>Attributed ROI</span><strong>{roi(selected.overallRoi)}</strong></div><div><span>True ROI</span><strong>{roi(selected.trueRoi)}</strong></div></section>
-        <section className="narrative"><span className="eyebrow">Operator preview</span><p>{selected.narrative}</p></section>
+        <section className="narrative"><span className="eyebrow">Operator preview / report {selected.reportId}</span><p>{selected.narrative}</p></section>
         <section><span className="eyebrow">Key findings</span><ol className="findings">{selected.keyFindings.map((finding) => <li key={finding}>{finding}</li>)}</ol></section>
       </article>
     </div>
@@ -601,14 +649,17 @@ function ReportsView({ data, reports }: { data: CommandCenterData; reports: Comm
 function AlertsView({
   data,
   alerts,
-  onRefresh
+  onRefresh,
+  onNotify
 }: {
   data: CommandCenterData;
   alerts: CommandCenterData["alerts"];
   onRefresh: (quiet?: boolean) => Promise<void>;
+  onNotify: (message: string) => void;
 }) {
   const [busyAlertId, setBusyAlertId] = useState("");
   const [error, setError] = useState("");
+  const [resolvedAlerts, setResolvedAlerts] = useState<CommandCenterData["alerts"]>([]);
 
   async function resolveAlert(alertId: string) {
     setBusyAlertId(alertId);
@@ -621,7 +672,12 @@ function AlertsView({
       if (!response.ok) {
         throw new Error(payload.error || "Alert resolution failed.");
       }
-      await onRefresh();
+      const resolved = alerts.find((alert) => alert.alertId === alertId);
+      if (resolved) {
+        setResolvedAlerts((current) => current.some((alert) => alert.alertId === alertId) ? current : [...current, resolved]);
+      }
+      onNotify("Alert marked resolved.");
+      await onRefresh(true);
     } catch (resolveError) {
       setError(resolveError instanceof Error ? resolveError.message : "Alert resolution failed.");
     } finally {
@@ -629,19 +685,25 @@ function AlertsView({
     }
   }
 
-  if (!alerts.length) return <Empty title="No open alerts" body="The selected agency has no operator interventions waiting." />;
+  const visibleAlerts = [
+    ...alerts,
+    ...resolvedAlerts.filter((resolved) => !alerts.some((alert) => alert.alertId === resolved.alertId))
+  ];
+
+  if (!visibleAlerts.length) return <Empty title="No open alerts" body="The selected agency has no operator interventions waiting." />;
   return (
     <div className="alert-board reveal">
       {error && <div className="inline-warning">{error}</div>}
-      {alerts.map((alert) => {
+      {visibleAlerts.map((alert) => {
         const alertKey = alert.alertId || `${alert.eventTime}-${alert.title}`;
         const resolving = busyAlertId === alert.alertId;
+        const resolved = resolvedAlerts.some((item) => item.alertId === alert.alertId);
         return (
-          <article className={`alert-row ${alert.severity}`} key={alertKey}>
-            <div className="alert-index">{alert.severity === "critical" ? "!!" : "!"}</div>
+          <article className={`alert-row ${alert.severity} ${resolved ? "resolved" : ""}`} key={alertKey}>
+            <div className="alert-index">{resolved ? "OK" : alert.severity === "critical" ? "!!" : "!"}</div>
             <div>
               <div className="alert-meta">
-                <StatusChip status={alert.severity === "critical" ? "failed" : "partial"} label={alert.severity} />
+                <StatusChip status={resolved ? "success" : alert.severity === "critical" ? "failed" : "partial"} label={resolved ? "resolved" : alert.severity} />
                 <span>{alert.source || "platform"}</span>
                 <span>{shortDate(alert.eventTime)}</span>
               </div>
@@ -655,12 +717,12 @@ function AlertsView({
               <span>Run</span>
               <strong>{alert.runId || "—"}</strong>
               <button
-                className="button ghost alert-resolve"
-                disabled={!alert.alertId || data.source !== "databricks" || resolving}
+                className="button secondary alert-resolve"
+                disabled={resolved || !alert.alertId || data.source !== "databricks" || resolving}
                 onClick={() => void resolveAlert(alert.alertId)}
                 type="button"
               >
-                {resolving ? "Resolving..." : "Mark resolved"}
+                {resolved ? "Resolved" : resolving ? "Resolving..." : "Mark resolved"}
               </button>
             </div>
           </article>
@@ -673,14 +735,19 @@ function AlertsView({
   );
 }
 
-function GovernanceView({ data, costs, approvals, onRefresh }: { data: CommandCenterData; costs: CommandCenterData["costs"]; approvals: CommandCenterData["approvals"]; onRefresh: (quiet?: boolean) => Promise<void> }) {
+function GovernanceView({ data, costs, approvals, onRefresh, onNotify }: { data: CommandCenterData; costs: CommandCenterData["costs"]; approvals: CommandCenterData["approvals"]; onRefresh: (quiet?: boolean) => Promise<void>; onNotify: (message: string) => void }) {
   const [busy, setBusy] = useState("");
   async function resolve(actionId: string, resolution: "approved" | "rejected") {
     setBusy(actionId);
     try {
       const response = await fetch(`/api/approvals/${encodeURIComponent(actionId)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ resolution }) });
       if (!response.ok) throw new Error(((await response.json()) as { error?: string }).error || "Approval update failed");
-      await onRefresh();
+      onNotify(
+        resolution === "approved"
+          ? "Exact artifact approved. Launch the matching live run to deliver it."
+          : "Exact artifact rejected; delivery remains blocked."
+      );
+      await onRefresh(true);
     } finally {
       setBusy("");
     }
@@ -695,7 +762,7 @@ function GovernanceView({ data, costs, approvals, onRefresh }: { data: CommandCe
         <div className="eval-list">{data.evals.map((item) => <div className="eval-row" key={item.agentName}><div><strong>{item.agentName}</strong><small>{item.promptVersion} / {item.modelId}</small></div><div className="score"><span style={{ width: `${Math.min(100, item.score * 100)}%` }} /></div><strong>{percent(item.score)}</strong><StatusChip status={item.regression || !item.passed ? "failed" : "success"} label={item.regression ? "Regression" : item.passed ? "Passed" : "Failed"} /></div>)}</div>
       </Panel>
       <Panel title="Approval queue" meta={`${approvals.length} pending actions`}>
-        <div className="approval-list">{approvals.length ? approvals.map((approval) => <article className="approval-row" key={approval.actionId}><div><span className="eyebrow">{approval.actionType} / {approval.channel}</span><strong>{approval.description}</strong><small>Raised by {approval.actor} · {shortDate(approval.createdAt)}</small></div><div className="approval-actions"><button className="button ghost" disabled={busy === approval.actionId || !data.capabilities.approvalActions} onClick={() => void resolve(approval.actionId, "rejected")}>Reject</button><button className="button primary" disabled={busy === approval.actionId || !data.capabilities.approvalActions} onClick={() => void resolve(approval.actionId, "approved")}>Approve</button></div></article>) : <Empty title="Queue clear" body="No reports or operator actions are waiting for approval." />}</div>
+        <div className="approval-list">{approvals.length ? approvals.map((approval) => <article className="approval-row" key={approval.actionId}><div><span className="eyebrow">{approval.actionType} / {approval.channel}</span><strong>{approval.description}</strong><small>Report {approval.reportId || "not supplied"} · Recipient {approval.recipientEmail || "not supplied"}</small><small>Envelope {approval.deliveryConfigFingerprint || "not supplied"} · Raised by {approval.actor} · {shortDate(approval.createdAt)}</small></div><div className="approval-actions"><button className="button ghost" disabled={busy === approval.actionId || !data.capabilities.approvalActions} onClick={() => void resolve(approval.actionId, "rejected")}>Reject</button><button className="button primary" disabled={busy === approval.actionId || !data.capabilities.approvalActions} onClick={() => void resolve(approval.actionId, "approved")}>Approve exact artifact</button></div></article>) : <Empty title="Queue clear" body="No reports or operator actions are waiting for approval." />}</div>
         {!data.capabilities.approvalActions && approvals.length > 0 && <div className="inline-warning">Approval actions are read-only until ARIE_API_BASE and ARIE_API_KEY are configured.</div>}
       </Panel>
     </div>
@@ -778,7 +845,7 @@ function CheckpointRail({ data, runs }: { data: CommandCenterData; runs: Pipelin
 function RunTable({ runs, data }: { runs: PipelineRun[]; data: CommandCenterData }) {
   const [open, setOpen] = useState("");
   if (!runs.length) return <Empty title="No execution history" body="Launch a preview run to create the first operational record." />;
-  return <div className="run-table">{runs.map((run) => { const expanded = open === run.runId; const checkpoints = data.checkpoints.filter((item) => item.runId === run.runId); const client = data.clients.find((item) => item.clientId === run.clientId); return <article className={`run-record ${expanded ? "expanded" : ""}`} key={`${run.runId}-${run.clientId}`}><button className="run-summary" onClick={() => setOpen(expanded ? "" : run.runId)}><div><strong>{clientName(run.clientId, data.clients)}</strong><small>{run.runId} / {modelLabels[run.attributionModel] || run.attributionModel}</small></div><div><span>Started</span><strong>{shortDate(run.startedAt)}</strong></div><div><span>Duration</span><strong>{duration(run)}</strong></div><div><span>Pipeline</span><strong>{money(run.totalPipeline)}</strong></div><div><StatusChip status={run.status} />{run.deliverySuppressed && <small className="danger-copy">EMAIL SUPPRESSED</small>}</div><b>{expanded ? "−" : "+"}</b></button>{expanded && <div className="run-detail"><div className="source-counts">{sourceOrder.map((source) => <div key={source}><span>{sourceLabels[source] || source}</span><strong>{sourceReadiness(run, client, source)}</strong></div>)}</div><div className="run-facts"><span>Output schema</span><code>{run.outputSchema || "—"}</code><span>Delivery</span><strong>{run.dryRun ? "Preview — not delivered" : run.emailSent ? "Email sent" : run.deliverySuppressed ? "Suppressed by partial-run policy" : "Not sent"}</strong><span>Top channel</span><strong>{run.topChannel}</strong></div>{(run.warnings || run.error) && <div className="run-message"><strong>{run.error ? "Execution error" : "Run warning"}</strong><p>{run.error || run.warnings}</p></div>}<div className="mini-checkpoints">{checkpoints.map((item) => <span key={item.checkpointId} className={item.status}>{item.stepName.replaceAll("_", " ")}</span>)}</div></div>}</article>; })}</div>;
+  return <div className="run-table">{runs.map((run) => { const expanded = open === run.runId; const checkpoints = data.checkpoints.filter((item) => item.runId === run.runId); const client = data.clients.find((item) => item.clientId === run.clientId); return <article className={`run-record ${expanded ? "expanded" : ""}`} key={`${run.runId}-${run.clientId}`}><button className="run-summary" onClick={() => setOpen(expanded ? "" : run.runId)}><div><strong>{clientName(run.clientId, data.clients)}</strong><small>{run.runId} / {modelLabels[run.attributionModel] || run.attributionModel}</small></div><div><span>Started</span><strong>{shortDate(run.startedAt)}</strong></div><div><span>Duration</span><strong>{duration(run)}</strong></div><div><span>Pipeline</span><strong>{money(run.totalPipeline)}</strong></div><div><StatusChip status={run.status} />{run.deliverySuppressed && <small className="danger-copy">EMAIL SUPPRESSED</small>}</div><b>{expanded ? "−" : "+"}</b></button>{expanded && <div className="run-detail"><div className="source-counts">{sourceOrder.map((source) => <div key={source}><span>{sourceLabels[source] || source}</span><strong>{sourceReadiness(run, client, source)}</strong></div>)}</div><div className="run-facts"><span>Output schema</span><code>{run.outputSchema || "—"}</code><span>Delivery</span><strong>{run.dryRun ? "Preview — not delivered" : run.emailSent ? "Email sent" : run.status === "awaiting_approval" ? "Awaiting exact-artifact approval" : run.deliverySuppressed ? "Suppressed by delivery policy" : "Not sent"}</strong><span>Top channel</span><strong>{run.topChannel}</strong></div>{(run.warnings || run.error) && <div className="run-message"><strong>{run.error ? "Execution error" : "Run warning"}</strong><p>{run.error || run.warnings}</p></div>}<div className="mini-checkpoints">{checkpoints.map((item) => <span key={item.checkpointId} className={item.status}>{item.stepName.replaceAll("_", " ")}</span>)}</div></div>}</article>; })}</div>;
 }
 
 function PlatformPills({ platforms, compactMode = false }: { platforms: ClientAccount["platforms"]; compactMode?: boolean }) {
@@ -789,6 +856,6 @@ function RecommendationList({ recommendations }: { recommendations: CommandCente
   return <div className="recommendation-list">{recommendations.map((item, index) => <article key={item.title}><span className={`recommendation-number ${item.severity}`}>{String(index + 1).padStart(2, "0")}</span><div><strong>{item.title}</strong><p>{item.body}</p></div></article>)}</div>;
 }
 
-function Empty({ title, body }: { title: string; body: string }) {
-  return <div className="empty"><span>—</span><strong>{title}</strong><p>{body}</p></div>;
+function Empty({ title, body, action }: { title: string; body: string; action?: ReactNode }) {
+  return <div className="empty"><span>—</span><strong>{title}</strong><p>{body}</p>{action}</div>;
 }

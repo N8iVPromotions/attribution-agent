@@ -55,6 +55,37 @@ def test_cloud_task_runs_only_assigned_client(monkeypatch):
     assert calls[0]["run_benchmarks"] is False
 
 
+@pytest.mark.parametrize(
+    "summary",
+    [
+        {"clients_failed": 1, "results": []},
+        {
+            "clients_failed": 0,
+            "results": [{"client_id": "client-b", "status": "partial"}],
+        },
+    ],
+)
+def test_cloud_task_exits_unsuccessfully_for_failed_or_partial_client(
+    monkeypatch, summary
+):
+    monkeypatch.setenv("CLOUD_RUN_TASK_INDEX", "0")
+    monkeypatch.setenv("CLOUD_RUN_TASK_COUNT", "1")
+    monkeypatch.delenv("ARIE_WORK_MANIFEST_URI", raising=False)
+    monkeypatch.setattr(
+        agency_flow,
+        "build_client_work_items",
+        lambda *_args: [("agency", "client-a")],
+    )
+    monkeypatch.setattr(
+        agency_flow,
+        "run_agency_pipeline",
+        lambda **kwargs: summary,
+    )
+
+    with pytest.raises(RuntimeError, match="client contract"):
+        agency_flow.run_cloud_task("agency", True, None, "last_touch")
+
+
 def test_cloud_task_rejects_undersized_array(monkeypatch):
     monkeypatch.setenv("CLOUD_RUN_TASK_INDEX", "0")
     monkeypatch.setenv("CLOUD_RUN_TASK_COUNT", "1")
