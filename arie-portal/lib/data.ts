@@ -176,6 +176,7 @@ function parseRun(row: Record<string, unknown>): PipelineRun {
       meta: number(row.meta_rows),
       google: number(row.google_rows),
       linkedin: number(row.linkedin_rows),
+      tiktok: number(row.tiktok_rows),
       hubspot: number(row.hubspot_rows),
       stripe: number(row.stripe_rows),
       normalized: normalizedRows
@@ -371,7 +372,7 @@ export async function getCommandCenterData(): Promise<CommandCenterData> {
     const [runRows, clientRows, alertRows] = await Promise.all([
       runSql<Record<string, unknown>>(`
         SELECT run_id, agency_id, client_id, run_mode, attribution_model, status,
-               dry_run, meta_rows, google_rows, linkedin_rows, hubspot_rows,
+               dry_run, meta_rows, google_rows, linkedin_rows, tiktok_rows, hubspot_rows,
                stripe_rows, normalized_ad_rows, total_pipeline, top_channel,
                email_sent, warnings, error, started_at, finished_at, output_schema
         FROM ${schema}.pipeline_runs ORDER BY started_at DESC LIMIT 100

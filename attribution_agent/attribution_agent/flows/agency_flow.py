@@ -39,7 +39,7 @@ sys.path.insert(0, _root)
 from config.agency_config import AgencyConfig, get_agency, list_agencies
 from config.client_config import get_client, list_clients
 from flows.ingest_flow import ingest_flow
-from agents.insight.insight_agent import generate_insight_report
+from agents.insight.insight_agent import InsightReport, generate_insight_report
 from agents.comms.comms_agent import send_agency_report
 from attribution_models import normalize_model
 from utils.databricks_writer import _run_sql, write_pipeline_run
@@ -275,22 +275,40 @@ def run_agency_pipeline(
                         run_id=run_id,
                     )
                     checkpointer.complete_step(
-                        run_id, agency_id, client_id, "generate_report"
+                        run_id,
+                        agency_id,
+                        client_id,
+                        "generate_report",
+                        report.to_dict(),
                     )
                 else:
-                    report = generate_insight_report(
-                        client_id,
-                        attribution_model=selected_model,
-                        run_id=run_id,
+                    logger.info(
+                        f"[Agency] Resuming — restoring generated report for {client_id}"
+                    )
+                    report = InsightReport(
+                        **checkpointer.get_step_result(
+                            run_id, client_id, "generate_report"
+                        )
                     )
 
-                # 3b. Governance review (advisory — never blocks)
+                if report.report_month == "N/A":
+                    raise RuntimeError(
+                        "Report generation produced no attribution data; delivery blocked."
+                    )
+
+                # 3b. Governance review (critical findings block live delivery)
+                governance_review = {
+                    "decision": "NOT RUN",
+                    "warnings": [],
+                    "critical_issues": [],
+                    "review_failed": False,
+                }
                 try:
                     from agents.intelligence.n8iv_agents import run_governance_review
 
                     governance_payload = report.to_dict()
                     governance_payload.pop("generated_at", None)
-                    gov_warnings = run_governance_review(
+                    governance_review = run_governance_review(
                         client_id=client_id,
                         client_name=get_client(client_id).client_name,
                         report_narrative=report.narrative,
@@ -299,10 +317,14 @@ def run_agency_pipeline(
                         run_id=run_id,
                         data_version=report.data_version,
                     )
-                    if gov_warnings:
+                    gov_findings = (
+                        governance_review["warnings"]
+                        + governance_review["critical_issues"]
+                    )
+                    if gov_findings:
                         logger.warning(
-                            f"[Governance] {len(gov_warnings)} advisory item(s) for "
-                            f"{client_id}: " + "; ".join(gov_warnings[:3])
+                            f"[Governance] {len(gov_findings)} item(s) for "
+                            f"{client_id}: " + "; ".join(gov_findings[:3])
                         )
                         dispatch_alerts(
                             [
@@ -310,7 +332,7 @@ def run_agency_pipeline(
                                     severity="warning",
                                     category="report_governance",
                                     title="Report governance warning",
-                                    message="; ".join(gov_warnings[:5]),
+                                    message="; ".join(gov_findings[:5]),
                                     client_id=client_id,
                                     agency_id=agency_id,
                                     run_id=run_id,
@@ -318,7 +340,14 @@ def run_agency_pipeline(
                                         "Review the report before sending or "
                                         "sharing with the client."
                                     ),
-                                    metadata={"warning_count": len(gov_warnings)},
+                                    metadata={
+                                        "warning_count": len(
+                                            governance_review["warnings"]
+                                        ),
+                                        "critical_count": len(
+                                            governance_review["critical_issues"]
+                                        ),
+                                    },
                                 )
                             ]
                         )
@@ -326,6 +355,14 @@ def run_agency_pipeline(
                     logger.warning(
                         f"[Governance] review failed (non-fatal): {gov_exc!r}"
                     )
+                    governance_review = {
+                        "decision": "REVIEW UNAVAILABLE",
+                        "warnings": [],
+                        "critical_issues": [
+                            "Automated governance review was unavailable."
+                        ],
+                        "review_failed": True,
+                    }
 
                 # 4. Send white-labeled email
                 email_sent = False
@@ -336,14 +373,33 @@ def run_agency_pipeline(
                     ).lower()
                     == "true"
                 )
-                can_deliver = ingest_status != "partial" or allow_partial_delivery
+                governance_blocks_delivery = (
+                    bool(governance_review["critical_issues"]) and not dry_run
+                )
+                can_deliver = (
+                    ingest_status != "partial" or allow_partial_delivery
+                ) and not governance_blocks_delivery
                 if not can_deliver:
-                    suppression_alert = _partial_suppression_alert(
-                        client_id=client_id,
-                        agency_id=agency_id,
-                        run_id=run_id,
-                        source_failures=source_failures,
-                    )
+                    if governance_blocks_delivery:
+                        suppression_alert = OperatorAlert(
+                            severity="critical",
+                            category="report_governance_suppressed",
+                            title="REPORT_GOVERNANCE_DELIVERY_SUPPRESSED",
+                            message="; ".join(governance_review["critical_issues"][:5]),
+                            client_id=client_id,
+                            agency_id=agency_id,
+                            run_id=run_id,
+                            action_required=(
+                                "Review and approve a corrected report before delivery."
+                            ),
+                        )
+                    else:
+                        suppression_alert = _partial_suppression_alert(
+                            client_id=client_id,
+                            agency_id=agency_id,
+                            run_id=run_id,
+                            source_failures=source_failures,
+                        )
                     logger.warning(
                         "%s | client=%s | failed_sources=%s",
                         suppression_alert.title,
@@ -378,7 +434,9 @@ def run_agency_pipeline(
                                 powerbi_url=agency.powerbi_workspace_url,
                             )
                             if not email_sent:
-                                claim.release()
+                                raise RuntimeError(
+                                    "Report delivery provider returned an unsuccessful result."
+                                )
                         except Exception:
                             claim.release()
                             raise
@@ -451,6 +509,7 @@ def run_agency_pipeline(
                         "meta_rows": ingest_result.get("meta_rows", 0),
                         "google_rows": ingest_result.get("google_rows", 0),
                         "linkedin_rows": ingest_result.get("linkedin_rows", 0),
+                        "tiktok_rows": ingest_result.get("tiktok_rows", 0),
                         "hubspot_rows": ingest_result.get("hubspot_rows", 0),
                         "stripe_rows": ingest_result.get("stripe_rows", 0),
                         "normalized_ad_rows": ingest_result.get(
@@ -460,11 +519,19 @@ def run_agency_pipeline(
                         "top_channel": report.top_channel,
                         "total_pipeline": report.total_pipeline,
                         "email_sent": email_sent,
-                        "status": ingest_status,
+                        "status": (
+                            "partial"
+                            if ingest_status == "partial" or not can_deliver
+                            else "complete"
+                        ),
                         "source_failures": source_failures,
                     }
                 )
-                pipeline_status = "partial" if ingest_status == "partial" else "success"
+                pipeline_status = (
+                    "partial"
+                    if ingest_status == "partial" or not can_deliver
+                    else "success"
+                )
                 write_pipeline_run(
                     {
                         "run_id": run_id,
@@ -477,6 +544,7 @@ def run_agency_pipeline(
                         "meta_rows": ingest_result.get("meta_rows", 0),
                         "google_rows": ingest_result.get("google_rows", 0),
                         "linkedin_rows": ingest_result.get("linkedin_rows", 0),
+                        "tiktok_rows": ingest_result.get("tiktok_rows", 0),
                         "hubspot_rows": ingest_result.get("hubspot_rows", 0),
                         "stripe_rows": ingest_result.get("stripe_rows", 0),
                         "normalized_ad_rows": ingest_result.get(

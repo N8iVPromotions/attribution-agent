@@ -91,7 +91,7 @@ export const mockCommandCenterData: CommandCenterData = {
       startedAt: ago(180_000),
       finishedAt: "",
       outputSchema: "workspace.attribution_b2b_saas",
-      sourceRows: { meta: 0, google: 412, linkedin: 0, hubspot: 0, stripe: 0, normalized: 412 }
+      sourceRows: { meta: 0, google: 412, linkedin: 0, tiktok: 0, hubspot: 0, stripe: 0, normalized: 412 }
     },
     {
       runId: "demo-partial-03",
@@ -110,7 +110,7 @@ export const mockCommandCenterData: CommandCenterData = {
       startedAt: ago(7_200_000),
       finishedAt: ago(6_780_000),
       outputSchema: "workspace.attribution_agency_pilot",
-      sourceRows: { meta: 0, google: 0, linkedin: 190, hubspot: 46, stripe: 21, normalized: 190 }
+      sourceRows: { meta: 0, google: 0, linkedin: 190, tiktok: 0, hubspot: 46, stripe: 21, normalized: 190 }
     },
     {
       runId: "demo-success-02",
@@ -129,7 +129,7 @@ export const mockCommandCenterData: CommandCenterData = {
       startedAt: ago(25_200_000),
       finishedAt: ago(24_840_000),
       outputSchema: "workspace.attribution_n8iv_promotions",
-      sourceRows: { meta: 830, google: 410, linkedin: 520, hubspot: 74, stripe: 31, normalized: 1760 }
+      sourceRows: { meta: 830, google: 410, linkedin: 520, tiktok: 0, hubspot: 74, stripe: 31, normalized: 1760 }
     },
     {
       runId: "demo-success-01",
@@ -148,7 +148,7 @@ export const mockCommandCenterData: CommandCenterData = {
       startedAt: ago(90_000_000),
       finishedAt: ago(89_640_000),
       outputSchema: "workspace.attribution_luxe_medspa",
-      sourceRows: { meta: 1240, google: 680, linkedin: 0, hubspot: 96, stripe: 54, normalized: 1920 }
+      sourceRows: { meta: 1240, google: 680, linkedin: 0, tiktok: 0, hubspot: 96, stripe: 54, normalized: 1920 }
     }
   ],
   checkpoints: [

@@ -129,17 +129,31 @@ def allocate_credit(
             weights = [0.40] + [middle_credit] * (count - 2) + [0.40]
     elif selected_model == "w_shape":
         lead_idx = _lead_creation_index(ordered)
-        key_indices = sorted({0, lead_idx, count - 1})
-        if len(key_indices) == count:
-            weights = [1.0 / count] * count
+        # W-shape requires an observed lead-creation milestone.  Inventing one
+        # from the middle of a journey makes the output look more precise than
+        # the source data supports, so degrade honestly to U-shape when that
+        # milestone is unavailable.
+        if lead_idx is None:
+            middle_credit = 0.20 / (count - 2) if count > 2 else 0.0
+            weights = (
+                [0.5, 0.5]
+                if count == 2
+                else [0.40] + [middle_credit] * (count - 2) + [0.40]
+            )
         else:
-            weights = [0.0] * count
-            for idx in key_indices:
-                weights[idx] = 0.30
-            remaining_indices = [idx for idx in range(count) if idx not in key_indices]
-            remaining_credit = 1.0 - sum(weights)
-            for idx in remaining_indices:
-                weights[idx] = remaining_credit / len(remaining_indices)
+            key_indices = sorted({0, lead_idx, count - 1})
+            if len(key_indices) == count:
+                weights = [1.0 / count] * count
+            else:
+                weights = [0.0] * count
+                for idx in key_indices:
+                    weights[idx] = 0.30
+                remaining_indices = [
+                    idx for idx in range(count) if idx not in key_indices
+                ]
+                remaining_credit = 1.0 - sum(weights)
+                for idx in remaining_indices:
+                    weights[idx] = remaining_credit / len(remaining_indices)
     else:  # pragma: no cover - normalize_model prevents this
         raise ValueError(f"Unsupported attribution model: {selected_model}")
 
@@ -153,8 +167,8 @@ def allocate_credit(
     ]
 
 
-def _lead_creation_index(touchpoints: list[Touchpoint]) -> int:
+def _lead_creation_index(touchpoints: list[Touchpoint]) -> int | None:
     for idx, touchpoint in enumerate(touchpoints):
         if touchpoint.role == "lead_creation":
             return idx
-    return len(touchpoints) // 2
+    return None

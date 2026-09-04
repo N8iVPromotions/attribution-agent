@@ -16,7 +16,7 @@ Each public function corresponds to one injection point in the pipeline:
       → second stage; returns the JSON expected by InsightReport
 
   run_governance_review(client_id, report_narrative, report_json)
-      → called pre-send in agency_flow.py; returns advisory warnings list
+      → called pre-send in agency_flow.py; returns a structured delivery decision
 """
 
 from __future__ import annotations
@@ -380,10 +380,9 @@ def run_governance_review(
     agency_id: str = "",
     run_id: str = "",
     data_version: str = "",
-) -> list[str]:
+) -> dict:
     """
-    Pre-send governance check. Returns a list of advisory warning strings.
-    An empty list means no issues. Never blocks the pipeline — advisory only.
+    Pre-send governance check with warnings and critical issues kept separate.
     """
     try:
         message = (
@@ -410,14 +409,27 @@ def run_governance_review(
             response_schema=GOVERNANCE_SCHEMA,
         )
         result = _parse_json_response(raw)
-        warnings = result.get("warnings", []) + result.get("critical_issues", [])
-        if warnings:
+        warnings = result.get("warnings", [])
+        critical_issues = result.get("critical_issues", [])
+        result = {
+            "decision": result.get("decision", "REVISE BEFORE HUMAN REVIEW"),
+            "warnings": warnings,
+            "critical_issues": critical_issues,
+            "review_failed": False,
+        }
+        findings = warnings + critical_issues
+        if findings:
             logger.warning(
-                f"[Governance/{client_id}] {len(warnings)} advisory item(s): "
-                + "; ".join(warnings[:3])
+                f"[Governance/{client_id}] {len(findings)} item(s): "
+                + "; ".join(findings[:3])
             )
-        return warnings
+        return result
 
     except Exception as exc:
         logger.warning(f"[Governance/{client_id}] review error (non-fatal): {exc!r}")
-        return []
+        return {
+            "decision": "REVIEW UNAVAILABLE",
+            "warnings": [],
+            "critical_issues": ["Automated governance review was unavailable."],
+            "review_failed": True,
+        }

@@ -12,6 +12,7 @@ export type SourceRows = {
   meta: number;
   google: number;
   linkedin: number;
+  tiktok: number;
   hubspot: number;
   stripe: number;
   normalized: number;

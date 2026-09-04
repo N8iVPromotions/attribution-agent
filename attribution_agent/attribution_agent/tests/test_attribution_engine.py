@@ -112,6 +112,15 @@ def test_hubspot_only_closed_won_conversions():
     assert convs[0].revenue == 2000.0
 
 
+def test_hubspot_stage_matching_is_exact_after_normalization():
+    deals = _hubspot().copy()
+    deals.loc[0, "deal_stage"] = "not_closed_won"
+    assert conversions_from_hubspot(deals, CLIENT) == []
+
+    deals.loc[0, "deal_stage"] = "Closed Won"
+    assert len(conversions_from_hubspot(deals, CLIENT)) == 1
+
+
 def test_stripe_net_of_refunds_and_status():
     convs = conversions_from_stripe(_stripe(), CLIENT)
     revenues = sorted(c.revenue for c in convs)
@@ -142,6 +151,15 @@ def test_unattributed_bucket_for_unmatched_revenue():
     stripe = conversions_from_stripe(_stripe(), CLIENT)
     # Stripe-only convs carry no utm → cannot match any ad
     rows = attribute_conversions(stripe, _ads(), "last_touch")
+    assert set(rows["source_platform"]) == {UNATTRIBUTED}
+
+
+def test_campaign_mismatch_is_unattributed_instead_of_platform_fallback():
+    hubspot = _hubspot().copy()
+    hubspot.loc[0, "utm_campaign"] = "campaign_that_does_not_exist"
+    rows = attribute_conversions(
+        conversions_from_hubspot(hubspot, CLIENT), _ads(), "last_touch"
+    )
     assert set(rows["source_platform"]) == {UNATTRIBUTED}
 
 

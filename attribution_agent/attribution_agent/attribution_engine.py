@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import re
 
 import pandas as pd
 
@@ -84,6 +85,11 @@ def _norm(value: object) -> str:
     return "" if text in ("nan", "none", "null") else text
 
 
+def _stage_key(value: object) -> str:
+    """Canonicalize a CRM stage for exact, false-positive-safe comparison."""
+    return re.sub(r"[^a-z0-9]+", "", _norm(value))
+
+
 def _platform_for(utm_source: str, utm_medium: str = "") -> str:
     """Resolve a platform from utm_source (falling back to utm_medium hints)."""
     src = _norm(utm_source)
@@ -116,11 +122,11 @@ def conversions_from_hubspot(
     """Build conversions from HubSpot deals whose stage is closed/won."""
     if df is None or df.empty:
         return []
-    stage_tokens = tuple(_norm(s) for s in closed_won_stages)
+    stage_tokens = {_stage_key(s) for s in closed_won_stages if _stage_key(s)}
     conversions: list[Conversion] = []
     for _, row in df.iterrows():
-        stage = _norm(row.get("deal_stage"))
-        if not stage or not any(tok and tok in stage for tok in stage_tokens):
+        stage = _stage_key(row.get("deal_stage"))
+        if not stage or stage not in stage_tokens:
             continue
         revenue = float(row.get("amount") or 0.0)
         if revenue <= 0:
@@ -284,11 +290,13 @@ def build_journey(
         lambda r: _norm(r.get("utm_campaign")) or _norm(r.get("campaign_name")), axis=1
     )
     if conv_campaign:
+        # A stated campaign that does not match is a data-quality failure, not
+        # permission to spread revenue over every campaign on the platform.
+        # Keep the conversion in the explicit unattributed bucket instead.
         matched = frame[frame["_campaign"] == conv_campaign]
-        # Fall back to platform-level credit if the campaign label doesn't line up.
-        if matched.empty:
-            matched = frame
     else:
+        # Platform-only attribution is allowed only when the CRM supplied no
+        # campaign identity at all.
         matched = frame
     if matched.empty:
         return []

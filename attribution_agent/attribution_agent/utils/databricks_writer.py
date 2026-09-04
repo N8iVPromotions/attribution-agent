@@ -240,6 +240,7 @@ CREATE TABLE IF NOT EXISTS {ops_schema}.pipeline_runs (
     meta_rows           BIGINT,
     google_rows         BIGINT,
     linkedin_rows       BIGINT,
+    tiktok_rows         BIGINT,
     hubspot_rows        BIGINT,
     stripe_rows         BIGINT,
     normalized_ad_rows  BIGINT,
@@ -805,6 +806,12 @@ def run_delta_maintenance(
 def ensure_ops_tables() -> None:
     _run_sql(f"CREATE SCHEMA IF NOT EXISTS {_OPS_SCHEMA}")
     _run_sql(RUN_HISTORY_TABLE_DDL.format(ops_schema=_OPS_SCHEMA))
+    try:
+        _run_sql(
+            f"ALTER TABLE {_OPS_SCHEMA}.pipeline_runs ADD COLUMNS (tiktok_rows BIGINT)"
+        )
+    except Exception:
+        pass  # column already present
     _run_sql(TELEGRAM_EVENTS_DDL.format(ops_schema=_OPS_SCHEMA))
     _run_sql(OPERATOR_ALERTS_DDL.format(ops_schema=_OPS_SCHEMA))
     _run_sql(AUTH_USERS_DDL.format(ops_schema=_OPS_SCHEMA))
@@ -1481,6 +1488,7 @@ def write_pipeline_run(record: dict) -> None:
         "meta_rows": int(record.get("meta_rows", 0) or 0),
         "google_rows": int(record.get("google_rows", 0) or 0),
         "linkedin_rows": int(record.get("linkedin_rows", 0) or 0),
+        "tiktok_rows": int(record.get("tiktok_rows", 0) or 0),
         "hubspot_rows": int(record.get("hubspot_rows", 0) or 0),
         "stripe_rows": int(record.get("stripe_rows", 0) or 0),
         "normalized_ad_rows": int(record.get("normalized_ad_rows", 0) or 0),
@@ -1504,7 +1512,7 @@ def fetch_recent_pipeline_runs(limit: int = 20) -> list[dict]:
         ensure_ops_tables()
         query = (
             "SELECT run_id, agency_id, client_id, run_mode, attribution_model, status, "
-            "dry_run, meta_rows, google_rows, linkedin_rows, hubspot_rows, stripe_rows, "
+            "dry_run, meta_rows, google_rows, linkedin_rows, tiktok_rows, hubspot_rows, stripe_rows, "
             "normalized_ad_rows, total_pipeline, top_channel, email_sent, warnings, error, "
             f"started_at, finished_at, output_schema "
             f"FROM {_OPS_SCHEMA}.pipeline_runs "

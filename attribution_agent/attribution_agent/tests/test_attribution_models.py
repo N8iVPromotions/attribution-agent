@@ -47,6 +47,19 @@ def test_w_shape_weights_first_lead_and_last_touch():
     assert sum(credits) == pytest.approx(1.0)
 
 
+def test_w_shape_without_observed_lead_creation_degrades_to_u_shape():
+    journey = [
+        Touchpoint(
+            touchpoint_id=f"tp-{idx}",
+            occurred_at=datetime(2026, 1, 1) + timedelta(days=idx),
+            channel=f"Channel {idx}",
+        )
+        for idx in range(4)
+    ]
+    credits = [item.credit for item in allocate_credit(journey, "w_shape")]
+    assert credits == pytest.approx([0.4, 0.1, 0.1, 0.4])
+
+
 def test_time_decay_sums_to_one_and_favors_recent_touchpoints():
     result = allocate_credit(_journey(), "time_decay")
     credits = [item.credit for item in result]

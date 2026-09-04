@@ -50,6 +50,7 @@ const sourceOrder: Array<keyof PipelineRun["sourceRows"]> = [
   "meta",
   "google",
   "linkedin",
+  "tiktok",
   "hubspot",
   "stripe",
   "normalized"
