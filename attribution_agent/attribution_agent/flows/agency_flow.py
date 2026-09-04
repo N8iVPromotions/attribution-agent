@@ -37,18 +37,39 @@ except NameError:
 sys.path.insert(0, _root)
 
 from config.agency_config import AgencyConfig, get_agency, list_agencies
-from config.client_config import get_client, list_clients
+from config.client_config import (
+    get_client,
+    list_clients,
+    normalize_hubspot_closed_won_stage_ids,
+)
 from flows.ingest_flow import ingest_flow
-from agents.insight.insight_agent import InsightReport, generate_insight_report
-from agents.comms.comms_agent import send_agency_report
+from agents.insight.insight_agent import (
+    InsightReport,
+    fetch_report_data_fingerprint,
+    generate_insight_report,
+)
+from agents.comms.comms_agent import (
+    _AGENCY_FLOW_DELIVERY_AUTHORIZATION,
+    DeliveryNotAcceptedError,
+    send_agency_report,
+)
 from attribution_models import normalize_model
 from utils.databricks_writer import (
     _run_sql,
+    insight_report_id,
+    update_insight_report_status,
     write_insight_report,
     write_pipeline_run,
 )
 from utils.idempotency import claim_report_delivery, report_delivery_key
 from utils.operator_alerts import OperatorAlert, dispatch_alerts
+from utils.report_period import ReportPeriod, resolve_report_period
+from utils.report_approval import (
+    ensure_report_delivery_approval,
+    fetch_latest_approved_report,
+    report_delivery_config_fingerprint,
+    report_delivery_approval_status,
+)
 
 try:
     from agents.control import arie_bot as _arie
@@ -57,11 +78,13 @@ except Exception:
 
 
 _GOVERNANCE_READY_DECISION = "READY FOR HUMAN REVIEW"
+_WAREHOUSE_ATTRIBUTION_MODEL = "last_touch"
 _REPORT_CHECKPOINT_REQUIRED_FIELDS = {
     "client_id",
     "client_name",
     "report_month",
     "narrative",
+    "attribution_model",
 }
 
 
@@ -104,17 +127,55 @@ def _partial_suppression_alert(
     )
 
 
-def _report_from_checkpoint(payload: object) -> InsightReport | None:
+def _report_from_checkpoint(
+    payload: object,
+    *,
+    agency_id: str,
+    expected_client_id: str,
+    expected_model: str,
+    expected_month: str,
+) -> tuple[InsightReport, str] | None:
     """Restore only checkpoints that contain a complete, deliverable report."""
     if not isinstance(payload, dict):
         return None
-    if not _REPORT_CHECKPOINT_REQUIRED_FIELDS.issubset(payload):
+    report_payload = payload.get("report", payload)
+    if not isinstance(report_payload, dict):
+        return None
+    if not _REPORT_CHECKPOINT_REQUIRED_FIELDS.issubset(report_payload):
         return None
     try:
-        report = InsightReport(**payload)
+        report = InsightReport(
+            **{
+                key: value
+                for key, value in report_payload.items()
+                if key in InsightReport.__dataclass_fields__
+            }
+        )
     except (TypeError, ValueError):
         return None
-    return report if _report_has_attribution_data(report) else None
+    if (
+        report.client_id != expected_client_id
+        or report.attribution_model != expected_model
+        or report.report_month != expected_month
+    ):
+        raise RuntimeError(
+            "Stored report checkpoint does not match the requested client, "
+            "attribution model, and report month. Start a new run."
+        )
+    if not _report_has_attribution_data(report):
+        return None
+    computed_report_id = insight_report_id({**report.to_dict(), "agency_id": agency_id})
+    stored_report_id = str(payload.get("report_id") or "")
+    if stored_report_id and stored_report_id != computed_report_id:
+        raise RuntimeError(
+            "Stored report checkpoint content does not match its report ID. "
+            "Start a new run."
+        )
+    return report, computed_report_id
+
+
+def _report_checkpoint_payload(report: InsightReport, report_id: str) -> dict:
+    return {"report": report.to_dict(), "report_id": report_id}
 
 
 def _report_has_attribution_data(report: InsightReport) -> bool:
@@ -133,14 +194,19 @@ def _load_or_generate_report(
     agency_id: str,
     client_id: str,
     attribution_model: str,
-) -> InsightReport:
-    report = None
+    report_month: str,
+) -> tuple[InsightReport, str]:
+    restored = None
     if "generate_report" in completed_steps:
         logger.info(f"[Agency] Resuming — restoring generated report for {client_id}")
-        report = _report_from_checkpoint(
-            checkpointer.get_step_result(run_id, client_id, "generate_report")
+        restored = _report_from_checkpoint(
+            checkpointer.get_step_result(run_id, client_id, "generate_report"),
+            agency_id=agency_id,
+            expected_client_id=client_id,
+            expected_model=attribution_model,
+            expected_month=report_month,
         )
-        if report is None:
+        if restored is None:
             logger.warning(
                 "[Agency] Legacy or invalid report checkpoint; regenerating | "
                 "run=%s client=%s",
@@ -148,25 +214,28 @@ def _load_or_generate_report(
                 client_id,
             )
 
-    if report is None:
+    if restored is None:
         checkpointer.start_step(run_id, agency_id, client_id, "generate_report")
         report = generate_insight_report(
             client_id,
             attribution_model=attribution_model,
             run_id=run_id,
+            report_month=report_month,
         )
         if not _report_has_attribution_data(report):
             raise RuntimeError(
                 "Report generation produced no attribution data; delivery blocked."
             )
+        report_id = insight_report_id({**report.to_dict(), "agency_id": agency_id})
         checkpointer.complete_step(
             run_id,
             agency_id,
             client_id,
             "generate_report",
-            report.to_dict(),
+            _report_checkpoint_payload(report, report_id),
         )
-    return report
+        restored = (report, report_id)
+    return restored
 
 
 def _governance_blocks_live_delivery(review: dict, *, dry_run: bool) -> bool:
@@ -195,14 +264,105 @@ def _utc_sql_timestamp(value: datetime) -> str:
     return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
+def _hubspot_closed_won_stage_sql(values: tuple[str, ...]) -> str:
+    """Render validated exact stage keys as SQL string literals."""
+    stage_keys = normalize_hubspot_closed_won_stage_ids(values)
+    return ", ".join(f"'{key.replace(chr(39), chr(39) * 2)}'" for key in stage_keys)
+
+
+def _period_from_ingest_checkpoint(
+    payload: object,
+    *,
+    client_id: str,
+    attribution_model: str,
+    dry_run: bool,
+    requested_month: str | None,
+) -> ReportPeriod:
+    if not isinstance(payload, dict):
+        raise RuntimeError("Ingest checkpoint is missing its run contract.")
+    required = {
+        "client_id",
+        "attribution_model",
+        "report_month",
+        "period_start",
+        "period_end",
+        "dry_run",
+    }
+    if not required.issubset(payload):
+        raise RuntimeError(
+            "Ingest checkpoint lacks its model, period, client, or delivery mode; "
+            "start a new run."
+        )
+    period = resolve_report_period(str(payload["report_month"]))
+    mismatch = bool(
+        str(payload["client_id"]) != client_id
+        or str(payload["attribution_model"]) != attribution_model
+        or bool(payload["dry_run"]) != dry_run
+        or str(payload["period_start"]) != period.start.isoformat()
+        or str(payload["period_end"]) != period.end.isoformat()
+        or (requested_month is not None and requested_month != period.month)
+    )
+    if mismatch:
+        raise RuntimeError(
+            "Ingest checkpoint does not match the requested client, attribution "
+            "model, report period, or delivery mode. Start a new run."
+        )
+    return period
+
+
+def _report_from_persisted_row(
+    row: dict,
+    *,
+    agency_id: str,
+    client_id: str,
+    attribution_model: str,
+    report_month: str,
+) -> tuple[InsightReport, str]:
+    key_findings = row.get("key_findings") or []
+    if isinstance(key_findings, str):
+        try:
+            key_findings = json.loads(key_findings)
+        except json.JSONDecodeError:
+            key_findings = [key_findings] if key_findings else []
+    payload = {
+        "client_id": row.get("client_id"),
+        "client_name": row.get("client_name"),
+        "report_month": row.get("report_month"),
+        "narrative": row.get("narrative") or "",
+        "key_findings": key_findings,
+        "top_channel": row.get("top_channel") or "",
+        "total_pipeline": float(row.get("total_pipeline") or 0.0),
+        "total_spend": float(row.get("total_spend") or 0.0),
+        "overall_roi": float(row.get("overall_roi") or 0.0),
+        "collected_revenue": float(row.get("collected_revenue") or 0.0),
+        "refund_rate": float(row.get("refund_rate") or 0.0),
+        "true_roi": float(row.get("true_roi") or 0.0),
+        "attribution_model": row.get("attribution_model"),
+        "data_version": row.get("data_version") or "",
+        "generated_at": str(row.get("generated_at") or ""),
+    }
+    restored = _report_from_checkpoint(
+        {"report": payload, "report_id": row.get("report_id")},
+        agency_id=agency_id,
+        expected_client_id=client_id,
+        expected_model=attribution_model,
+        expected_month=report_month,
+    )
+    if restored is None:
+        raise RuntimeError("Approved report artifact contains no attributed revenue.")
+    if str(row.get("agency_id") or "") != agency_id:
+        raise RuntimeError("Approved report artifact belongs to another agency.")
+    return restored
+
+
 def _report_outcome_status(
     *,
-    can_deliver: bool,
+    delivery_policy_clear: bool,
     delivery_proven: bool,
 ) -> str:
     if delivery_proven:
         return "delivered"
-    if not can_deliver:
+    if not delivery_policy_clear:
         return "suppressed"
     return "generated"
 
@@ -267,16 +427,31 @@ def run_client_attribution_sql(
     attribution_model: str,
     *,
     run_started_at: datetime,
+    report_period: ReportPeriod,
 ) -> None:
     """Refresh model-specific closed-revenue attribution tables for a client."""
+    selected_model = normalize_model(attribution_model)
+    if selected_model != _WAREHOUSE_ATTRIBUTION_MODEL:
+        raise ValueError(
+            "The production warehouse currently supports only the single-source "
+            "last_touch model; observed multi-touch evidence is not available."
+        )
     config = get_client(client_id)
     sql_path = Path(_root) / "transforms" / "closed_revenue_attribution.sql"
     sql = sql_path.read_text()
     for stmt in sql.format(
         schema=config.databricks_schema,
-        attribution_model=normalize_model(attribution_model),
+        attribution_model=selected_model,
         lookback_days=int(config.lookback_days),
         run_started_at=_utc_sql_timestamp(run_started_at),
+        report_month=report_period.month,
+        period_start=report_period.start.isoformat(),
+        period_end=report_period.end.isoformat(),
+        hubspot_closed_won_stage_keys=_hubspot_closed_won_stage_sql(
+            config.hubspot_closed_won_stage_ids
+        ),
+        reporting_currency=config.reporting_currency,
+        report_timezone=report_period.timezone_name,
     ).split(";"):
         stmt = stmt.strip()
         if stmt:
@@ -296,6 +471,7 @@ def run_agency_pipeline(
     resume_run_id: str | None = None,
     execution_run_id: str | None = None,
     run_benchmarks: bool = True,
+    report_month: str | None = None,
 ) -> dict:
     """
     Run the full pipeline for every client in the agency:
@@ -313,6 +489,17 @@ def run_agency_pipeline(
     agency = get_agency(agency_id)
     client_ids = client_filter or _agency_client_ids(agency)
     selected_model = normalize_model(attribution_model or "last_touch")
+    if selected_model != _WAREHOUSE_ATTRIBUTION_MODEL:
+        raise ValueError(
+            "The production warehouse currently supports only last_touch. "
+            "First-touch and multi-touch models require observed touchpoint data."
+        )
+    if resume_run_id and report_month is None:
+        raise ValueError(
+            "report_month is required when resuming a run so its completed-period "
+            "contract cannot drift."
+        )
+    requested_period = resolve_report_period(report_month)
     run_id = resume_run_id or execution_run_id or str(uuid.uuid4())
     checkpointer = Checkpointer()
 
@@ -339,6 +526,14 @@ def run_agency_pipeline(
         # Resume: skip clients already completed in a prior run
         completed_steps = checkpointer.get_completed_steps(run_id, client_id)
         if "pipeline_complete" in completed_steps:
+            completed_ingest = checkpointer.get_step_result(run_id, client_id, "ingest")
+            _period_from_ingest_checkpoint(
+                completed_ingest,
+                client_id=client_id,
+                attribution_model=selected_model,
+                dry_run=dry_run,
+                requested_month=report_month,
+            )
             logger.info(
                 f"[Agency] Skipping {client_id} — already completed in run {run_id}"
             )
@@ -361,6 +556,9 @@ def run_agency_pipeline(
             ),
         ):
             try:
+                checkpointer.start_step(
+                    run_id, agency_id, client_id, "pipeline_complete"
+                )
                 # 1. Ingest
                 if "ingest" not in completed_steps:
                     checkpointer.start_step(run_id, agency_id, client_id, "ingest")
@@ -368,10 +566,18 @@ def run_agency_pipeline(
                         client_id,
                         run_id=run_id,
                         attribution_model=selected_model,
+                        report_month=requested_period.month,
+                        require_live_mode=not dry_run,
                     )
                     ingest_result = {
                         **ingest_result,
                         "ingest_started_at": started_at.isoformat(),
+                        "client_id": client_id,
+                        "attribution_model": selected_model,
+                        "report_month": requested_period.month,
+                        "period_start": requested_period.start.isoformat(),
+                        "period_end": requested_period.end.isoformat(),
+                        "dry_run": dry_run,
                     }
                     checkpointer.complete_step(
                         run_id, agency_id, client_id, "ingest", ingest_result
@@ -381,6 +587,16 @@ def run_agency_pipeline(
                     ingest_result = checkpointer.get_step_result(
                         run_id, client_id, "ingest"
                     )
+
+                client_period = _period_from_ingest_checkpoint(
+                    ingest_result,
+                    client_id=client_id,
+                    attribution_model=selected_model,
+                    dry_run=dry_run,
+                    requested_month=report_month,
+                )
+                if report_month is None:
+                    requested_period = client_period
 
                 ingest_status = ingest_result.get("status", "complete")
                 source_failures = ingest_result.get("source_failures", {})
@@ -400,20 +616,61 @@ def run_agency_pipeline(
                         client_id,
                         selected_model,
                         run_started_at=datetime.fromisoformat(ingest_started_at),
+                        report_period=client_period,
                     )
                     checkpointer.complete_step(
                         run_id, agency_id, client_id, "attribution_sql"
                     )
 
-                # 3. Generate report from refreshed attributed revenue
-                report = _load_or_generate_report(
-                    checkpointer=checkpointer,
-                    completed_steps=completed_steps,
-                    run_id=run_id,
-                    agency_id=agency_id,
-                    client_id=client_id,
-                    attribution_model=selected_model,
+                # 3. Generate a draft, or reuse the exact artifact a human approved.
+                recipient = _get_client_recipient(client_id)
+                delivery_config_fingerprint = report_delivery_config_fingerprint(
+                    recipient_email=recipient,
+                    agency_config=agency,
                 )
+                approved_artifact = None
+                if not dry_run and "generate_report" not in completed_steps:
+                    current_data_version = fetch_report_data_fingerprint(
+                        client_id,
+                        attribution_model=selected_model,
+                        report_month=client_period.month,
+                    )
+                    approved_artifact = fetch_latest_approved_report(
+                        client_id=client_id,
+                        agency_id=agency_id,
+                        report_month=client_period.month,
+                        attribution_model=selected_model,
+                        data_version=current_data_version,
+                        delivery_config_fingerprint=delivery_config_fingerprint,
+                    )
+                if approved_artifact:
+                    report, report_id = _report_from_persisted_row(
+                        approved_artifact,
+                        agency_id=agency_id,
+                        client_id=client_id,
+                        attribution_model=selected_model,
+                        report_month=client_period.month,
+                    )
+                    checkpointer.start_step(
+                        run_id, agency_id, client_id, "generate_report"
+                    )
+                    checkpointer.complete_step(
+                        run_id,
+                        agency_id,
+                        client_id,
+                        "generate_report",
+                        _report_checkpoint_payload(report, report_id),
+                    )
+                else:
+                    report, report_id = _load_or_generate_report(
+                        checkpointer=checkpointer,
+                        completed_steps=completed_steps,
+                        run_id=run_id,
+                        agency_id=agency_id,
+                        client_id=client_id,
+                        attribution_model=selected_model,
+                        report_month=client_period.month,
+                    )
                 report_record = {
                     **report.to_dict(),
                     "agency_id": agency_id,
@@ -425,7 +682,13 @@ def run_agency_pipeline(
                     else {}
                 )
                 delivery_proven = _delivery_was_proven(delivery_checkpoint)
-                write_insight_report({**report_record, "status": "generated"})
+                persisted_report_id = write_insight_report(
+                    {**report_record, "status": "generated"}
+                )
+                if persisted_report_id != report_id:
+                    raise RuntimeError(
+                        "Persisted report ID does not match the checkpointed artifact."
+                    )
 
                 # 3b. Governance review (critical findings block live delivery)
                 governance_review = {
@@ -441,7 +704,7 @@ def run_agency_pipeline(
                     governance_payload.pop("generated_at", None)
                     governance_review = run_governance_review(
                         client_id=client_id,
-                        client_name=get_client(client_id).client_name,
+                        client_name=report.client_name,
                         report_narrative=report.narrative,
                         report_json=governance_payload,
                         agency_id=agency_id,
@@ -505,12 +768,50 @@ def run_agency_pipeline(
                     == "true"
                 )
                 governance_blocks_delivery = _governance_blocks_live_delivery(
-                    governance_review, dry_run=dry_run
+                    governance_review, dry_run=False
                 )
-                can_deliver = (
+                delivery_policy_clear = (
                     ingest_status != "partial" or allow_partial_delivery
                 ) and not governance_blocks_delivery
-                if not can_deliver:
+                approval_status = None
+                if delivery_policy_clear and not delivery_proven:
+                    approval_status = report_delivery_approval_status(
+                        report_id,
+                        delivery_config_fingerprint=delivery_config_fingerprint,
+                    )
+                    if approval_status is None:
+                        approval_id = ensure_report_delivery_approval(
+                            report_id=report_id,
+                            client_id=client_id,
+                            agency_id=agency_id,
+                            report_month=report.report_month,
+                            attribution_model=selected_model,
+                            recipient_email=recipient,
+                            delivery_config_fingerprint=delivery_config_fingerprint,
+                            description=(
+                                f"Approve external delivery of "
+                                f"{report.client_name} {report.report_month} report "
+                                f"({selected_model}; attributed pipeline "
+                                f"${report.total_pipeline:,.2f}) to {recipient}."
+                            ),
+                        )
+                        approval_status = report_delivery_approval_status(
+                            report_id,
+                            delivery_config_fingerprint=delivery_config_fingerprint,
+                        )
+                        logger.info(
+                            "[Agency] Report approval %s is %s",
+                            approval_id,
+                            approval_status,
+                        )
+                    if approval_status not in {"pending", "approved", "rejected"}:
+                        raise RuntimeError(
+                            "Unable to establish a durable report approval state"
+                        )
+                delivery_authorized = bool(
+                    delivery_proven or approval_status == "approved"
+                )
+                if not delivery_policy_clear:
                     if governance_blocks_delivery:
                         governance_reasons = _governance_block_reasons(
                             governance_review
@@ -541,15 +842,31 @@ def run_agency_pipeline(
                         ",".join(source_failures),
                     )
                     dispatch_alerts([suppression_alert])
+                elif not dry_run and not delivery_authorized:
+                    logger.info(
+                        "[Agency] External delivery awaits human approval | "
+                        "client=%s report=%s",
+                        client_id,
+                        report_id,
+                    )
                 elif not dry_run and "email_sent" not in completed_steps:
-                    recipient = _get_client_recipient(client_id)
                     delivery_key = report_delivery_key(
-                        client_id, report.report_month, selected_model
+                        client_id,
+                        report.report_month,
+                        selected_model,
+                        report_id=report_id,
+                        delivery_config_fingerprint=delivery_config_fingerprint,
                     )
                     claim = claim_report_delivery(delivery_key)
+                    checkpointer.start_step(run_id, agency_id, client_id, "email_sent")
                     if not claim.acquired:
+                        if claim.state != "sent":
+                            raise RuntimeError(
+                                "A prior delivery attempt is unresolved; delivery "
+                                "cannot be retried safely until an operator verifies it."
+                            )
                         logger.info(
-                            "[Agency] Duplicate report delivery suppressed | key=%s",
+                            "[Agency] Previously sent report delivery confirmed | key=%s",
                             delivery_key,
                         )
                         checkpointer.complete_step(
@@ -558,28 +875,29 @@ def run_agency_pipeline(
                             client_id,
                             "email_sent",
                             {
-                                "delivered": False,
-                                "reason": "duplicate_suppressed",
+                                "delivered": True,
+                                "reason": "existing_sent_claim",
                                 "delivery_key": delivery_key,
                             },
                         )
+                        delivery_proven = True
                         delivery_idempotent_skip = True
                     else:
-                        checkpointer.start_step(
-                            run_id, agency_id, client_id, "email_sent"
-                        )
                         try:
                             email_sent = send_agency_report(
                                 report=report,
                                 recipient_email=recipient,
                                 agency_config=agency,
                                 powerbi_url=agency.powerbi_workspace_url,
+                                delivery_authorization=(
+                                    _AGENCY_FLOW_DELIVERY_AUTHORIZATION
+                                ),
                             )
                             if not email_sent:
-                                raise RuntimeError(
+                                raise DeliveryNotAcceptedError(
                                     "Report delivery provider returned an unsuccessful result."
                                 )
-                        except Exception:
+                        except DeliveryNotAcceptedError:
                             claim.release()
                             raise
                         if email_sent:
@@ -613,15 +931,12 @@ def run_agency_pipeline(
                     logger.info(f"[Agency] dry_run — skipping email for {client_id}")
 
                 report_status = _report_outcome_status(
-                    can_deliver=can_deliver,
+                    delivery_policy_clear=delivery_policy_clear,
                     delivery_proven=delivery_proven,
                 )
-                write_insight_report(
-                    {
-                        **report_record,
-                        "status": report_status,
-                    }
-                )
+                if approval_status == "rejected" and not delivery_proven:
+                    report_status = "suppressed"
+                update_insight_report_status(report_id, report_status)
 
                 # Write pipeline summary to cross-run memory
                 try:
@@ -646,10 +961,16 @@ def run_agency_pipeline(
                     delivery_status = "📧 Report sent"
                 elif delivery_proven:
                     delivery_status = "📧 Delivery previously completed"
-                elif not can_deliver:
-                    delivery_status = "⛔ Delivery blocked — partial ingest"
+                elif not delivery_policy_clear:
+                    delivery_status = "⛔ Delivery blocked — source or governance gate"
                 elif dry_run:
                     delivery_status = "🔕 Dry run — email skipped"
+                elif not delivery_authorized:
+                    delivery_status = (
+                        "⛔ Human approval rejected"
+                        if approval_status == "rejected"
+                        else "⏳ Awaiting human approval"
+                    )
                 elif delivery_idempotent_skip:
                     delivery_status = "Duplicate delivery suppressed"
                 elif "email_sent" in completed_steps:
@@ -657,10 +978,22 @@ def run_agency_pipeline(
                 else:
                     delivery_status = "⚠️ Report email was not sent"
 
+                awaiting_approval = bool(
+                    not dry_run
+                    and delivery_policy_clear
+                    and approval_status == "pending"
+                    and not delivery_proven
+                )
                 pipeline_status = (
-                    "partial"
-                    if ingest_status == "partial" or not can_deliver
-                    else "success"
+                    "awaiting_approval"
+                    if awaiting_approval
+                    else (
+                        "partial"
+                        if ingest_status == "partial"
+                        or not delivery_policy_clear
+                        or approval_status == "rejected"
+                        else "success"
+                    )
                 )
                 write_pipeline_run(
                     {
@@ -689,11 +1022,14 @@ def run_agency_pipeline(
                         "output_schema": get_client(client_id).databricks_schema,
                     }
                 )
-                checkpointer.complete_step(
-                    run_id, agency_id, client_id, "pipeline_complete"
-                )
+                if not awaiting_approval:
+                    checkpointer.complete_step(
+                        run_id, agency_id, client_id, "pipeline_complete"
+                    )
                 _notify(
-                    f"✅ *{get_client(client_id).client_name}* complete\n"
+                    f"{'⏳' if awaiting_approval else '✅'} "
+                    f"*{report.client_name}* "
+                    f"{'awaiting approval' if awaiting_approval else 'complete'}\n"
                     f"Pipeline: `${report.total_pipeline:,.0f}` · Top: `{report.top_channel}`\n"
                     f"{delivery_status}"
                 )
@@ -714,10 +1050,17 @@ def run_agency_pipeline(
                         "total_pipeline": report.total_pipeline,
                         "email_sent": delivery_proven,
                         "status": (
-                            "partial"
-                            if ingest_status == "partial" or not can_deliver
-                            else "complete"
+                            "awaiting_approval"
+                            if awaiting_approval
+                            else (
+                                "partial"
+                                if ingest_status == "partial"
+                                or not delivery_policy_clear
+                                or approval_status == "rejected"
+                                else "complete"
+                            )
                         ),
+                        "approval_status": approval_status,
                         "source_failures": source_failures,
                     }
                 )
@@ -773,6 +1116,7 @@ def run_agency_pipeline(
         "agency_id": agency_id,
         "run_id": run_id,
         "attribution_model": selected_model,
+        "report_month": requested_period.month,
         "clients_processed": len(results),
         "clients_failed": len(errors),
         "dry_run": dry_run,
@@ -781,10 +1125,12 @@ def run_agency_pipeline(
     }
     logger.info(f"[Agency] Pipeline complete | {summary}")
     partial_count = sum(item.get("status") == "partial" for item in results)
-    success_count = len(results) - partial_count
+    awaiting_count = sum(item.get("status") == "awaiting_approval" for item in results)
+    success_count = len(results) - partial_count - awaiting_count
     _notify(
         f"{'✅' if not errors else '⚠️'} *Pipeline complete*\n"
-        f"{success_count} succeeded · {partial_count} partial · {len(errors)} failed\n"
+        f"{success_count} succeeded · {awaiting_count} awaiting approval · "
+        f"{partial_count} partial · {len(errors)} failed\n"
         f"Run ID: `{run_id[:8]}`"
     )
     return summary
@@ -814,6 +1160,7 @@ def run_cloud_task(
     dry_run: bool,
     client_filter: list[str] | None,
     attribution_model: str,
+    report_month: str | None = None,
 ) -> dict | None:
     """Run this container's indexed client, or return None outside an array job."""
     task_index_value = os.environ.get("CLOUD_RUN_TASK_INDEX") or os.environ.get(
@@ -830,11 +1177,23 @@ def run_cloud_task(
         from utils.work_manifest import load_work_manifest
 
         manifest = load_work_manifest(manifest_uri)
+        manifest_environment = {
+            "ARIE_REPORT_MONTH": manifest["report_month"],
+            "ARIE_REPORT_TIMEZONE": manifest["report_timezone"],
+            "ARIE_PERIOD_START": manifest["period_start"],
+            "ARIE_PERIOD_END": manifest["period_end"],
+        }
+        for name, expected in manifest_environment.items():
+            supplied = os.environ.get(name, "").strip()
+            if supplied and supplied != str(expected):
+                raise RuntimeError(f"{name} conflicts with the immutable work manifest")
+            os.environ[name] = str(expected)
         work_items = [
             (item["agency_id"], item["client_id"]) for item in manifest["work_items"]
         ]
         dry_run = bool(manifest.get("dry_run", dry_run))
         attribution_model = manifest.get("attribution_model", attribution_model)
+        report_month = manifest.get("report_month", report_month)
     else:
         work_items = build_client_work_items(agency_id, client_filter)
     if task_index < 0 or task_count < 1:
@@ -863,7 +1222,7 @@ def run_cloud_task(
         assigned_agency,
         assigned_client,
     )
-    return run_agency_pipeline(
+    result = run_agency_pipeline(
         agency_id=assigned_agency,
         client_filter=[assigned_client],
         dry_run=dry_run,
@@ -871,12 +1230,24 @@ def run_cloud_task(
         run_mode="client",
         execution_run_id=execution_id,
         run_benchmarks=False,
+        report_month=report_month,
     )
+    failed_count = int(result.get("clients_failed") or 0)
+    partial_count = sum(
+        item.get("status") == "partial" for item in result.get("results", [])
+    )
+    if failed_count or partial_count:
+        raise RuntimeError(
+            "Cloud Run task did not satisfy the client contract: "
+            f"failed={failed_count} partial={partial_count}"
+        )
+    return result
 
 
 def run_all_agencies(
     dry_run: bool = False,
     attribution_model: str | None = None,
+    report_month: str | None = None,
 ) -> list[dict]:
     """Run run_agency_pipeline for every agency in AGENCY_REGISTRY."""
     return [
@@ -885,6 +1256,7 @@ def run_all_agencies(
             dry_run=dry_run,
             attribution_model=attribution_model,
             run_mode="agency",
+            report_month=report_month,
         )
         for agency_id in list_agencies()
     ]
@@ -905,6 +1277,7 @@ if __name__ == "__main__":
     _dry_run = False
     _attribution_model = "last_touch"
     _run_mode = "agency"
+    _report_month = None
     _client_filter = None
     if os.environ.get("DATABRICKS_RUNTIME_VERSION"):
         from databricks.sdk.runtime import dbutils as _dbutils
@@ -919,6 +1292,7 @@ if __name__ == "__main__":
         _dry_run = _widget("dry_run", "false").lower() == "true"
         _attribution_model = _widget("attribution_model", "last_touch") or "last_touch"
         _run_mode = _widget("run_mode", "agency") or "agency"
+        _report_month = _widget("report_month") or None
         _client_filter_raw = _widget("client_filter")
         if _client_filter_raw:
             _client_filter = [
@@ -962,11 +1336,18 @@ if __name__ == "__main__":
         parser.add_argument(
             "--run-mode", type=str, default="agency", help="agency or business"
         )
+        parser.add_argument(
+            "--report-month",
+            type=str,
+            default=None,
+            help="Completed report month in YYYY-MM format (defaults to previous month)",
+        )
         args = parser.parse_args()
         _agency = args.agency
         _dry_run = args.dry_run
         _attribution_model = args.attribution_model
         _run_mode = args.run_mode
+        _report_month = args.report_month
         _client_filter = args.client_filter
 
     cloud_task_result = run_cloud_task(
@@ -974,6 +1355,7 @@ if __name__ == "__main__":
         dry_run=_dry_run,
         client_filter=_client_filter,
         attribution_model=_attribution_model,
+        report_month=_report_month,
     )
     if cloud_task_result is not None:
         print(json.dumps(cloud_task_result, indent=2, default=str))
@@ -984,6 +1366,7 @@ if __name__ == "__main__":
             dry_run=_dry_run,
             attribution_model=_attribution_model,
             run_mode=_run_mode,
+            report_month=_report_month,
         )
         print(json.dumps(result, indent=2, default=str))
     else:
@@ -994,6 +1377,7 @@ if __name__ == "__main__":
                 dry_run=_dry_run,
                 attribution_model=_attribution_model,
                 run_mode=_run_mode,
+                report_month=_report_month,
             )
             for agency_id in list_agencies()
         ]

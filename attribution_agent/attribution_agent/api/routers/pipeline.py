@@ -38,6 +38,7 @@ def _pipeline_args(req: PipelineRunRequest) -> list[str]:
         dry_run=req.dry_run,
         attribution_model=req.attribution_model,
         run_mode=req.run_mode,
+        report_month=req.report_month,
     )
 
 
@@ -50,6 +51,7 @@ def _submit_cloud_run_job(req: PipelineRunRequest) -> str | None:
         dry_run=req.dry_run,
         attribution_model=req.attribution_model,
         run_mode=req.run_mode,
+        report_month=req.report_month,
     )
 
 

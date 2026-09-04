@@ -204,6 +204,22 @@ def test_ambiguous_email_without_deal_id_does_not_merge():
     ]
 
 
+def test_unique_email_without_exact_deal_id_does_not_merge():
+    hubspot = _hubspot().iloc[[0]].copy()
+    stripe = _stripe().iloc[[0]].copy()
+    stripe.loc[:, "hubspot_deal_id"] = ""
+
+    reconciled = reconcile_conversions(
+        conversions_from_hubspot(hubspot, CLIENT),
+        conversions_from_stripe(stripe, CLIENT),
+    )
+
+    assert sorted(item.conversion_id for item in reconciled) == [
+        "hubspot:D1",
+        "stripe:P1",
+    ]
+
+
 def test_attribute_routes_revenue_to_matched_platform():
     hub = conversions_from_hubspot(_hubspot(), CLIENT)
     rows = attribute_conversions(hub, _ads(), "last_touch")

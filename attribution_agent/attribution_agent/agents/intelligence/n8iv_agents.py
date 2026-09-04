@@ -26,6 +26,11 @@ import logging
 import os
 from pathlib import Path
 
+from attribution_models import (
+    ATTRIBUTION_MODEL_DESCRIPTIONS,
+    ATTRIBUTION_MODEL_LABELS,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -251,6 +256,15 @@ def run_data_quality_agent(
 # ─── REVENUE ANALYST AGENT ────────────────────────────────────
 
 
+def _credited_channel_rows(channel_data: list[dict]) -> list[dict]:
+    """Rows whose CRM revenue has matching advertising evidence."""
+    return [
+        row
+        for row in channel_data
+        if str(row.get("channel") or "").strip().lower() != "unattributed"
+    ]
+
+
 def run_revenue_analyst_agent(
     client_id: str,
     client_name: str,
@@ -267,9 +281,13 @@ def run_revenue_analyst_agent(
     """
     data_str = json.dumps(channel_data, indent=2, default=str)
 
-    total_pipeline = sum(r.get("pipeline_value") or 0 for r in channel_data)
+    credited_rows = _credited_channel_rows(channel_data)
+    total_pipeline = sum(r.get("pipeline_value") or 0 for r in credited_rows)
     total_spend = sum(r.get("total_spend") or 0 for r in channel_data)
-    total_deals = sum(r.get("deals_count") or 0 for r in channel_data)
+    total_deals = sum(r.get("deals_count") or 0 for r in credited_rows)
+    unattributed_pipeline = sum(
+        r.get("pipeline_value") or 0 for r in channel_data if r not in credited_rows
+    )
     report_month = (
         channel_data[0].get("report_month", "Unknown") if channel_data else "Unknown"
     )
@@ -284,17 +302,24 @@ def run_revenue_analyst_agent(
         pass
 
     context_prefix = f"{memory_context}\n\n" if memory_context else ""
+    model_label = ATTRIBUTION_MODEL_LABELS.get(attribution_model, attribution_model)
+    model_description = ATTRIBUTION_MODEL_DESCRIPTIONS.get(attribution_model, "")
 
     message = (
         f"{context_prefix}"
         f"Client: {client_name} ({client_id})\n"
         f"Period: {report_month}\n"
-        f"Attribution model: {attribution_model}\n\n"
+        f"Attribution method: {model_label}\n"
+        f"Method definition: {model_description}\n"
+        f"Internal model slug (return unchanged): {attribution_model}\n\n"
         f"Channel performance data:\n{data_str}\n\n"
-        f"Summary: {total_deals} deals, ${total_pipeline:,.0f} pipeline, "
-        f"${total_spend:,.0f} spend\n\n"
+        f"Governed summary: {total_deals} attributed deals, "
+        f"${total_pipeline:,.0f} attributed pipeline, "
+        f"${total_spend:,.0f} total ad spend, and "
+        f"${unattributed_pipeline:,.0f} unattributed CRM pipeline.\n\n"
         "Analyze this data. Identify the 3-5 most decision-relevant findings "
         "about pipeline creation, channel efficiency, anomalies, and budget implications. "
+        "Never count the Unattributed row as attributed pipeline or revenue. "
         "Be specific with numbers. Note data-quality limitations where applicable. "
         "Return structured analysis text (not JSON) that a reporting agent will use "
         "to write the final client report."
@@ -328,20 +353,41 @@ def run_executive_reporting_agent(
     Stage 2 of two-stage insight generation.
     Takes revenue analyst output and produces the final JSON InsightReport payload.
     """
-    total_pipeline = sum(r.get("pipeline_value") or 0 for r in channel_data)
+    credited_rows = _credited_channel_rows(channel_data)
+    total_pipeline = sum(r.get("pipeline_value") or 0 for r in credited_rows)
     total_spend = sum(r.get("total_spend") or 0 for r in channel_data)
-    collected_revenue = sum(r.get("collected_revenue") or 0 for r in channel_data)
-    top_channel = channel_data[0]["channel"] if channel_data else "Unknown"
+    collected_revenue = sum(r.get("collected_revenue") or 0 for r in credited_rows)
+    unattributed_pipeline = sum(
+        r.get("pipeline_value") or 0 for r in channel_data if r not in credited_rows
+    )
+    unattributed_revenue = sum(
+        r.get("collected_revenue") or 0 for r in channel_data if r not in credited_rows
+    )
+    top_channel = (
+        max(
+            credited_rows,
+            key=lambda row: (
+                float(row.get("pipeline_value") or 0),
+                float(row.get("total_spend") or 0),
+            ),
+        ).get("channel", "Unknown")
+        if credited_rows
+        else "Unknown"
+    )
     overall_roi = round(total_pipeline / total_spend, 2) if total_spend else 0.0
     true_roi = round(collected_revenue / total_spend, 2) if total_spend else 0.0
     report_month = (
         channel_data[0].get("report_month", "Unknown") if channel_data else "Unknown"
     )
+    model_label = ATTRIBUTION_MODEL_LABELS.get(attribution_model, attribution_model)
+    model_description = ATTRIBUTION_MODEL_DESCRIPTIONS.get(attribution_model, "")
 
     message = (
         f"Client: {client_name} ({client_id})\n"
         f"Period: {report_month}\n"
-        f"Attribution model: {attribution_model}\n\n"
+        f"Attribution method: {model_label}\n"
+        f"Method definition: {model_description}\n"
+        f"Internal model slug (return unchanged): {attribution_model}\n\n"
         f"Revenue Analyst findings:\n{analyst_output}\n\n"
         f"Pre-calculated summary metrics:\n"
         f"- top_channel: {top_channel}\n"
@@ -349,9 +395,13 @@ def run_executive_reporting_agent(
         f"- total_spend: {total_spend}\n"
         f"- overall_roi: {overall_roi}\n"
         f"- collected_revenue: {collected_revenue}\n"
-        f"- true_roi: {true_roi}\n\n"
+        f"- true_roi: {true_roi}\n"
+        f"- unattributed_pipeline_excluded_from_roi: {unattributed_pipeline}\n"
+        f"- unattributed_revenue_excluded_from_roi: {unattributed_revenue}\n\n"
         "Write a professional monthly attribution report for this client. "
         "Keep it under 350 words, plain business language, specific numbers. "
+        "The authoritative totals above exclude the Unattributed row; do not "
+        "add unattributed CRM revenue to attributed totals or ROI. "
         "Return ONLY a JSON object with these exact keys:\n"
         '{"narrative": "...", "key_findings": ["..."], "top_channel": "...", '
         '"total_pipeline": 0.0, "total_spend": 0.0, "overall_roi": 0.0, '

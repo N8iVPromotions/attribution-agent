@@ -10,9 +10,9 @@ Preferred path:
 - Open the Vercel ARIE Command Center.
 - Go to Tenants.
 - Choose Add client.
-- Enter business identity, agency, default attribution model, lookback window,
-  report email, source account IDs, and source credentials. The system derives
-  safe Databricks schema names from validated tenant IDs.
+- Enter business identity, agency, CRM Source Match, lookback window, report
+  email, source account IDs, and source credentials. The system derives safe
+  Databricks schema names from validated tenant IDs.
 - Save.
 
 The Command Center submits tenant lifecycle requests to Databricks. The
@@ -30,8 +30,26 @@ be reserved for demo/internal defaults.
 | Meta | `meta_enabled` | `meta_ad_account_id` (`act_...`) | Access token |
 | Google Ads | `google_ads_enabled` | `google_ads_customer_id` | Refresh token |
 | LinkedIn Ads | `linkedin_ads_enabled` | `linkedin_ads_account_id` | Access token |
-| HubSpot | `hubspot_enabled` | `hubspot_pipeline_id` | Access token |
-| Stripe | `stripe_enabled` | `stripe_account_id` | Secret key |
+| HubSpot | `hubspot_enabled` | `hubspot_pipeline_id`; exact closed-won stage IDs | Access token |
+| Stripe | `stripe_enabled` | `stripe_account_id`; earliest payment-history date | Secret key |
+
+For HubSpot, enter the pipeline's exact internal closed-won stage IDs. The
+standard defaults are `closedwon` and `won`; custom pipelines commonly use
+different internal IDs. ARIE normalizes and matches only the configured IDs so
+similarly named non-won stages cannot be counted.
+
+For Stripe, every attributable PaymentIntent must include the exact HubSpot
+deal ID in `metadata.hubspot_deal_id` (preferred) or `metadata.deal_id`. Email
+addresses are diagnostic only and are never used to infer a revenue join. Set
+the history start date to the earliest possible payment so late refunds and
+payments for the reporting month's won deals are refreshed correctly.
+
+ARIE currently has a strict USD-only reporting contract; it does not perform
+foreign-exchange conversion. Before enabling a source, verify that every ad
+account reports spend in USD, HubSpot monetary deals use `USD`, and Stripe
+PaymentIntents use `usd`. Missing or non-USD CRM/payment currency fails source
+validation and suppresses live delivery. Treat a currency migration as a new
+onboarding review rather than combining unlike amounts in one report.
 
 Credential values entered in the UI are never stored in the client
 registry. On save, the app creates or updates a per-client GCP Secret Manager
@@ -103,7 +121,7 @@ Cloud Run dry run:
 ```bash
 gcloud run jobs execute attribution-launcher \
   --region us-central1 \
-  --args "flows/job_launcher.py,--agency,acme_media,--dry-run" \
+  --args "flows/job_launcher.py,--agency,acme_media,--dry-run,--attribution-model,last_touch,--report-month,2026-08" \
   --wait
 ```
 
@@ -111,7 +129,7 @@ Local dry run:
 
 ```bash
 cd attribution_agent/attribution_agent
-python flows/agency_flow.py --agency acme_media --dry-run
+python flows/agency_flow.py --agency acme_media --dry-run --report-month 2026-08
 ```
 
 For local runs against Secret Manager, authenticate with application default

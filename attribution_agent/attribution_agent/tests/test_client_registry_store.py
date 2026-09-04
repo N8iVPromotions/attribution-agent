@@ -38,6 +38,47 @@ def _sample_config(client_id: str = "acme_co") -> ClientConfig:
     )
 
 
+def test_n8iv_declares_full_stripe_business_history():
+    config = client_config.BASE_CLIENT_REGISTRY["n8iv_promotions"]
+
+    assert config.stripe_enabled is True
+    assert config.stripe_history_start_date == "2010-01-01"
+
+
+def test_hubspot_closed_won_stages_default_and_normalize_to_exact_keys():
+    default_config = ClientConfig(client_id="default", client_name="Default")
+    custom_config = ClientConfig(
+        client_id="custom",
+        client_name="Custom",
+        hubspot_closed_won_stage_ids=(
+            "Closed Won",
+            "enterprise-won_42",
+            "CLOSED WON",
+        ),
+    )
+
+    assert default_config.hubspot_closed_won_stage_ids == ("closedwon", "won")
+    assert custom_config.hubspot_closed_won_stage_ids == (
+        "closedwon",
+        "enterprisewon42",
+    )
+
+
+@pytest.mark.parametrize(
+    "stage_ids",
+    [(), ("",), ("---",), ("a",) * 21, (123,)],
+)
+def test_hubspot_closed_won_stages_reject_invalid_config(stage_ids):
+    with pytest.raises(
+        ValueError, match="HubSpot closed-won stage IDs|At least one|No more"
+    ):
+        ClientConfig(
+            client_id="invalid",
+            client_name="Invalid",
+            hubspot_closed_won_stage_ids=stage_ids,
+        )
+
+
 class _FakeDeltaStore:
     """In-memory stand-in for the client_registry Delta table."""
 
@@ -126,6 +167,32 @@ def test_attach_client_secret_values_writes_secret_refs(monkeypatch):
         "attr-pilot-acme-co-meta-access-token"
     )
     assert written == {"attr-pilot-acme-co-meta-access-token": "token-123"}
+
+
+def test_client_secret_does_not_fall_back_to_global_credential(monkeypatch):
+    import utils.secrets as secrets
+
+    monkeypatch.setenv("ARIE_ALLOW_GLOBAL_CONNECTOR_CREDENTIALS", "true")
+    monkeypatch.setenv("META_ACCESS_TOKEN", "global-token")
+    monkeypatch.setattr(secrets, "read_secret", lambda *_args, **_kwargs: "")
+    config = ClientConfig(
+        client_id="acme_co",
+        client_name="Acme Co",
+        meta_access_token_secret_name="attr-prod-acme-co-meta-access-token",
+    )
+
+    assert config.meta_access_token == ""
+
+
+def test_global_connector_credential_requires_explicit_opt_in(monkeypatch):
+    monkeypatch.setenv("META_ACCESS_TOKEN", "global-token")
+    monkeypatch.delenv("ARIE_ALLOW_GLOBAL_CONNECTOR_CREDENTIALS", raising=False)
+    config = ClientConfig(client_id="acme_co", client_name="Acme Co")
+
+    assert config.meta_access_token == ""
+
+    monkeypatch.setenv("ARIE_ALLOW_GLOBAL_CONNECTOR_CREDENTIALS", "true")
+    assert config.meta_access_token == "global-token"
 
 
 # ── Delta backend ─────────────────────────────────────────────────────────────

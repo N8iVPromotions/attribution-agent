@@ -19,15 +19,27 @@ from datetime import datetime, timedelta, timezone
 logger = logging.getLogger(__name__)
 
 _OPS_SCHEMA = os.environ.get("ATTRIBUTION_OPS_SCHEMA", "workspace.attribution_ops")
-_LOCAL_DELIVERY_KEYS: set[str] = set()
+_LOCAL_DELIVERY_KEYS: dict[str, str] = {}
 _LOCAL_DELIVERY_LOCK = threading.Lock()
 
 
 def report_delivery_key(
-    client_id: str, report_month: str, attribution_model: str
+    client_id: str,
+    report_month: str,
+    attribution_model: str,
+    *,
+    report_id: str = "",
+    delivery_config_fingerprint: str = "",
 ) -> str:
-    """Return the stable external-delivery key required across job retries."""
-    return f"report:{client_id}:{report_month}:{attribution_model}"
+    """Return a stable key for one exact report artifact and delivery envelope."""
+    base = f"report:{client_id}:{report_month}:{attribution_model}"
+    if report_id or delivery_config_fingerprint:
+        if not report_id or not delivery_config_fingerprint:
+            raise ValueError(
+                "report_id and delivery_config_fingerprint must be supplied together"
+            )
+        return f"{base}:{report_id}:{delivery_config_fingerprint}"
+    return base
 
 
 @dataclass
@@ -38,9 +50,15 @@ class DeliveryClaim:
     acquired: bool
     blob: object | None = None
     generation: int | None = None
+    state: str | None = None
 
     def complete(self) -> None:
-        if not self.acquired or self.blob is None:
+        if not self.acquired:
+            return
+        if self.blob is None:
+            with _LOCAL_DELIVERY_LOCK:
+                _LOCAL_DELIVERY_KEYS[self.key] = "sent"
+            self.state = "sent"
             return
         payload = {
             "key": self.key,
@@ -53,14 +71,15 @@ class DeliveryClaim:
             if_generation_match=self.generation,
         )
         self.generation = int(self.blob.generation)
+        self.state = "sent"
 
     def release(self) -> None:
         """Release only when the provider definitively failed before delivery."""
-        if not self.acquired:
+        if not self.acquired or self.state == "sent":
             return
         if self.blob is None:
             with _LOCAL_DELIVERY_LOCK:
-                _LOCAL_DELIVERY_KEYS.discard(self.key)
+                _LOCAL_DELIVERY_KEYS.pop(self.key, None)
             return
         self.blob.delete(if_generation_match=self.generation)
 
@@ -76,8 +95,9 @@ def claim_report_delivery(key: str) -> DeliveryClaim:
         with _LOCAL_DELIVERY_LOCK:
             acquired = key not in _LOCAL_DELIVERY_KEYS
             if acquired:
-                _LOCAL_DELIVERY_KEYS.add(key)
-        return DeliveryClaim(key=key, acquired=acquired)
+                _LOCAL_DELIVERY_KEYS[key] = "claimed"
+            state = _LOCAL_DELIVERY_KEYS.get(key)
+        return DeliveryClaim(key=key, acquired=acquired, state=state)
 
     from google.api_core.exceptions import PreconditionFailed
     from google.cloud import storage
@@ -98,12 +118,25 @@ def claim_report_delivery(key: str) -> DeliveryClaim:
             if_generation_match=0,
         )
     except PreconditionFailed:
-        return DeliveryClaim(key=key, acquired=False, blob=blob)
+        state = None
+        try:
+            existing = json.loads(blob.download_as_text())
+            if isinstance(existing, dict) and existing.get("key") == key:
+                candidate = str(existing.get("status") or "").lower()
+                if candidate in {"claimed", "sent"}:
+                    state = candidate
+        except Exception as exc:
+            logger.warning(
+                "[Idempotency] Existing delivery claim could not be verified: %s",
+                exc,
+            )
+        return DeliveryClaim(key=key, acquired=False, blob=blob, state=state)
     return DeliveryClaim(
         key=key,
         acquired=True,
         blob=blob,
         generation=int(blob.generation),
+        state="claimed",
     )
 
 

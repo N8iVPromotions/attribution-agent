@@ -2,7 +2,18 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from attribution_models import Touchpoint, allocate_credit
+from attribution_models import (
+    ATTRIBUTION_MODEL_DESCRIPTIONS,
+    ATTRIBUTION_MODEL_LABELS,
+    Touchpoint,
+    allocate_credit,
+)
+
+
+def test_production_slug_is_labeled_as_crm_source_match():
+    assert ATTRIBUTION_MODEL_LABELS["last_touch"] == "CRM Source Match"
+    assert "CRM-recorded paid source" in ATTRIBUTION_MODEL_DESCRIPTIONS["last_touch"]
+    assert "final known touchpoint" not in ATTRIBUTION_MODEL_DESCRIPTIONS["last_touch"]
 
 
 def _journey(count=4):

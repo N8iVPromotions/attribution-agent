@@ -2,7 +2,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException
 from agents.insight.insight_agent import generate_insight_report
 from api.auth import (
     AuthPrincipal,
@@ -104,7 +104,7 @@ def _run_report_generation(client_id: str, run_id: str) -> str:
     try:
         return _generate_and_store_report(client_id, run_id)
     except Exception:
-        logger.exception("[ReportAPI] Background generation failed for %s", client_id)
+        logger.exception("[ReportAPI] Report generation failed for %s", client_id)
         raise
 
 
@@ -135,10 +135,9 @@ async def list_reports(
     return [_row_to_response(r) for r in rows]
 
 
-@router.post("/{client_id}/generate", status_code=202)
+@router.post("/{client_id}/generate", status_code=201)
 async def trigger_report_generation(
     client_id: str,
-    background_tasks: BackgroundTasks,
     principal: AuthPrincipal = Depends(require_auth),
 ) -> dict:
     require_permission(principal, Permission.RUN_PIPELINE_DRY)
@@ -150,9 +149,23 @@ async def trigger_report_generation(
         raise HTTPException(status_code=404, detail=f"Client '{client_id}' not found")
 
     run_id = str(uuid.uuid4())
-    background_tasks.add_task(_run_report_generation, client_id, run_id)
+    try:
+        report_id = _run_report_generation(client_id, run_id)
+    except RuntimeError as exc:
+        if "no attribution data" in str(exc).lower():
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=502,
+            detail="Report generation failed; inspect the run logs and retry.",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Report generation failed; inspect the run logs and retry.",
+        ) from exc
     return {
         "run_id": run_id,
-        "status": "accepted",
-        "message": "Report generation started",
+        "report_id": report_id,
+        "status": "generated",
+        "message": "Report generated and persisted",
     }

@@ -120,6 +120,7 @@ function pipelineArgs(input: PipelineTriggerInput) {
     args.push("--dry-run");
   }
   args.push("--attribution-model", input.attributionModel);
+  args.push("--report-month", input.reportMonth);
   return args;
 }
 

@@ -15,10 +15,13 @@ Or import and call generate_insight_report(client_id) from a flow.
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+from numbers import Number
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -43,6 +46,7 @@ from attribution_models import (
     ATTRIBUTION_MODEL_LABELS,
     normalize_model,
 )
+from utils.report_period import resolve_report_period
 
 
 # ─── REPORT DATACLASS ─────────────────────────────────────────
@@ -98,6 +102,71 @@ class _GovernedReportMetrics:
     true_roi: float
 
 
+_REPORT_DATA_VERSION_FIELDS = (
+    "report_month",
+    "channel",
+    "deals_count",
+    "pipeline_value",
+    "avg_deal_value",
+    "avg_days_to_close",
+    "total_spend",
+    "roi",
+    "cost_per_deal",
+    "collected_revenue",
+    "refunded_revenue",
+    "refund_rate",
+    "true_roi",
+    "ltv_90day",
+    "analytics_state",
+)
+
+
+def _canonical_report_value(value):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, Number) or isinstance(value, Decimal):
+        try:
+            number = Decimal(str(value))
+        except InvalidOperation:
+            return str(value)
+        if not number.is_finite():
+            return None
+        if number == 0:
+            return "0"
+        return format(number.normalize(), "f")
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except (TypeError, ValueError):
+            pass
+    return str(value)
+
+
+def report_data_fingerprint(data: list[dict]) -> str:
+    """Hash only governed report inputs, independent of ingest timestamps/order."""
+    canonical_rows = [
+        {
+            field_name: _canonical_report_value(row.get(field_name))
+            for field_name in _REPORT_DATA_VERSION_FIELDS
+        }
+        for row in data
+    ]
+    canonical_rows.sort(
+        key=lambda row: json.dumps(
+            row, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
+    )
+    encoded = json.dumps(
+        canonical_rows,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode()
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
 # ─── DATA FETCHER ─────────────────────────────────────────────
 
 
@@ -122,7 +191,11 @@ def _table_exists(cursor, table_name: str) -> bool:
 
 
 def _fetch_channel_table_rows(
-    cursor, config: ClientConfig, table: str, has_payment_cols: bool
+    cursor,
+    config: ClientConfig,
+    table: str,
+    has_payment_cols: bool,
+    report_month: str,
 ) -> list[dict]:
     v2_cols = ", collected_revenue, refunded_revenue, refund_rate, true_roi, ltv_90day"
     if not has_payment_cols:
@@ -150,82 +223,22 @@ def _fetch_channel_table_rows(
             {v2_cols},
             'closed_revenue' AS analytics_state
         FROM {config.databricks_schema}.{table}
-        WHERE report_month = (
-            SELECT MAX(report_month)
-            FROM {config.databricks_schema}.{table}
-            WHERE pipeline_value > 0
-        )
+        WHERE report_month = '{report_month}'
         ORDER BY pipeline_value DESC, total_spend DESC
         """,
     )
 
 
-def _fetch_attribution_result_rows(
-    cursor, config: ClientConfig, selected_model: str
+def _fetch_ad_activity_rows(
+    cursor, config: ClientConfig, report_month: str
 ) -> list[dict]:
-    if not _table_exists(cursor, f"{config.databricks_schema}.attribution_results"):
-        return []
-    return _fetch_rows(
-        cursor,
-        f"""
-        SELECT
-            COALESCE(
-                DATE_FORMAT(MAX(computed_at), 'yyyy-MM'),
-                DATE_FORMAT(CURRENT_DATE(), 'yyyy-MM')
-            ) AS report_month,
-            CASE
-                WHEN source_platform = 'unattributed' THEN 'Unattributed'
-                ELSE INITCAP(source_platform)
-            END AS channel,
-            SUM(COALESCE(attributed_conversions, 0.0)) AS deals_count,
-            SUM(COALESCE(attributed_revenue, 0.0)) AS pipeline_value,
-            CASE WHEN SUM(COALESCE(attributed_conversions, 0.0)) > 0
-                 THEN SUM(COALESCE(attributed_revenue, 0.0))
-                    / SUM(COALESCE(attributed_conversions, 0.0))
-                 ELSE 0.0
-            END AS avg_deal_value,
-            CAST(NULL AS DOUBLE) AS avg_days_to_close,
-            SUM(COALESCE(spend, 0.0)) AS total_spend,
-            CASE WHEN SUM(COALESCE(spend, 0.0)) > 0
-                 THEN SUM(COALESCE(attributed_revenue, 0.0))
-                    / SUM(COALESCE(spend, 0.0))
-                 ELSE 0.0
-            END AS roi,
-            CASE WHEN SUM(COALESCE(attributed_conversions, 0.0)) > 0
-                 THEN SUM(COALESCE(spend, 0.0))
-                    / SUM(COALESCE(attributed_conversions, 0.0))
-                 ELSE NULL
-            END AS cost_per_deal,
-            MAX(computed_at) AS ingested_at,
-            SUM(COALESCE(attributed_revenue, 0.0)) AS collected_revenue,
-            CAST(0.0 AS DOUBLE) AS refunded_revenue,
-            CAST(0.0 AS DOUBLE) AS refund_rate,
-            CASE WHEN SUM(COALESCE(spend, 0.0)) > 0
-                 THEN SUM(COALESCE(attributed_revenue, 0.0))
-                    / SUM(COALESCE(spend, 0.0))
-                 ELSE 0.0
-            END AS true_roi,
-            SUM(COALESCE(attributed_revenue, 0.0)) AS ltv_90day,
-            'attribution_results' AS analytics_state
-        FROM {config.databricks_schema}.attribution_results
-        WHERE attribution_model = '{selected_model}'
-        GROUP BY source_platform
-        ORDER BY pipeline_value DESC, total_spend DESC
-        """,
-    )
-
-
-def _fetch_ad_activity_rows(cursor, config: ClientConfig) -> list[dict]:
     if not _table_exists(cursor, f"{config.databricks_schema}.ad_spend_normalized"):
         return []
     return _fetch_rows(
         cursor,
         f"""
         SELECT
-            COALESCE(
-                DATE_FORMAT(MAX(date), 'yyyy-MM'),
-                DATE_FORMAT(CURRENT_DATE(), 'yyyy-MM')
-            ) AS report_month,
+            '{report_month}' AS report_month,
             CASE
                 WHEN source_platform = 'google' THEN 'Paid Search'
                 WHEN source_platform IN ('meta', 'linkedin', 'tiktok') THEN 'Paid Social'
@@ -246,10 +259,7 @@ def _fetch_ad_activity_rows(cursor, config: ClientConfig) -> list[dict]:
             CAST(0.0 AS DOUBLE) AS ltv_90day,
             'ad_activity_without_closed_revenue' AS analytics_state
         FROM {config.databricks_schema}.ad_spend_normalized
-        WHERE DATE_FORMAT(date, 'yyyy-MM') = (
-            SELECT DATE_FORMAT(MAX(date), 'yyyy-MM')
-            FROM {config.databricks_schema}.ad_spend_normalized
-        )
+        WHERE DATE_FORMAT(date, 'yyyy-MM') = '{report_month}'
         GROUP BY source_platform
         ORDER BY total_spend DESC
         """,
@@ -257,10 +267,13 @@ def _fetch_ad_activity_rows(cursor, config: ClientConfig) -> list[dict]:
 
 
 def _fetch_channel_performance(
-    config: ClientConfig, attribution_model: str | None = None
+    config: ClientConfig,
+    attribution_model: str | None = None,
+    report_month: str | None = None,
 ) -> list[dict]:
     """Read attribution analytics with graceful fallbacks for expected no-data states."""
-    selected_model = normalize_model(attribution_model or config.attribution_model)
+    normalize_model(attribution_model or config.attribution_model)
+    selected_month = resolve_report_period(report_month).month
     conn = _connect_databricks()
     cursor = conn.cursor()
     try:
@@ -274,7 +287,13 @@ def _fetch_channel_performance(
             if not _table_exists(cursor, table_name):
                 continue
             warehouse_table_found = True
-            rows = _fetch_channel_table_rows(cursor, config, table, has_payment_cols)
+            rows = _fetch_channel_table_rows(
+                cursor,
+                config,
+                table,
+                has_payment_cols,
+                selected_month,
+            )
             if rows:
                 logger.info(
                     f"[Insight] Fetched {len(rows)} channel rows for "
@@ -283,7 +302,7 @@ def _fetch_channel_performance(
                 return rows
 
         if warehouse_table_found:
-            rows = _fetch_ad_activity_rows(cursor, config)
+            rows = _fetch_ad_activity_rows(cursor, config, selected_month)
             if rows:
                 logger.info(
                     f"[Insight] Fetched {len(rows)} spend-only rows for "
@@ -291,15 +310,7 @@ def _fetch_channel_performance(
                 )
             return rows
 
-        rows = _fetch_attribution_result_rows(cursor, config, selected_model)
-        if rows:
-            logger.info(
-                f"[Insight] Fetched {len(rows)} fallback attribution rows for "
-                f"{config.client_id} (model: {selected_model})"
-            )
-            return rows
-
-        rows = _fetch_ad_activity_rows(cursor, config)
+        rows = _fetch_ad_activity_rows(cursor, config, selected_month)
         if rows:
             logger.info(
                 f"[Insight] Fetched {len(rows)} spend-only rows for "
@@ -309,6 +320,23 @@ def _fetch_channel_performance(
     finally:
         cursor.close()
         conn.close()
+
+
+def fetch_report_data_fingerprint(
+    client_id: str,
+    attribution_model: str | None = None,
+    report_month: str | None = None,
+) -> str:
+    """Return the current governed-input fingerprint for approval freshness."""
+    config = get_client(client_id)
+    selected_model = normalize_model(attribution_model or config.attribution_model)
+    period = resolve_report_period(report_month)
+    data = _fetch_channel_performance(
+        config,
+        selected_model,
+        report_month=period.month,
+    )
+    return report_data_fingerprint(data) if data else ""
 
 
 # ─── CLAUDE NARRATIVE GENERATOR ───────────────────────────────
@@ -324,13 +352,26 @@ def _build_prompt(
     model_label = ATTRIBUTION_MODEL_LABELS[selected_model]
     model_description = ATTRIBUTION_MODEL_DESCRIPTIONS[selected_model]
 
-    total_pipeline = sum(r.get("pipeline_value") or 0 for r in data)
-    total_spend = sum(r.get("total_spend") or 0 for r in data)
-    total_deals = sum(r.get("deals_count") or 0 for r in data)
-    collected_revenue = sum(r.get("collected_revenue") or 0 for r in data)
-    top_channel = data[0]["channel"] if data else "Unknown"
-    report_month = data[0]["report_month"] if data else "Unknown"
-    has_payment_data = any(r.get("collected_revenue") is not None for r in data)
+    attributed_rows = [
+        row
+        for row in data
+        if str(row.get("channel") or "").strip().lower() != "unattributed"
+    ]
+    unattributed_rows = [row for row in data if row not in attributed_rows]
+    metrics = _derive_governed_metrics(data)
+    total_pipeline = metrics.total_pipeline
+    total_spend = metrics.total_spend
+    total_deals = sum(r.get("deals_count") or 0 for r in attributed_rows)
+    collected_revenue = metrics.collected_revenue
+    top_channel = metrics.top_channel
+    report_month = metrics.report_month or "Unknown"
+    unattributed_pipeline = sum(r.get("pipeline_value") or 0 for r in unattributed_rows)
+    unattributed_revenue = sum(
+        r.get("collected_revenue") or 0 for r in unattributed_rows
+    )
+    has_payment_data = any(
+        r.get("collected_revenue") is not None for r in attributed_rows
+    )
     has_revenue_anchor = bool(total_pipeline or collected_revenue or total_deals)
     readiness_note = (
         "- Revenue attribution readiness: Ad activity is available, but no "
@@ -341,7 +382,7 @@ def _build_prompt(
     )
 
     high_refund_channels = [
-        r["channel"] for r in data if (r.get("refund_rate") or 0) > 0.10
+        r["channel"] for r in attributed_rows if (r.get("refund_rate") or 0) > 0.10
     ]
     refund_note = (
         f"- Channels with refund rate > 10%: {', '.join(high_refund_channels)}"
@@ -368,11 +409,13 @@ Here is their channel performance data for {report_month}:
 
 {data_str}
 
-Summary:
-- Total pipeline value: ${total_pipeline:,.0f}
+Governed summary (authoritative; excludes the Unattributed row from revenue and ROI):
+- Attributed pipeline value: ${total_pipeline:,.0f}
 - Total ad spend: ${total_spend:,.0f}
-- Total deals: {total_deals}
+- Attributed deals: {total_deals}
 - Top performing channel: {top_channel}
+- Unattributed CRM pipeline (excluded from attributed totals): ${unattributed_pipeline:,.0f}
+- Unattributed collected revenue (excluded from attributed totals): ${unattributed_revenue:,.0f}
 {readiness_note}
 {payment_summary}
 Write a professional monthly attribution report with the following sections:
@@ -388,6 +431,7 @@ Guidelines:
 - Use specific numbers from the data
 - Be direct about what's working and what isn't
 - If data shows "Unattributed" deals, note the importance of UTM tagging
+- Never add Unattributed pipeline or revenue into attributed totals or ROI
 - Briefly explain how the selected attribution model affects interpretation
 - Keep the total report under 400 words
 - If collected_revenue data is present, distinguish between pipeline value (deals created)
@@ -472,14 +516,20 @@ def _build_fallback_report(
     Generates a structured but non-narrative report from raw channel_performance
     data when the Claude API is unavailable. No prose — metrics only.
     """
-    total_pipeline = sum(r.get("pipeline_value") or 0 for r in data)
-    total_spend = sum(r.get("total_spend") or 0 for r in data)
-    total_deals = sum(r.get("deals_count") or 0 for r in data)
-    collected_revenue = sum(r.get("collected_revenue") or 0 for r in data)
-    overall_roi = round(total_pipeline / total_spend, 2) if total_spend else 0.0
-    true_roi = round(collected_revenue / total_spend, 2) if total_spend else 0.0
-    top_channel = data[0]["channel"] if data else "Unknown"
-    report_month = data[0].get("report_month", "Unknown") if data else "Unknown"
+    attributed_rows = [
+        row
+        for row in data
+        if str(row.get("channel") or "").strip().lower() != "unattributed"
+    ]
+    metrics = _derive_governed_metrics(data)
+    total_pipeline = metrics.total_pipeline
+    total_spend = metrics.total_spend
+    total_deals = sum(r.get("deals_count") or 0 for r in attributed_rows)
+    collected_revenue = metrics.collected_revenue
+    overall_roi = metrics.overall_roi
+    true_roi = metrics.true_roi
+    top_channel = metrics.top_channel
+    report_month = metrics.report_month or "Unknown"
     has_revenue_anchor = bool(total_pipeline or collected_revenue or total_deals)
 
     channel_lines = [
@@ -519,7 +569,7 @@ def _build_fallback_report(
     narrative = (
         f"[AUTO-GENERATED — AI narrative unavailable]\n\n"
         f"Period: {report_month} | Model: {selected_model}\n\n"
-        f"Total pipeline: ${total_pipeline:,.0f} across {total_deals} deals. "
+        f"Attributed pipeline: ${total_pipeline:,.0f} across {total_deals} deals. "
         f"Total ad spend: ${total_spend:,.0f}. Overall ROI: {overall_roi}x. "
         f"Top channel: {top_channel}.\n\n"
         "Channel breakdown:\n" + "\n".join(channel_lines)
@@ -527,7 +577,7 @@ def _build_fallback_report(
 
     key_findings = [
         f"Top channel: {top_channel}",
-        f"Total pipeline value: ${total_pipeline:,.0f}",
+        f"Attributed pipeline value: ${total_pipeline:,.0f}",
         f"Total ad spend: ${total_spend:,.0f} — ROI: {overall_roi}x",
     ]
     if collected_revenue:
@@ -554,11 +604,20 @@ def _build_fallback_report(
 
 def _derive_governed_metrics(data: list[dict]) -> _GovernedReportMetrics:
     """Derive report metrics only from the governed warehouse rows."""
-    total_pipeline = sum(float(row.get("pipeline_value") or 0.0) for row in data)
+    attributed_rows = [
+        row
+        for row in data
+        if str(row.get("channel") or "").strip().lower() != "unattributed"
+    ]
+    total_pipeline = sum(
+        float(row.get("pipeline_value") or 0.0) for row in attributed_rows
+    )
     total_spend = sum(float(row.get("total_spend") or 0.0) for row in data)
-    collected_revenue = sum(float(row.get("collected_revenue") or 0.0) for row in data)
+    collected_revenue = sum(
+        float(row.get("collected_revenue") or 0.0) for row in attributed_rows
+    )
     refunded_revenue = 0.0
-    for row in data:
+    for row in attributed_rows:
         if "refunded_revenue" in row:
             refunded_revenue += float(row.get("refunded_revenue") or 0.0)
             continue
@@ -566,17 +625,23 @@ def _derive_governed_metrics(data: list[dict]) -> _GovernedReportMetrics:
         rate = float(row.get("refund_rate") or 0.0)
         if net_revenue > 0 and 0 < rate < 1:
             refunded_revenue += net_revenue * rate / (1 - rate)
-    top_row = max(
-        data,
-        key=lambda row: (
-            float(row.get("pipeline_value") or 0.0),
-            float(row.get("total_spend") or 0.0),
-        ),
+    top_row = (
+        max(
+            attributed_rows,
+            key=lambda row: (
+                float(row.get("pipeline_value") or 0.0),
+                float(row.get("total_spend") or 0.0),
+            ),
+        )
+        if attributed_rows
+        else None
     )
 
     return _GovernedReportMetrics(
         report_month=str(data[0].get("report_month") or ""),
-        top_channel=str(top_row.get("channel") or "Unknown"),
+        top_channel=(
+            str(top_row.get("channel") or "Unknown") if top_row else "Unknown"
+        ),
         total_pipeline=total_pipeline,
         total_spend=total_spend,
         overall_roi=round(total_pipeline / total_spend, 2) if total_spend else 0.0,
@@ -594,6 +659,7 @@ def generate_insight_report(
     client_id: str,
     attribution_model: str | None = None,
     run_id: str = "",
+    report_month: str | None = None,
 ) -> InsightReport:
     """
     Full pipeline:
@@ -604,25 +670,27 @@ def generate_insight_report(
     """
     config = get_client(client_id)
     selected_model = normalize_model(attribution_model or config.attribution_model)
+    period = resolve_report_period(report_month)
     logger.info(f"[Insight] Generating report for {config.client_name}")
 
     # 1. Fetch data
-    data = _fetch_channel_performance(config, selected_model)
+    data = _fetch_channel_performance(
+        config,
+        selected_model,
+        report_month=period.month,
+    )
     if not data:
         logger.warning("[Insight] No channel performance data found")
         return InsightReport(
             client_id=client_id,
             client_name=config.client_name,
-            report_month="N/A",
+            report_month=period.month,
             narrative="No attribution data available for this period.",
             attribution_model=selected_model,
-            generated_at=datetime.utcnow().isoformat(),
+            generated_at=datetime.now(timezone.utc).isoformat(),
         )
 
-    data_version = max(
-        (str(row.get("ingested_at") or "") for row in data),
-        default="",
-    )
+    data_version = report_data_fingerprint(data)
     agency_id = getattr(config, "agency_id", "")
 
     # 2. Build prompt and call Claude (two-stage via N8iV agents, fallback to single-stage)
@@ -709,11 +777,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--client", type=str, default="demo_client")
     parser.add_argument("--attribution-model", type=str, default=None)
+    parser.add_argument("--report-month")
     args = parser.parse_args()
 
     report = generate_insight_report(
         client_id=args.client,
         attribution_model=args.attribution_model,
+        report_month=args.report_month,
     )
 
     print("\n" + "=" * 60)

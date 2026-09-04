@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from utils.cloud_run import (
     CloudRunJobSettings,
     build_gcloud_command,
@@ -14,8 +16,9 @@ def test_build_pipeline_args_for_filtered_dry_run():
         "n8iv_promotions",
         ["client_a", "client_b"],
         dry_run=True,
-        attribution_model="w_shape",
+        attribution_model="last_touch",
         run_mode="agency",
+        report_month="2026-08",
     ) == [
         "flows/job_launcher.py",
         "--agency",
@@ -26,7 +29,9 @@ def test_build_pipeline_args_for_filtered_dry_run():
         "client_b",
         "--dry-run",
         "--attribution-model",
-        "w_shape",
+        "last_touch",
+        "--report-month",
+        "2026-08",
     ]
 
 
@@ -37,6 +42,7 @@ def test_build_pipeline_args_for_live_business_run():
         dry_run=False,
         attribution_model="last_touch",
         run_mode="business",
+        report_month="2026-08",
     ) == [
         "flows/job_launcher.py",
         "--agency",
@@ -45,6 +51,8 @@ def test_build_pipeline_args_for_live_business_run():
         "n8iv_promotions",
         "--attribution-model",
         "last_touch",
+        "--report-month",
+        "2026-08",
     ]
 
 
@@ -58,8 +66,9 @@ def test_build_gcloud_command_matches_cloud_run_job_args():
         "demo_agency",
         ["demo_client"],
         dry_run=True,
-        attribution_model="linear",
+        attribution_model="last_touch",
         run_mode="agency",
+        report_month="2026-08",
     )
 
     assert build_gcloud_command(args, settings, wait=True) == (
@@ -67,9 +76,14 @@ def test_build_gcloud_command_matches_cloud_run_job_args():
         "--project n8iv-analytics-production "
         "--region us-central1 "
         '--args "flows/job_launcher.py,--agency,demo_agency,--client,'
-        'demo_client,--dry-run,--attribution-model,linear" '
+        'demo_client,--dry-run,--attribution-model,last_touch,--report-month,2026-08" '
         "--wait"
     )
+
+
+def test_build_pipeline_args_rejects_unobserved_model():
+    with pytest.raises(ValueError, match="only last_touch"):
+        build_pipeline_args("demo_agency", attribution_model="w_shape")
 
 
 def test_cloud_run_settings_reads_gcp_project(monkeypatch):

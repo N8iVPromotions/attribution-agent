@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 
 from utils.secrets import redact_secrets
+from utils.work_manifest import validate_warehouse_attribution_model
 
 
 @dataclass(frozen=True)
@@ -47,13 +48,17 @@ def build_pipeline_args(
     dry_run: bool = True,
     attribution_model: str = "last_touch",
     run_mode: str = "agency",
+    report_month: str | None = None,
 ) -> list[str]:
+    attribution_model = validate_warehouse_attribution_model(attribution_model)
     args = ["flows/job_launcher.py", "--agency", agency_id]
     for client_id in client_ids or []:
         args += ["--client", client_id]
     if dry_run:
         args.append("--dry-run")
     args += ["--attribution-model", attribution_model]
+    if report_month:
+        args += ["--report-month", report_month]
     return args
 
 
@@ -83,6 +88,7 @@ def submit_cloud_run_job(
     dry_run: bool = True,
     attribution_model: str = "last_touch",
     run_mode: str = "agency",
+    report_month: str | None = None,
     settings: CloudRunJobSettings | None = None,
 ) -> str:
     settings = settings or cloud_run_settings()
@@ -106,6 +112,7 @@ def submit_cloud_run_job(
         dry_run=dry_run,
         attribution_model=attribution_model,
         run_mode=run_mode,
+        report_month=report_month,
     )
     credentials, _ = google.auth.default(
         scopes=["https://www.googleapis.com/auth/cloud-platform"]

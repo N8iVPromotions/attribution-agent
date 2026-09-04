@@ -33,6 +33,19 @@ function bool(value: unknown) {
   return value === true || value === "true" || value === "1" || value === 1;
 }
 
+function hasMeaningfulWarnings(value: unknown) {
+  const raw = text(value);
+  if (!raw) return false;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.length > 0;
+    if (parsed && typeof parsed === "object") return Object.keys(parsed).length > 0;
+    return Boolean(parsed);
+  } catch {
+    return true;
+  }
+}
+
 function safeStatus(value: unknown): RunStatus {
   const status = text(value, "queued").toLowerCase();
   if (
@@ -41,7 +54,8 @@ function safeStatus(value: unknown): RunStatus {
     status === "failed" ||
     status === "running" ||
     status === "queued" ||
-    status === "warning"
+    status === "warning" ||
+    status === "awaiting_approval"
   ) {
     return status;
   }
@@ -60,6 +74,17 @@ function stringList(value: unknown): string[] {
   }
 }
 
+function jsonObject(value: unknown): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(text(value, "{}"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 function parseClient(row: Record<string, unknown>): ClientAccount {
   let config: Record<string, unknown> = {};
   try {
@@ -67,15 +92,23 @@ function parseClient(row: Record<string, unknown>): ClientAccount {
   } catch {
     config = {};
   }
+  const hubspotClosedWonStageIds = stringList(
+    config.hubspot_closed_won_stage_ids
+  );
 
   return {
     clientId: text(row.client_id),
     name: text(config.client_display_name, text(config.client_name, text(row.client_id, "Unnamed client"))),
     agencyId: text(config.agency_id, "unassigned"),
     attributionModel: text(config.attribution_model, "last_touch"),
+    reportingCurrency: text(config.reporting_currency, "USD"),
     reportEmail: text(config.client_report_email),
     active: bool(row.is_active ?? true),
     lookbackDays: number(config.lookback_days || 30),
+    stripeHistoryStartDate: text(config.stripe_history_start_date),
+    hubspotClosedWonStageIds: hubspotClosedWonStageIds.length
+      ? hubspotClosedWonStageIds
+      : ["closedwon", "won"],
     platforms: {
       meta: bool(config.meta_enabled),
       google: bool(config.google_ads_enabled),
@@ -152,6 +185,7 @@ function parseRun(row: Record<string, unknown>): PipelineRun {
   const emailSent = bool(row.email_sent);
   const dryRun = bool(row.dry_run);
   const normalizedRows = number(row.normalized_ad_rows);
+  const warnings = hasMeaningfulWarnings(row.warnings) ? text(row.warnings) : "";
   return {
     runId: text(row.run_id),
     agencyId: text(row.agency_id),
@@ -166,8 +200,12 @@ function parseRun(row: Record<string, unknown>): PipelineRun {
       normalizedRows > 0 ? "Revenue pending" : "Pending"
     ),
     emailSent,
-    deliverySuppressed: !dryRun && !emailSent && (status === "partial" || Boolean(text(row.warnings))),
-    warnings: text(row.warnings),
+    deliverySuppressed:
+      !dryRun &&
+      !emailSent &&
+      status !== "awaiting_approval" &&
+      (status === "partial" || Boolean(warnings)),
+    warnings,
     error: text(row.error),
     startedAt: text(row.started_at, new Date().toISOString()),
     finishedAt: text(row.finished_at),
@@ -431,7 +469,7 @@ export async function getCommandCenterData(): Promise<CommandCenterData> {
       ),
       optionalQuery<Record<string, unknown>>(
         "Approvals",
-        `SELECT action_id, created_at, actor, description, action_type, status, channel
+        `SELECT action_id, created_at, actor, description, action_type, status, channel, payload_json
          FROM ${schema}.approval_queue WHERE status = 'pending'
          ORDER BY created_at DESC LIMIT 50`,
         warnings
@@ -489,15 +527,21 @@ export async function getCommandCenterData(): Promise<CommandCenterData> {
       outcome: text(row.outcome),
       runId: text(row.run_id)
     }));
-    const approvals: ApprovalItem[] = approvalRows.map((row) => ({
-      actionId: text(row.action_id),
-      createdAt: text(row.created_at),
-      actor: text(row.actor),
-      description: text(row.description),
-      actionType: text(row.action_type),
-      status: text(row.status),
-      channel: text(row.channel)
-    }));
+    const approvals: ApprovalItem[] = approvalRows.map((row) => {
+      const payload = jsonObject(row.payload_json);
+      return {
+        actionId: text(row.action_id),
+        createdAt: text(row.created_at),
+        actor: text(row.actor),
+        description: text(row.description),
+        actionType: text(row.action_type),
+        status: text(row.status),
+        channel: text(row.channel),
+        reportId: text(payload.report_id),
+        recipientEmail: text(payload.recipient_email),
+        deliveryConfigFingerprint: text(payload.delivery_config_fingerprint)
+      };
+    });
     const recentRuns = runs.filter((run) => Date.now() - Date.parse(run.startedAt) <= 30 * 86_400_000);
     const successfulRuns = recentRuns.filter((run) => run.status === "success").length;
 

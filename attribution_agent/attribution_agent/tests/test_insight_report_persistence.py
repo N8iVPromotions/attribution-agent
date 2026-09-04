@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from agents.insight.insight_agent import InsightReport
+from api.auth import AuthPrincipal
 from api.routers import reports
+from config.rbac_config import Role
 from utils import databricks_writer as db
 
 
@@ -35,8 +39,8 @@ def test_write_insight_report_upserts_every_ddl_field_with_stable_id(monkeypatch
     monkeypatch.setattr(
         db,
         "_upsert_dataframe",
-        lambda frame, schema, table, keys: writes.append(
-            (frame.to_dict("records")[0], schema, table, keys)
+        lambda frame, schema, table, keys, **kwargs: writes.append(
+            (frame.to_dict("records")[0], schema, table, keys, kwargs)
         ),
     )
     record = {
@@ -57,6 +61,7 @@ def test_write_insight_report_upserts_every_ddl_field_with_stable_id(monkeypatch
     expected_columns = {
         "report_id",
         "client_id",
+        "client_name",
         "agency_id",
         "report_month",
         "narrative",
@@ -69,6 +74,7 @@ def test_write_insight_report_upserts_every_ddl_field_with_stable_id(monkeypatch
         "refund_rate",
         "true_roi",
         "attribution_model",
+        "data_version",
         "generated_at",
         "run_id",
         "prompt_version",
@@ -87,7 +93,53 @@ def test_write_insight_report_upserts_every_ddl_field_with_stable_id(monkeypatch
         db._OPS_SCHEMA,
         "insight_reports",
         ["report_id"],
+        {"update_on_match": False},
     )
+
+
+def test_report_id_is_content_addressed_and_excludes_status_and_run_id():
+    record = {
+        **_report().to_dict(),
+        "agency_id": "agency-a",
+        "run_id": "run-1",
+        "status": "generated",
+    }
+
+    report_id = db.insight_report_id(record)
+
+    assert report_id == db.insight_report_id(
+        {**record, "run_id": "run-2", "status": "delivered"}
+    )
+    assert report_id != db.insight_report_id(
+        {**record, "narrative": "Changed after approval."}
+    )
+    assert report_id != db.insight_report_id(
+        {**record, "generated_at": "2026-09-03T12:00:01+00:00"}
+    )
+
+
+@pytest.mark.parametrize("generated_at", [None, "", "NaT"])
+def test_report_id_rejects_missing_or_invalid_generated_at(generated_at):
+    record = {
+        **_report().to_dict(),
+        "agency_id": "agency-a",
+        "generated_at": generated_at,
+    }
+
+    with pytest.raises(ValueError, match="generated_at"):
+        db.insight_report_id(record)
+
+
+def test_status_update_changes_only_status_and_verifies_persistence(monkeypatch):
+    statements = []
+    monkeypatch.setattr(db, "ensure_insight_reports_table", lambda: None)
+    monkeypatch.setattr(db, "_run_sql", lambda sql: statements.append(sql))
+    monkeypatch.setattr(db, "_fetch_rows", lambda query: [{"status": "delivered"}])
+
+    db.update_insight_report_status("report-a", "delivered")
+
+    assert "SET status = 'delivered'" in statements[0]
+    assert "WHERE report_id = 'report-a'" in statements[0]
 
 
 def test_api_generation_persists_only_reports_with_attributed_revenue(monkeypatch):
@@ -142,7 +194,7 @@ def test_report_response_exposes_status_with_legacy_default():
     assert reports._row_to_response({}).status == "generated"
 
 
-def test_background_generation_logs_and_reraises(monkeypatch, caplog):
+def test_report_generation_logs_and_reraises(monkeypatch, caplog):
     def fail(client_id, run_id):
         raise RuntimeError("warehouse unavailable")
 
@@ -154,4 +206,46 @@ def test_background_generation_logs_and_reraises(monkeypatch, caplog):
     ):
         reports._run_report_generation("client-a", "api-run-3")
 
-    assert "Background generation failed for client-a" in caplog.text
+    assert "Report generation failed for client-a" in caplog.text
+
+
+def test_generate_endpoint_completes_before_returning(monkeypatch):
+    from config import client_config
+
+    registry = {"client-a": SimpleNamespace()}
+    monkeypatch.setattr(client_config, "CLIENT_REGISTRY", registry)
+    monkeypatch.setattr(client_config, "reload_client_registry", lambda: registry)
+    monkeypatch.setattr(
+        reports,
+        "_run_report_generation",
+        lambda client_id, run_id: "report-id",
+    )
+
+    result = asyncio.run(
+        reports.trigger_report_generation("client-a", AuthPrincipal(Role.ADMIN))
+    )
+
+    assert result["report_id"] == "report-id"
+    assert result["status"] == "generated"
+
+
+def test_generate_endpoint_returns_non_2xx_when_work_fails(monkeypatch):
+    from config import client_config
+
+    registry = {"client-a": SimpleNamespace()}
+    monkeypatch.setattr(client_config, "CLIENT_REGISTRY", registry)
+    monkeypatch.setattr(client_config, "reload_client_registry", lambda: registry)
+    monkeypatch.setattr(
+        reports,
+        "_run_report_generation",
+        lambda client_id, run_id: (_ for _ in ()).throw(
+            RuntimeError("warehouse unavailable")
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            reports.trigger_report_generation("client-a", AuthPrincipal(Role.ADMIN))
+        )
+
+    assert exc.value.status_code == 502

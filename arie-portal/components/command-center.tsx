@@ -29,13 +29,26 @@ const views: Array<{ id: View; description: string }> = [
 ];
 
 const modelLabels: Record<string, string> = {
-  last_touch: "Last Touch",
+  last_touch: "CRM Source Match",
   first_touch: "First Touch",
   linear: "Linear",
   time_decay: "Time Decay",
   u_shape: "U-Shape",
   w_shape: "W-Shape"
 };
+
+const executableModelLabels = { last_touch: modelLabels.last_touch };
+
+function previousCompletedMonth() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit"
+  }).formatToParts(new Date());
+  const year = Number(parts.find((part) => part.type === "year")?.value);
+  const month = Number(parts.find((part) => part.type === "month")?.value);
+  return new Date(Date.UTC(year, month - 2, 1)).toISOString().slice(0, 7);
+}
 
 const sourceLabels: Record<string, string> = {
   meta: "Meta",
@@ -388,7 +401,8 @@ function PipelineView({
   onRefresh: (quiet?: boolean) => Promise<void>;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set(clients.map((client) => client.clientId)));
-  const [model, setModel] = useState("w_shape");
+  const [model, setModel] = useState("last_touch");
+  const [reportMonth, setReportMonth] = useState(previousCompletedMonth);
   const [dryRun, setDryRun] = useState(true);
   const [confirmation, setConfirmation] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -414,6 +428,7 @@ function PipelineView({
           agencyId,
           clientIds: [...selected],
           attributionModel: model,
+          reportMonth,
           dryRun,
           confirmation: dryRun ? undefined : confirmation
         })
@@ -450,8 +465,9 @@ function PipelineView({
           <div className="control-section">
             <div className="section-label"><span>02</span><strong>Configure run</strong></div>
             <div className="form-grid">
-              <label className="field"><span>Attribution model</span><select value={model} onChange={(event) => setModel(event.target.value)}>{Object.entries(modelLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
-              <label className="mode-toggle"><input type="checkbox" checked={!dryRun} onChange={(event) => { setDryRun(!event.target.checked); setConfirmation(""); }} /><span><strong>{dryRun ? "Preview mode" : "Live delivery mode"}</strong><small>{dryRun ? "Generate output; suppress email" : "Client email may be delivered"}</small></span></label>
+              <label className="field"><span>Attribution model</span><select value={model} onChange={(event) => setModel(event.target.value)}>{Object.entries(executableModelLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><small>Uses the source and campaign recorded in CRM; multi-touch requires observed journey events.</small></label>
+              <label className="field"><span>Completed report month</span><input type="month" max={previousCompletedMonth()} value={reportMonth} onChange={(event) => setReportMonth(event.target.value)} /></label>
+              <label className="mode-toggle"><input type="checkbox" checked={!dryRun} onChange={(event) => { setDryRun(!event.target.checked); setConfirmation(""); }} /><span><strong>{dryRun ? "Preview mode" : "Live delivery mode"}</strong><small>{dryRun ? "Generate output; suppress email" : "Only the exact human-approved draft can be delivered"}</small></span></label>
             </div>
             {!dryRun && (
               <label className="field danger-field"><span>Type RUN LIVE to arm delivery</span><input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="RUN LIVE" autoComplete="off" /></label>
@@ -459,13 +475,13 @@ function PipelineView({
           </div>
 
           <div className="execution-footer">
-            <div><span className="eyebrow">Execution manifest</span><strong>{selected.size} tenant{selected.size === 1 ? "" : "s"} / {modelLabels[model]} / {dryRun ? "preview" : "live"}</strong></div>
+            <div><span className="eyebrow">Execution manifest</span><strong>{selected.size} tenant{selected.size === 1 ? "" : "s"} / {reportMonth} / {modelLabels[model]} / {dryRun ? "preview" : "live"}</strong></div>
             <button className={dryRun ? "button primary" : "button danger"} disabled={!armed || submitting} onClick={() => void execute()} type="button">
               {submitting ? "Submitting job…" : dryRun ? "Launch preview run" : "Launch live run"}
             </button>
           </div>
           {!data.capabilities.pipelineExecution && <div className="inline-warning">Execution is read-only until Cloud Run OIDC or the ARIE pipeline API is configured.</div>}
-          {result && <div className={result.ok ? "notice success" : "notice warning"}><strong>{result.ok ? "Execution accepted" : "Execution blocked"}</strong><span>{result.message}</span>{result.operation && <code>{result.operation}</code>}</div>}
+          {result && <div className={result.ok ? "notice success" : "notice warning"}><strong>{result.ok ? "Execution accepted" : "Execution blocked"}</strong><span>{result.message}</span>{result.operation && <code>{result.operation}</code>}{result.ok && !dryRun && <span>An unapproved draft will be queued in Governance without sending client email.</span>}</div>}
         </div>
       </Panel>
 
@@ -623,7 +639,7 @@ function ReportsView({ data, reports, onLaunch }: { data: CommandCenterData; rep
       <article className="report-sheet">
         <header><div><span className="eyebrow">Executive revenue intelligence / {selected.reportMonth}</span><h2>{clientName(selected.clientId, data.clients)}</h2><p>Generated {shortDate(selected.generatedAt)} · {selected.modelId} · {selected.promptVersion}</p></div><StatusChip status={statusPresentation.status} label={statusPresentation.label} /></header>
         <section className="report-metrics"><div><span>Pipeline</span><strong>{money(selected.totalPipeline)}</strong></div><div><span>Spend</span><strong>{money(selected.totalSpend)}</strong></div><div><span>Attributed ROI</span><strong>{roi(selected.overallRoi)}</strong></div><div><span>True ROI</span><strong>{roi(selected.trueRoi)}</strong></div></section>
-        <section className="narrative"><span className="eyebrow">Operator preview</span><p>{selected.narrative}</p></section>
+        <section className="narrative"><span className="eyebrow">Operator preview / report {selected.reportId}</span><p>{selected.narrative}</p></section>
         <section><span className="eyebrow">Key findings</span><ol className="findings">{selected.keyFindings.map((finding) => <li key={finding}>{finding}</li>)}</ol></section>
       </article>
     </div>
@@ -726,7 +742,11 @@ function GovernanceView({ data, costs, approvals, onRefresh, onNotify }: { data:
     try {
       const response = await fetch(`/api/approvals/${encodeURIComponent(actionId)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ resolution }) });
       if (!response.ok) throw new Error(((await response.json()) as { error?: string }).error || "Approval update failed");
-      onNotify(`Action ${resolution}.`);
+      onNotify(
+        resolution === "approved"
+          ? "Exact artifact approved. Launch the matching live run to deliver it."
+          : "Exact artifact rejected; delivery remains blocked."
+      );
       await onRefresh(true);
     } finally {
       setBusy("");
@@ -742,7 +762,7 @@ function GovernanceView({ data, costs, approvals, onRefresh, onNotify }: { data:
         <div className="eval-list">{data.evals.map((item) => <div className="eval-row" key={item.agentName}><div><strong>{item.agentName}</strong><small>{item.promptVersion} / {item.modelId}</small></div><div className="score"><span style={{ width: `${Math.min(100, item.score * 100)}%` }} /></div><strong>{percent(item.score)}</strong><StatusChip status={item.regression || !item.passed ? "failed" : "success"} label={item.regression ? "Regression" : item.passed ? "Passed" : "Failed"} /></div>)}</div>
       </Panel>
       <Panel title="Approval queue" meta={`${approvals.length} pending actions`}>
-        <div className="approval-list">{approvals.length ? approvals.map((approval) => <article className="approval-row" key={approval.actionId}><div><span className="eyebrow">{approval.actionType} / {approval.channel}</span><strong>{approval.description}</strong><small>Raised by {approval.actor} · {shortDate(approval.createdAt)}</small></div><div className="approval-actions"><button className="button ghost" disabled={busy === approval.actionId || !data.capabilities.approvalActions} onClick={() => void resolve(approval.actionId, "rejected")}>Reject</button><button className="button primary" disabled={busy === approval.actionId || !data.capabilities.approvalActions} onClick={() => void resolve(approval.actionId, "approved")}>Approve</button></div></article>) : <Empty title="Queue clear" body="No reports or operator actions are waiting for approval." />}</div>
+        <div className="approval-list">{approvals.length ? approvals.map((approval) => <article className="approval-row" key={approval.actionId}><div><span className="eyebrow">{approval.actionType} / {approval.channel}</span><strong>{approval.description}</strong><small>Report {approval.reportId || "not supplied"} · Recipient {approval.recipientEmail || "not supplied"}</small><small>Envelope {approval.deliveryConfigFingerprint || "not supplied"} · Raised by {approval.actor} · {shortDate(approval.createdAt)}</small></div><div className="approval-actions"><button className="button ghost" disabled={busy === approval.actionId || !data.capabilities.approvalActions} onClick={() => void resolve(approval.actionId, "rejected")}>Reject</button><button className="button primary" disabled={busy === approval.actionId || !data.capabilities.approvalActions} onClick={() => void resolve(approval.actionId, "approved")}>Approve exact artifact</button></div></article>) : <Empty title="Queue clear" body="No reports or operator actions are waiting for approval." />}</div>
         {!data.capabilities.approvalActions && approvals.length > 0 && <div className="inline-warning">Approval actions are read-only until ARIE_API_BASE and ARIE_API_KEY are configured.</div>}
       </Panel>
     </div>
@@ -825,7 +845,7 @@ function CheckpointRail({ data, runs }: { data: CommandCenterData; runs: Pipelin
 function RunTable({ runs, data }: { runs: PipelineRun[]; data: CommandCenterData }) {
   const [open, setOpen] = useState("");
   if (!runs.length) return <Empty title="No execution history" body="Launch a preview run to create the first operational record." />;
-  return <div className="run-table">{runs.map((run) => { const expanded = open === run.runId; const checkpoints = data.checkpoints.filter((item) => item.runId === run.runId); const client = data.clients.find((item) => item.clientId === run.clientId); return <article className={`run-record ${expanded ? "expanded" : ""}`} key={`${run.runId}-${run.clientId}`}><button className="run-summary" onClick={() => setOpen(expanded ? "" : run.runId)}><div><strong>{clientName(run.clientId, data.clients)}</strong><small>{run.runId} / {modelLabels[run.attributionModel] || run.attributionModel}</small></div><div><span>Started</span><strong>{shortDate(run.startedAt)}</strong></div><div><span>Duration</span><strong>{duration(run)}</strong></div><div><span>Pipeline</span><strong>{money(run.totalPipeline)}</strong></div><div><StatusChip status={run.status} />{run.deliverySuppressed && <small className="danger-copy">EMAIL SUPPRESSED</small>}</div><b>{expanded ? "−" : "+"}</b></button>{expanded && <div className="run-detail"><div className="source-counts">{sourceOrder.map((source) => <div key={source}><span>{sourceLabels[source] || source}</span><strong>{sourceReadiness(run, client, source)}</strong></div>)}</div><div className="run-facts"><span>Output schema</span><code>{run.outputSchema || "—"}</code><span>Delivery</span><strong>{run.dryRun ? "Preview — not delivered" : run.emailSent ? "Email sent" : run.deliverySuppressed ? "Suppressed by partial-run policy" : "Not sent"}</strong><span>Top channel</span><strong>{run.topChannel}</strong></div>{(run.warnings || run.error) && <div className="run-message"><strong>{run.error ? "Execution error" : "Run warning"}</strong><p>{run.error || run.warnings}</p></div>}<div className="mini-checkpoints">{checkpoints.map((item) => <span key={item.checkpointId} className={item.status}>{item.stepName.replaceAll("_", " ")}</span>)}</div></div>}</article>; })}</div>;
+  return <div className="run-table">{runs.map((run) => { const expanded = open === run.runId; const checkpoints = data.checkpoints.filter((item) => item.runId === run.runId); const client = data.clients.find((item) => item.clientId === run.clientId); return <article className={`run-record ${expanded ? "expanded" : ""}`} key={`${run.runId}-${run.clientId}`}><button className="run-summary" onClick={() => setOpen(expanded ? "" : run.runId)}><div><strong>{clientName(run.clientId, data.clients)}</strong><small>{run.runId} / {modelLabels[run.attributionModel] || run.attributionModel}</small></div><div><span>Started</span><strong>{shortDate(run.startedAt)}</strong></div><div><span>Duration</span><strong>{duration(run)}</strong></div><div><span>Pipeline</span><strong>{money(run.totalPipeline)}</strong></div><div><StatusChip status={run.status} />{run.deliverySuppressed && <small className="danger-copy">EMAIL SUPPRESSED</small>}</div><b>{expanded ? "−" : "+"}</b></button>{expanded && <div className="run-detail"><div className="source-counts">{sourceOrder.map((source) => <div key={source}><span>{sourceLabels[source] || source}</span><strong>{sourceReadiness(run, client, source)}</strong></div>)}</div><div className="run-facts"><span>Output schema</span><code>{run.outputSchema || "—"}</code><span>Delivery</span><strong>{run.dryRun ? "Preview — not delivered" : run.emailSent ? "Email sent" : run.status === "awaiting_approval" ? "Awaiting exact-artifact approval" : run.deliverySuppressed ? "Suppressed by delivery policy" : "Not sent"}</strong><span>Top channel</span><strong>{run.topChannel}</strong></div>{(run.warnings || run.error) && <div className="run-message"><strong>{run.error ? "Execution error" : "Run warning"}</strong><p>{run.error || run.warnings}</p></div>}<div className="mini-checkpoints">{checkpoints.map((item) => <span key={item.checkpointId} className={item.status}>{item.stepName.replaceAll("_", " ")}</span>)}</div></div>}</article>; })}</div>;
 }
 
 function PlatformPills({ platforms, compactMode = false }: { platforms: ClientAccount["platforms"]; compactMode?: boolean }) {

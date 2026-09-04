@@ -28,7 +28,7 @@ function pipelineCommand(input: PipelineTriggerInput) {
     "gcloud run jobs execute attribution-launcher",
     "--project n8iv-analytics-production",
     "--region us-central1",
-    `--args "flows/job_launcher.py,--agency,${input.agencyId}${clientArgs}${dryRun},--attribution-model,${input.attributionModel}"`,
+    `--args "flows/job_launcher.py,--agency,${input.agencyId}${clientArgs}${dryRun},--attribution-model,${input.attributionModel},--report-month,${input.reportMonth}"`,
     "--wait"
   ].join(" ");
 }
@@ -39,6 +39,7 @@ function triggerBody(input: PipelineTriggerInput) {
     client_ids: input.clientIds,
     dry_run: input.dryRun,
     attribution_model: input.attributionModel,
+    report_month: input.reportMonth,
     run_mode: input.runMode
   };
 }

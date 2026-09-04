@@ -168,7 +168,7 @@ option { color: var(--ink); background: var(--white); }
 .status { display: inline-flex; width: fit-content; align-items: center; gap: 5px; padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface-soft); color: var(--muted); font: 0.57rem/1 var(--mono); text-transform: uppercase; white-space: nowrap; }
 .status i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .status.success { border-color: #b9dec9; background: var(--good-soft); color: var(--good); }
-.status.partial, .status.warning { border-color: #efd5aa; background: var(--warn-soft); color: var(--warn); }
+.status.partial, .status.warning, .status.awaiting_approval { border-color: #efd5aa; background: var(--warn-soft); color: var(--warn); }
 .status.failed, .status.critical { border-color: #efc0c0; background: var(--danger-soft); color: var(--danger); }
 .status.running { border-color: #cfc5ff; background: var(--signal-soft); color: var(--signal-hover); }
 .status.running i { animation: blink 1.2s infinite; }

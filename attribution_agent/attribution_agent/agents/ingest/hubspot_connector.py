@@ -1,8 +1,8 @@
 """
 agents/ingest/hubspot_connector.py
 ------------------------------------
-Pulls deals + associated contacts with UTM / source properties from HubSpot.
-Joins them so every deal row carries its lead's original traffic source.
+Pulls deals and HubSpot's calculated deal-level original traffic source.
+Associated contacts are used only for diagnostic fields and lead timing.
 
 API Docs: https://developers.hubspot.com/docs/api/crm/deals
 """
@@ -31,15 +31,24 @@ DEAL_PROPERTIES = [
     "dealstage",
     "pipeline",
     "amount",
+    "deal_currency_code",
     "closedate",
     "createdate",
     "hs_lastmodifieddate",
     "hubspot_owner_id",
     "hs_deal_stage_probability",
     "closed_won_reason",
+    # HubSpot-calculated deal attribution uses the associated contact with the
+    # earliest activity (or its company fallback), avoiding arbitrary contact
+    # association order.
+    "hs_analytics_source",
+    "hs_analytics_source_data_1",
+    "hs_analytics_source_data_2",
 ]
 
-# Contact properties to fetch (UTM fields are standard in HubSpot)
+# Contact properties used only for diagnostics. Custom UTM properties are
+# deliberately not requested: they do not exist in every portal, and an
+# arbitrary associated contact must never determine a deal's attribution.
 CONTACT_PROPERTIES = [
     "firstname",
     "lastname",
@@ -50,10 +59,6 @@ CONTACT_PROPERTIES = [
     "hs_analytics_first_url",
     "hs_analytics_last_url",
     "hs_analytics_num_visits",
-    "utm_campaign",  # Only present if you've set up custom props
-    "utm_source",
-    "utm_medium",
-    "utm_content",
     "createdate",
     "lifecyclestage",
 ]
@@ -281,17 +286,40 @@ class HubSpotConnector:
     ) -> Iterator[dict]:
         for deal in deals:
             props = deal.get("properties", {})
+            close_datetime = _safe_date(props.get("closedate"))
 
-            # Get the first associated contact (primary contact)
+            # Retain one deterministic associated contact for diagnostic fields
+            # only. Revenue attribution uses HubSpot's deal-level calculated
+            # source properties below, never association order.
             contact_id = None
             associations = deal.get("associations", {})
             contacts_list = associations.get("contacts", {}).get("results", [])
             if contacts_list:
-                contact_id = contacts_list[0]["id"]
+                contact_id = min(str(contact["id"]) for contact in contacts_list)
 
             contact_props = contact_map.get(contact_id, {}) if contact_id else {}
 
-            raw_source = contact_props.get("hs_analytics_source", "")
+            raw_source = props.get("hs_analytics_source", "")
+            source_key = str(raw_source or "").strip().upper()
+            source_detail_1 = props.get("hs_analytics_source_data_1")
+            source_detail_2 = props.get("hs_analytics_source_data_2")
+
+            # Preserve the legacy normalized UTM-shaped columns using only the
+            # same trustworthy deal-level identity used by warehouse SQL.
+            # HubSpot defines Paid Search detail 1 as campaign name and Paid
+            # Social detail 1/2 as network/campaign respectively.
+            if source_key == "PAID_SEARCH":
+                derived_utm_source = "google"
+                derived_utm_campaign = source_detail_1
+                derived_utm_medium = "paid_search"
+            elif source_key == "PAID_SOCIAL":
+                derived_utm_source = source_detail_1
+                derived_utm_campaign = source_detail_2
+                derived_utm_medium = "paid_social"
+            else:
+                derived_utm_source = None
+                derived_utm_campaign = None
+                derived_utm_medium = None
             row = {
                 # Deal fields
                 "deal_id": deal["id"],
@@ -299,7 +327,13 @@ class HubSpotConnector:
                 "deal_stage": props.get("dealstage"),
                 "pipeline": props.get("pipeline"),
                 "amount": _safe_float(props.get("amount")),
-                "close_date": _safe_date(props.get("closedate")),
+                "deal_currency_code": str(
+                    props.get("deal_currency_code") or ""
+                ).upper(),
+                # Preserve the legacy DATE field while retaining the exact UTC
+                # instant for business-timezone reporting boundaries.
+                "close_date": close_datetime,
+                "close_datetime": close_datetime,
                 "create_date": _safe_date(props.get("createdate")),
                 "stage_probability": _safe_float(
                     props.get("hs_deal_stage_probability")
@@ -309,12 +343,12 @@ class HubSpotConnector:
                 "contact_email": contact_props.get("email"),
                 "hs_source": raw_source,
                 "hs_source_label": SOURCE_MAP.get(raw_source, raw_source),
-                "hs_source_detail_1": contact_props.get("hs_analytics_source_data_1"),
-                "hs_source_detail_2": contact_props.get("hs_analytics_source_data_2"),
-                "utm_campaign": contact_props.get("utm_campaign"),
-                "utm_source": contact_props.get("utm_source"),
-                "utm_medium": contact_props.get("utm_medium"),
-                "utm_content": contact_props.get("utm_content"),
+                "hs_source_detail_1": source_detail_1,
+                "hs_source_detail_2": source_detail_2,
+                "utm_campaign": derived_utm_campaign,
+                "utm_source": derived_utm_source,
+                "utm_medium": derived_utm_medium,
+                "utm_content": None,
                 "first_page_url": contact_props.get("hs_analytics_first_url"),
                 "lifecycle_stage": contact_props.get("lifecyclestage"),
                 "lead_create_date": _safe_date(contact_props.get("createdate")),

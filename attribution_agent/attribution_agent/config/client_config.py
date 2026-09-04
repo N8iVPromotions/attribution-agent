@@ -11,18 +11,112 @@ import logging
 import re
 import time
 from dataclasses import asdict, dataclass, replace
+from datetime import date, datetime, timezone
+from collections.abc import Iterable
 from typing import Literal
 import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_HUBSPOT_CLOSED_WON_STAGE_IDS: tuple[str, ...] = ("closedwon", "won")
+SUPPORTED_REPORTING_CURRENCY = "USD"
+_DATABRICKS_SCHEMA_PATTERN = re.compile(
+    r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*"
+)
+
+
+def normalize_reporting_currency(value: str) -> str:
+    currency = str(value or "").strip().upper()
+    if currency != SUPPORTED_REPORTING_CURRENCY:
+        raise ValueError(
+            "Production reporting currently supports USD only; configure every "
+            "ad, CRM, and payment account in USD before enabling delivery"
+        )
+    return currency
+
+
+def normalize_databricks_schema(value: str) -> str:
+    schema = str(value or "").strip()
+    if schema and not _DATABRICKS_SCHEMA_PATTERN.fullmatch(schema):
+        raise ValueError(f"Unsafe Databricks schema identifier: {schema!r}")
+    return schema
+
+
+def normalize_hubspot_closed_won_stage_ids(
+    values: Iterable[str],
+) -> tuple[str, ...]:
+    """Return unique HubSpot stage IDs in the same exact-key form used by SQL."""
+    if isinstance(values, (str, bytes)):
+        raw_values = (str(values),)
+    else:
+        try:
+            raw_values = tuple(values)
+        except TypeError:
+            raise ValueError(
+                "HubSpot closed-won stage IDs must be a collection"
+            ) from None
+    if len(raw_values) > 20:
+        raise ValueError("No more than 20 HubSpot closed-won stage IDs are allowed")
+
+    normalized: list[str] = []
+    for raw_value in raw_values:
+        if not isinstance(raw_value, str):
+            raise ValueError("HubSpot closed-won stage IDs must be strings")
+        if len(raw_value) > 100:
+            raise ValueError(
+                "HubSpot closed-won stage IDs cannot exceed 100 characters"
+            )
+        stage_key = re.sub(r"[^a-z0-9]+", "", raw_value.strip().lower())
+        if not stage_key:
+            raise ValueError("HubSpot closed-won stage IDs cannot be blank")
+        if stage_key not in normalized:
+            normalized.append(stage_key)
+
+    if not normalized:
+        raise ValueError("At least one HubSpot closed-won stage ID is required")
+    return tuple(normalized)
+
 
 def _get_secret(env_key: str, secret_ref: str = "") -> str:
-    """Resolve a client-specific secret ref before falling back to env vars."""
-    from utils.secrets import resolve_secret
+    """Resolve one tenant secret without silently crossing account boundaries."""
+    from utils.secrets import get_secret, read_secret
 
-    return resolve_secret(secret_ref, env_key)
+    if secret_ref:
+        return read_secret(secret_ref, default="")
+    allow_global = (
+        os.environ.get("ARIE_ALLOW_GLOBAL_CONNECTOR_CREDENTIALS", "false")
+        .strip()
+        .lower()
+        == "true"
+    )
+    return get_secret(env_key) if allow_global else ""
+
+
+def stripe_history_start_datetime(
+    value: str,
+    *,
+    now: datetime | None = None,
+) -> datetime:
+    """Validate a canonical Stripe history date and return UTC midnight."""
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError("stripe_history_start_date is required when Stripe is enabled")
+    try:
+        parsed = date.fromisoformat(raw)
+    except ValueError:
+        raise ValueError(
+            "stripe_history_start_date must use a valid YYYY-MM-DD date"
+        ) from None
+    if parsed.isoformat() != raw:
+        raise ValueError("stripe_history_start_date must use a valid YYYY-MM-DD date")
+
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    if parsed > current.astimezone(timezone.utc).date():
+        raise ValueError("stripe_history_start_date cannot be in the future")
+    return datetime(parsed.year, parsed.month, parsed.day, tzinfo=timezone.utc)
 
 
 @dataclass
@@ -32,6 +126,7 @@ class ClientConfig:
     attribution_model: Literal[
         "last_touch", "first_touch", "linear", "time_decay", "u_shape", "w_shape"
     ] = "last_touch"
+    reporting_currency: str = SUPPORTED_REPORTING_CURRENCY
 
     # ── Meta ──────────────────────────────────────────────────────────────────
     meta_enabled: bool = False
@@ -52,6 +147,7 @@ class ClientConfig:
     # ── HubSpot ───────────────────────────────────────────────────────────────
     hubspot_enabled: bool = False
     hubspot_pipeline_id: str = ""  # leave blank for default pipeline
+    hubspot_closed_won_stage_ids: tuple[str, ...] = DEFAULT_HUBSPOT_CLOSED_WON_STAGE_IDS
 
     # ── Databricks destination ─────────────────────────────────────────────────
     databricks_schema: str = ""  # e.g. "attribution_acme_co"
@@ -66,6 +162,7 @@ class ClientConfig:
     # ── Stripe ────────────────────────────────────────────────────────────────
     stripe_enabled: bool = False
     stripe_account_id: str = ""  # Stripe account ID for reference
+    stripe_history_start_date: str = ""  # earliest possible payment, YYYY-MM-DD
 
     # ── Agency ────────────────────────────────────────────────────────────────
     agency_id: str = ""  # links client to an agency ("" = direct)
@@ -88,7 +185,17 @@ class ClientConfig:
     hubspot_token_expires_at: str = ""
     stripe_token_expires_at: str = ""
 
-    # Credentials are resolved from GCP Secret Manager first, then env vars.
+    def __post_init__(self) -> None:
+        self.reporting_currency = normalize_reporting_currency(self.reporting_currency)
+        self.databricks_schema = normalize_databricks_schema(self.databricks_schema)
+        if not 7 <= int(self.lookback_days) <= 365:
+            raise ValueError("lookback_days must be between 7 and 365")
+        self.hubspot_closed_won_stage_ids = normalize_hubspot_closed_won_stage_ids(
+            self.hubspot_closed_won_stage_ids
+        )
+
+    # Tenant secrets never fall back to another credential. Global connector
+    # credentials require the explicit legacy deployment opt-in.
     @property
     def meta_access_token(self) -> str:
         return _get_secret("META_ACCESS_TOKEN", self.meta_access_token_secret_name)
@@ -303,6 +410,7 @@ BASE_CLIENT_REGISTRY: dict[str, ClientConfig] = {
         client_id="demo_client",
         client_name="Demo Client LLC",
         attribution_model="last_touch",
+        reporting_currency="USD",
         meta_enabled=True,
         meta_ad_account_id="155554968273585",  # ← replace with real Meta ad account ID
         google_ads_enabled=False,
@@ -319,11 +427,13 @@ BASE_CLIENT_REGISTRY: dict[str, ClientConfig] = {
         client_id="n8iv_promotions",
         client_name="N8iV Promotions",
         attribution_model="last_touch",
+        reporting_currency="USD",
         meta_enabled=True,
         meta_ad_account_id="155554968273585",
         hubspot_enabled=True,
         hubspot_pipeline_id="",  # ← add HubSpot pipeline ID if not default
         stripe_enabled=True,
+        stripe_history_start_date="2010-01-01",
         databricks_schema=f"{_catalog()}.attribution_n8iv_promotions",
         lookback_days=90,
         agency_id="n8iv_promotions",

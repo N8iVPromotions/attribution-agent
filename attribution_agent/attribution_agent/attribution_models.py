@@ -23,7 +23,9 @@ AttributionModel = Literal[
 ]
 
 ATTRIBUTION_MODEL_LABELS: dict[str, str] = {
-    "last_touch": "Last Touch",
+    # The persisted slug remains for backward compatibility. Production uses
+    # CRM source evidence, not an observed final touchpoint journey.
+    "last_touch": "CRM Source Match",
     "first_touch": "First Touch",
     "linear": "Linear",
     "time_decay": "Time Decay",
@@ -33,8 +35,9 @@ ATTRIBUTION_MODEL_LABELS: dict[str, str] = {
 
 ATTRIBUTION_MODEL_DESCRIPTIONS: dict[str, str] = {
     "last_touch": (
-        "Credits the final known touchpoint before conversion. Useful when the "
-        "business wants to understand closing channels and near-term demand capture."
+        "Credits a closed-won deal only when its CRM-recorded paid source has "
+        "matching ad evidence. A supplied campaign must match exactly; when the "
+        "CRM has no campaign identity, matching is limited to the recorded platform."
     ),
     "first_touch": (
         "Credits the first known touchpoint. Useful when the business is focused "

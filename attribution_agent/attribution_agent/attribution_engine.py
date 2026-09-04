@@ -206,27 +206,20 @@ def reconcile_conversions(
     """
     Merge CRM and Stripe conversions into one deduplicated set.
 
-    A Stripe payment that links to a HubSpot deal (by deal_id, else by email) is
-    treated as the *same* closed/won event: we keep one conversion, take its
-    revenue from the preferred source (Stripe = realized cash, by default), and
-    inherit the CRM's captured UTM identity so the payment is attributable.
+    A Stripe payment that links to a HubSpot deal by exact deal_id is treated as
+    the *same* closed/won event: we keep one conversion, take its revenue from
+    the preferred source (Stripe = realized cash, by default), and inherit the
+    CRM's captured source identity so the payment is attributable. Email is
+    diagnostic only and is never an attribution join key.
 
     Unmatched HubSpot deals (e.g. contract/invoice revenue never run through
     Stripe) and unmatched Stripe payments (e.g. checkout with no CRM record) are
     both retained so revenue totals stay complete.
     """
     by_deal: dict[str, Conversion] = {}
-    by_email_candidates: dict[str, list[Conversion]] = {}
     for hc in hubspot_convs:
         if hc.deal_id:
             by_deal[hc.deal_id] = hc
-        if hc.email:
-            by_email_candidates.setdefault(hc.email, []).append(hc)
-    by_email = {
-        email: candidates[0]
-        for email, candidates in by_email_candidates.items()
-        if len(candidates) == 1
-    }
 
     reconciled: list[Conversion] = []
     consumed_hubspot: set[str] = set()
@@ -235,8 +228,6 @@ def reconcile_conversions(
         match = None
         if sc.deal_id and sc.deal_id in by_deal:
             match = by_deal[sc.deal_id]
-        elif sc.email and sc.email in by_email:
-            match = by_email[sc.email]
 
         if match is None:
             reconciled.append(sc)

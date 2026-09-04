@@ -55,7 +55,9 @@ def _config() -> ClientConfig:
     )
 
 
-def test_fetch_channel_performance_falls_back_to_selected_model_results(monkeypatch):
+def test_fetch_channel_performance_does_not_relabel_legacy_computation_month(
+    monkeypatch,
+):
     cursor = _Cursor(
         {
             "attribution_results": [
@@ -83,11 +85,15 @@ def test_fetch_channel_performance_falls_back_to_selected_model_results(monkeypa
         insight_agent, "_connect_databricks", lambda: _Connection(cursor)
     )
 
-    rows = insight_agent._fetch_channel_performance(_config(), "linear")
+    rows = insight_agent._fetch_channel_performance(
+        _config(), "linear", report_month="2026-08"
+    )
 
-    assert rows[0]["analytics_state"] == "attribution_results"
-    assert rows[0]["total_spend"] == 119.4
-    assert "attribution_model = 'linear'" in " ".join(cursor.queries)
+    assert rows == []
+    assert not any(
+        "FROM workspace.attribution_acme.attribution_results" in query
+        for query in cursor.queries
+    )
 
 
 def test_fetch_channel_performance_falls_back_to_spend_only_rows(monkeypatch):
@@ -118,15 +124,17 @@ def test_fetch_channel_performance_falls_back_to_spend_only_rows(monkeypatch):
         insight_agent, "_connect_databricks", lambda: _Connection(cursor)
     )
 
-    rows = insight_agent._fetch_channel_performance(_config(), "w_shape")
+    rows = insight_agent._fetch_channel_performance(
+        _config(), "w_shape", report_month="2026-08"
+    )
 
     assert rows[0]["analytics_state"] == "ad_activity_without_closed_revenue"
     assert rows[0]["pipeline_value"] == 0.0
     assert rows[0]["total_spend"] == 119.4
-    assert "DATE_FORMAT(MAX(date), 'yyyy-MM')" in " ".join(cursor.queries)
+    assert "DATE_FORMAT(date, 'yyyy-MM') = '2026-08'" in " ".join(cursor.queries)
 
 
-def test_channel_performance_reads_only_latest_report_month(monkeypatch):
+def test_channel_performance_reads_only_requested_report_month(monkeypatch):
     cursor = _Cursor(
         {
             "channel_performance_v2": [
@@ -142,13 +150,12 @@ def test_channel_performance_reads_only_latest_report_month(monkeypatch):
         insight_agent, "_connect_databricks", lambda: _Connection(cursor)
     )
 
-    rows = insight_agent._fetch_channel_performance(_config())
+    rows = insight_agent._fetch_channel_performance(_config(), report_month="2026-08")
 
     assert rows[0]["report_month"] == "2026-08"
     sql = " ".join(cursor.queries)
-    assert "WHERE report_month =" in sql
-    assert "SELECT MAX(report_month)" in sql
-    assert "WHERE pipeline_value > 0" in sql
+    assert "WHERE report_month = '2026-08'" in sql
+    assert "SELECT MAX(report_month)" not in sql
 
 
 def test_empty_warehouse_result_does_not_fall_back_to_stale_python_results(
@@ -170,7 +177,10 @@ def test_empty_warehouse_result_does_not_fall_back_to_stale_python_results(
         insight_agent, "_connect_databricks", lambda: _Connection(cursor)
     )
 
-    assert insight_agent._fetch_channel_performance(_config()) == []
+    assert (
+        insight_agent._fetch_channel_performance(_config(), report_month="2026-08")
+        == []
+    )
     assert not any(
         "FROM workspace.attribution_acme.attribution_results" in query
         for query in cursor.queries

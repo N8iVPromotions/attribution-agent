@@ -17,127 +17,186 @@ def _section(start: str, end: str) -> str:
     return COMPACT_SQL.split(start, 1)[1].split(end, 1)[0]
 
 
-def test_sql_only_selects_valid_closed_won_deals_from_the_current_run():
-    closed_deals = _section("with closed_deals as (", "unique_closed_deal_emails as (")
+def test_closed_deals_are_current_exact_wins_inside_the_explicit_period():
+    prepared = _section("with prepared_deals as (", "closed_deals as (")
+    closed = _section("closed_deals as (", "deal_identity_inputs as (")
 
-    assert "regexp_replace(" in closed_deals
-    assert "'[^a-z0-9]+'" in closed_deals
-    assert ") in ('closedwon', 'won')" in closed_deals
-    assert "like '%closedwon%'" not in closed_deals
-    assert "coalesce(try_cast(amount as double), 0.0) > 0" in closed_deals
-    assert "try_cast(close_date as timestamp)" in closed_deals
-    assert "try_cast(create_date as timestamp)" in closed_deals
-    assert ") is not null" in closed_deals
-    assert "ingested_at >= cast('{run_started_at}' as timestamp)" in closed_deals
+    assert "ingested_at >= cast('{run_started_at}' as timestamp)" in prepared
+    assert "row_number() over (" in prepared
+    assert "partition by trim(cast(deal_id as string))" in prepared
+    assert "try_cast(close_datetime as timestamp) as close_date" in prepared
+    assert "deal_rank = 1" in closed
+    assert "deal_stage_key in ({hubspot_closed_won_stage_keys})" in closed
+    assert "pipeline_value > 0" in closed
+    assert "close_date >= cast('{period_start}' as timestamp)" in closed
+    assert "close_date < cast('{period_end}' as timestamp)" in closed
 
 
-def test_stripe_resolution_prefers_deal_id_and_uses_only_unique_email_fallback():
-    unique_email = _section("unique_closed_deal_emails as (", "prepared_payments as (")
-    prepared = _section("prepared_payments as (", "resolved_payments as (")
-    resolved = _section("resolved_payments as (", "payments_by_deal as (")
+def test_each_deal_has_one_non_weighted_source_match_row():
+    assert "'source_match' as touchpoint_role" in COMPACT_SQL
+    assert "1.0 as credit" in COMPACT_SQL
+    assert "m.pipeline_value as attributed_pipeline" in COMPACT_SQL
+    assert "union all" not in COMPACT_SQL
+    assert "touch_index" not in COMPACT_SQL
+    assert "raw_credit" not in COMPACT_SQL
+    assert "lead_create_date" not in COMPACT_SQL
 
-    assert "having count(distinct deal_id) = 1" in unique_email
-    assert "p.hubspot_deal_id_key <> ''" in resolved
-    assert "p.hubspot_deal_id_key = id_match.deal_id" in resolved
-    assert "p.hubspot_deal_id_key = ''" in resolved
-    assert "p.customer_email_key = email_match.contact_email_key" in resolved
+
+def test_ad_evidence_is_current_globally_bounded_and_pre_close():
+    inputs = _section("ad_evidence_inputs as (", "ad_evidence_daily as (")
+    matched = _section("matched_deals as (", "stripe_payment_history as (")
+
+    assert "ingested_at >= cast('{run_started_at}' as timestamp)" in inputs
     assert (
-        "sum(greatest(amount_paid - refund_amount, 0.0)) as collected_revenue"
+        "try_cast(date as date) >= date_sub( cast('{period_start}' as date), "
+        "{lookback_days} )"
+    ) in inputs
+    assert "try_cast(date as date) < cast('{period_end}' as date)" in inputs
+    assert "a.spend_date >= date_sub(" in matched
+    assert (
+        "to_date(from_utc_timestamp(d.close_date, '{report_timezone}')), "
+        "{lookback_days}"
+    ) in matched
+    assert (
+        "a.spend_date <= to_date( from_utc_timestamp(d.close_date, "
+        "'{report_timezone}') )"
+    ) in matched
+
+
+def test_campaign_matching_is_strict_and_blank_campaign_is_platform_only():
+    matched = _section("matched_deals as (", "stripe_payment_history as (")
+
+    assert "a.source_platform = d.source_platform" in matched
+    assert (
+        "(d.crm_campaign_key <> '' and a.campaign_key = d.crm_campaign_key) "
+        "or d.crm_campaign_key = ''"
+    ) in matched
+    assert "when m.has_ad_match = 0 then 'unattributed'" in COMPACT_SQL
+    assert "when m.crm_campaign_key = '' then '(platform only)'" in COMPACT_SQL
+    assert (
+        "when m.has_ad_match = 1 then m.source_platform else 'unattributed'"
         in COMPACT_SQL
     )
-    assert "ingested_at >= cast('{run_started_at}' as timestamp)" in prepared
+
+
+def test_stripe_uses_current_validated_history_and_exact_deal_ids_only():
+    history = _section("stripe_payment_history as (", "payments_by_deal as (")
+    payments = _section("payments_by_deal as (", ") select '{report_month}'")
+
+    assert "from {schema}.stripe_payments_raw" in history
+    assert "ingested_at >= cast('{run_started_at}' as timestamp)" in history
+    assert "upper(trim(coalesce(currency, ''))) = '{reporting_currency}'" in history
+    assert "partition by trim(cast(payment_id as string))" in history
+    assert "payment_rank = 1" in payments
+    assert "hubspot_deal_id_key <> ''" in payments
+    assert "hubspot_deal_id_key as deal_id" in payments
+    assert "customer_email" not in COMPACT_SQL
+    assert "contact_email" not in COMPACT_SQL
     assert (
-        COMPACT_SQL.count("ingested_at >= cast('{run_started_at}' as timestamp)") == 4
+        "sum(greatest(amount_paid - refund_amount, 0.0)) as collected_revenue"
+        in payments
+    )
+    assert "sum(greatest(refund_amount, 0.0)) as refunded_revenue" in payments
+
+
+def test_report_month_is_explicit_and_not_inferred_from_source_dates():
+    assert COMPACT_SQL.count("'{report_month}' as report_month") == 2
+    assert "date_format(" not in COMPACT_SQL
+    assert "where report_month = '{report_month}'" in COMPACT_SQL
+
+
+def test_target_period_is_atomically_replaced_without_erasing_history():
+    assert "insert overwrite" not in COMPACT_SQL
+    assert "create or replace table" not in COMPACT_SQL
+    assert "delete from" not in COMPACT_SQL
+    assert COMPACT_SQL.count("create table if not exists") == 3
+    assert (
+        "insert into {schema}.attributed_revenue replace where report_month = "
+        "'{report_month}' and attribution_model = '{attribution_model}'" in COMPACT_SQL
+    )
+    assert (
+        "insert into {schema}.channel_performance replace where report_month = "
+        "'{report_month}'" in COMPACT_SQL
+    )
+    assert (
+        "insert into {schema}.channel_performance_v2 replace where report_month = "
+        "'{report_month}'" in COMPACT_SQL
+    )
+    assert (
+        COMPACT_SQL.count(
+            "where report_month = '{report_month}' and attribution_model = "
+            "'{attribution_model}'"
+        )
+        == 3
     )
 
 
-def test_lead_milestone_is_observed_and_w_shape_without_it_uses_u_shape():
-    touchpoints = _section("deal_touchpoints as (", "deduped_touchpoints as (")
-    weighted = _section("weighted as (", "normalized as (")
-
-    assert "lead_create_date as touchpoint_at" in touchpoints
-    assert "where lead_create_date is not null" in touchpoints
-    assert "coalesce(lead_create_date" not in touchpoints
-    assert "'w_shape' and has_lead_touch = 0 and touch_count = 2 then 0.5" in weighted
-    assert "'w_shape' and has_lead_touch = 0 then case" in weighted
-    assert "when touch_index = 1 then 0.4" in weighted
-    assert "when touch_index = touch_count then 0.4" in weighted
-
-
-def test_campaign_matching_is_strict_aggregated_and_time_bounded():
-    ad_inputs = _section("ad_spend_inputs as (", "ad_spend_daily as (")
-    matched = _section("matched_touchpoints as (", ") select date_format(")
-
-    assert "ingested_at >= cast('{run_started_at}' as timestamp)" in ad_inputs
-    assert "a.source_platform = n.source_platform" in matched
-    assert (
-        "(n.crm_campaign_key <> '' and a.campaign_key = n.crm_campaign_key) "
-        "or n.crm_campaign_key = ''"
-    ) in matched
-    assert "sum(a.total_spend)" in matched
-    assert "group by" in matched
-    assert "date_sub(cast(n.close_date as date), {lookback_days})" in matched
-    assert "n.channel = a.channel" not in COMPACT_SQL
-
-
-def test_unmatched_rows_are_explicit_and_tiktok_is_a_paid_social_source():
-    assert "when m.has_ad_match = 0 then 'unattributed'" in COMPACT_SQL
-    assert (
-        "case when m.has_ad_match = 1 then m.source_platform "
-        "else 'unattributed' end as source_platform"
-    ) in COMPACT_SQL
-    assert "when m.crm_campaign_key = '' then '(platform only)'" in COMPACT_SQL
-    assert "m.source_platform in ('meta', 'linkedin', 'tiktok')" in COMPACT_SQL
-    assert "utm_source_key in ('tiktok', 'tik_tok', 'tt')" in COMPACT_SQL
-
-
-def test_scorecard_counts_current_run_spend_once_per_month_and_platform():
+def test_scorecard_uses_only_current_run_spend_inside_the_period():
     performance = _section(
-        "create or replace table {schema}.channel_performance as",
-        "create or replace table {schema}.channel_performance_v2 as",
+        "insert into {schema}.channel_performance replace where",
+        "create table if not exists {schema}.channel_performance_v2 (",
     )
 
-    assert "current_run_ad_spend_by_platform as (" in performance
-    assert "group by report_month, source_platform" in performance
+    assert "period_ad_spend_by_platform as (" in performance
     assert "sum(spend) as total_spend" in performance
-    assert "full outer join current_run_ad_spend_by_platform" in performance
-    assert "'' as utm_campaign" in performance
-    assert "max(total_spend)" not in performance
+    assert "full outer join period_ad_spend_by_platform" in performance
     assert "ingested_at >= cast('{run_started_at}' as timestamp)" in performance
+    assert "try_cast(date as date) >= cast('{period_start}' as date)" in performance
+    assert "try_cast(date as date) < cast('{period_end}' as date)" in performance
+    assert "sum(total_spend)" not in performance
 
 
-def test_cash_scorecard_uses_net_revenue_and_gross_refund_denominator():
+def test_tiktok_is_paid_social_and_cash_scorecard_uses_net_revenue():
     cash_performance = COMPACT_SQL.split(
-        "create or replace table {schema}.channel_performance_v2 as", 1
+        "insert into {schema}.channel_performance_v2 replace where", 1
     )[1]
 
+    assert "hs_source_key = 'paid_social'" in COMPACT_SQL
+    assert "source_detail_key in ('tiktok', 'tiktokads')" in COMPACT_SQL
+    assert "source_detail_key like" not in COMPACT_SQL
+    assert "source_platform in ('meta', 'linkedin', 'tiktok')" in COMPACT_SQL
     assert "sum(attributed_revenue) as net_collected_revenue" in cash_performance
     assert "sum(attributed_refunds) as refunded_revenue" in cash_performance
     assert (
-        "coalesce(cash.refunded_revenue, 0.0) as refunded_revenue" in cash_performance
-    )
-    assert (
-        "coalesce(cash.net_collected_revenue, 0.0) + "
-        "coalesce(cash.refunded_revenue, 0.0)"
-    ) in cash_performance
-    assert (
         "coalesce(cash.net_collected_revenue, 0.0) / cp.total_spend" in cash_performance
     )
-    assert "cp.utm_campaign = ar.campaign" not in cash_performance
+    assert "where cp.report_month = '{report_month}'" in cash_performance
 
 
-def test_template_renders_all_runtime_bounds():
+def test_template_renders_every_runtime_boundary():
     rendered = SQL.format(
         schema="workspace.attribution_acme",
-        attribution_model="w_shape",
+        attribution_model="last_touch",
+        report_month="2026-08",
+        period_start="2026-08-01T04:00:00+00:00",
+        period_end="2026-09-01T04:00:00+00:00",
         lookback_days=45,
         run_started_at="2026-09-03T12:34:56+00:00",
+        hubspot_closed_won_stage_keys="'closedwon', 'customstage123'",
+        reporting_currency="USD",
+        report_timezone="America/New_York",
     )
     compact = re.sub(r"\s+", " ", rendered.lower())
 
-    assert "{schema}" not in rendered
-    assert "{attribution_model}" not in rendered
-    assert "{lookback_days}" not in rendered
-    assert "{run_started_at}" not in rendered
-    assert "date_sub(cast(n.close_date as date), 45)" in compact
+    for parameter in (
+        "{schema}",
+        "{attribution_model}",
+        "{report_month}",
+        "{period_start}",
+        "{period_end}",
+        "{lookback_days}",
+        "{run_started_at}",
+        "{hubspot_closed_won_stage_keys}",
+        "{reporting_currency}",
+        "{report_timezone}",
+    ):
+        assert parameter not in rendered
+    assert "'2026-08' as report_month" in compact
+    assert "close_date >= cast('2026-08-01t04:00:00+00:00' as timestamp)" in compact
+    assert "close_date < cast('2026-09-01t04:00:00+00:00' as timestamp)" in compact
+    assert (
+        "to_date(from_utc_timestamp(d.close_date, 'america/new_york')), 45" in compact
+    )
     assert "ingested_at >= cast('2026-09-03t12:34:56+00:00' as timestamp)" in compact
+    assert "deal_stage_key in ('closedwon', 'customstage123')" in compact
+    assert "upper(trim(coalesce(currency, ''))) = 'usd'" in compact
