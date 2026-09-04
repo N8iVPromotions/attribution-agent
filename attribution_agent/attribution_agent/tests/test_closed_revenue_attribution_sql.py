@@ -17,6 +17,18 @@ def _section(start: str, end: str) -> str:
     return COMPACT_SQL.split(start, 1)[1].split(end, 1)[0]
 
 
+def test_runtime_statement_split_keeps_each_transform_whole():
+    statements = [
+        statement.strip().lower() for statement in SQL.split(";") if statement.strip()
+    ]
+
+    assert len(statements) == 6
+    assert (
+        sum("create table if not exists" in statement for statement in statements) == 3
+    )
+    assert sum("insert into" in statement for statement in statements) == 3
+
+
 def test_closed_deals_are_current_exact_wins_inside_the_explicit_period():
     prepared = _section("with prepared_deals as (", "closed_deals as (")
     closed = _section("closed_deals as (", "deal_identity_inputs as (")
