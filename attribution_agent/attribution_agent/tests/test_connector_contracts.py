@@ -24,6 +24,7 @@ from agents.ingest.ad_sources import (
     normalize_linkedin_ads,
     normalize_meta_ads,
 )
+from agents.ingest.hubspot_connector import HubSpotConnector
 from agents.ingest.validator import HubSpotValidator, MetaValidator, StripeValidator
 
 
@@ -142,6 +143,35 @@ def stripe_raw() -> pd.DataFrame:
             "source": ["stripe"] * 3,
         }
     )
+
+
+def _hubspot_api_payload(
+    *,
+    close_date: object,
+    deal_create_date: object,
+    contact_create_date: object,
+) -> tuple[list[dict], dict[str, dict]]:
+    deals = [
+        {
+            "id": "deal-1",
+            "properties": {
+                "dealname": "Deal One",
+                "dealstage": "closedwon",
+                "pipeline": "default",
+                "amount": "1000",
+                "closedate": close_date,
+                "createdate": deal_create_date,
+            },
+            "associations": {"contacts": {"results": [{"id": "contact-1"}]}},
+        }
+    ]
+    contacts = {
+        "contact-1": {
+            "email": "buyer@example.test",
+            "createdate": contact_create_date,
+        }
+    }
+    return deals, contacts
 
 
 # ─── META CONNECTOR CONTRACT ──────────────────────────────────────────────────
@@ -293,7 +323,54 @@ class TestLinkedInConnectorContract:
         assert (result["conversions"] == 0).all()
 
 
-# ─── HUBSPOT VALIDATOR CONTRACT ───────────────────────────────────────────────
+# ─── HUBSPOT CONNECTOR + VALIDATOR CONTRACT ───────────────────────────────────
+
+
+class TestHubSpotConnectorDateContract:
+    def test_normalize_accepts_iso_8601_property_dates(self):
+        deals, contacts = _hubspot_api_payload(
+            close_date="2026-01-15T18:30:00.000Z",
+            deal_create_date="2026-01-05T12:00:00.000Z",
+            contact_create_date="2026-01-01T12:00:00.000Z",
+        )
+
+        row = HubSpotConnector()._normalize(deals, contacts).iloc[0]
+
+        assert row["close_date"] == pd.Timestamp("2026-01-15 18:30:00")
+        assert row["create_date"] == pd.Timestamp("2026-01-05 12:00:00")
+        assert row["lead_create_date"] == pd.Timestamp("2026-01-01 12:00:00")
+        assert row["days_to_deal"] == 4
+
+    def test_normalize_accepts_numeric_epoch_milliseconds(self):
+        close_date = pd.Timestamp("2026-01-15T18:30:00Z")
+        deal_create_date = pd.Timestamp("2026-01-05T12:00:00Z")
+        contact_create_date = pd.Timestamp("2026-01-01T12:00:00Z")
+        deals, contacts = _hubspot_api_payload(
+            close_date=int(close_date.timestamp() * 1000),
+            deal_create_date=str(int(deal_create_date.timestamp() * 1000)),
+            contact_create_date=int(contact_create_date.timestamp() * 1000),
+        )
+
+        row = HubSpotConnector()._normalize(deals, contacts).iloc[0]
+
+        assert row["close_date"] == close_date.tz_convert(None)
+        assert row["create_date"] == deal_create_date.tz_convert(None)
+        assert row["lead_create_date"] == contact_create_date.tz_convert(None)
+        assert row["days_to_deal"] == 4
+
+    def test_normalize_keeps_invalid_dates_missing(self):
+        deals, contacts = _hubspot_api_payload(
+            close_date="not-a-date",
+            deal_create_date="",
+            contact_create_date="also-not-a-date",
+        )
+
+        row = HubSpotConnector()._normalize(deals, contacts).iloc[0]
+
+        assert row["close_date"] is None
+        assert row["create_date"] is None
+        assert row["lead_create_date"] is None
+        assert row["days_to_deal"] is None
 
 
 class TestHubSpotValidatorContract:

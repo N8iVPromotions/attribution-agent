@@ -15,6 +15,7 @@ import type {
 
 type Props = { initialData: CommandCenterData };
 type View = "Overview" | "Pilot Room" | "Pipeline" | "Tenants" | "Reports" | "Alerts" | "Governance" | "Audit";
+type ReportStatusPresentation = { status: RunStatus; label: string };
 
 const views: Array<{ id: View; code: string; description: string }> = [
   { id: "Overview", code: "01", description: "Fleet health" },
@@ -78,6 +79,19 @@ function environmentCopy(source: CommandCenterData["source"]) {
     return { title: "Live data unavailable", detail: "Sample data suppressed" };
   }
   return { title: "Isolated demo", detail: "No live data or actions" };
+}
+
+export function reportStatusPresentation(
+  reportStatus: string,
+  deliverySuppressed = false
+): ReportStatusPresentation {
+  if (deliverySuppressed || reportStatus === "suppressed") {
+    return { status: "partial", label: "Delivery suppressed" };
+  }
+  return {
+    status: reportStatus === "delivered" ? "success" : "queued",
+    label: reportStatus
+  };
 }
 
 function shortDate(value: string) {
@@ -583,6 +597,7 @@ function ReportsView({ data, reports }: { data: CommandCenterData; reports: Comm
   const selected = reports.find((report) => report.reportId === effectiveSelectedId);
   if (!selected) return <Empty title="No insight reports" body="Reports will appear after a successful attribution run completes." />;
   const run = data.runs.find((item) => item.runId === selected.runId);
+  const statusPresentation = reportStatusPresentation(selected.status, run?.deliverySuppressed);
 
   return (
     <div className="report-layout reveal">
@@ -590,7 +605,7 @@ function ReportsView({ data, reports }: { data: CommandCenterData; reports: Comm
         <div className="report-list">{reports.map((report) => <button className={effectiveSelectedId === report.reportId ? "report-item active" : "report-item"} onClick={() => setSelectedId(report.reportId)} key={report.reportId}><span><strong>{clientName(report.clientId, data.clients)}</strong><small>{report.reportMonth} / {modelLabels[report.attributionModel] || report.attributionModel}</small></span><span><strong>{money(report.totalPipeline)}</strong><small>{report.status}</small></span></button>)}</div>
       </Panel>
       <article className="report-sheet">
-        <header><div><span className="eyebrow">Executive revenue intelligence / {selected.reportMonth}</span><h2>{clientName(selected.clientId, data.clients)}</h2><p>Generated {shortDate(selected.generatedAt)} · {selected.modelId} · {selected.promptVersion}</p></div><StatusChip status={run?.deliverySuppressed ? "partial" : selected.status === "delivered" ? "success" : "queued"} label={run?.deliverySuppressed ? "Delivery suppressed" : selected.status} /></header>
+        <header><div><span className="eyebrow">Executive revenue intelligence / {selected.reportMonth}</span><h2>{clientName(selected.clientId, data.clients)}</h2><p>Generated {shortDate(selected.generatedAt)} · {selected.modelId} · {selected.promptVersion}</p></div><StatusChip status={statusPresentation.status} label={statusPresentation.label} /></header>
         <section className="report-metrics"><div><span>Pipeline</span><strong>{money(selected.totalPipeline)}</strong></div><div><span>Spend</span><strong>{money(selected.totalSpend)}</strong></div><div><span>Attributed ROI</span><strong>{roi(selected.overallRoi)}</strong></div><div><span>True ROI</span><strong>{roi(selected.trueRoi)}</strong></div></section>
         <section className="narrative"><span className="eyebrow">Operator preview</span><p>{selected.narrative}</p></section>
         <section><span className="eyebrow">Key findings</span><ol className="findings">{selected.keyFindings.map((finding) => <li key={finding}>{finding}</li>)}</ol></section>

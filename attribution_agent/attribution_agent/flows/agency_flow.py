@@ -42,7 +42,11 @@ from flows.ingest_flow import ingest_flow
 from agents.insight.insight_agent import InsightReport, generate_insight_report
 from agents.comms.comms_agent import send_agency_report
 from attribution_models import normalize_model
-from utils.databricks_writer import _run_sql, write_pipeline_run
+from utils.databricks_writer import (
+    _run_sql,
+    write_insight_report,
+    write_pipeline_run,
+)
 from utils.idempotency import claim_report_delivery, report_delivery_key
 from utils.operator_alerts import OperatorAlert, dispatch_alerts
 
@@ -50,6 +54,15 @@ try:
     from agents.control import arie_bot as _arie
 except Exception:
     _arie = None
+
+
+_GOVERNANCE_READY_DECISION = "READY FOR HUMAN REVIEW"
+_REPORT_CHECKPOINT_REQUIRED_FIELDS = {
+    "client_id",
+    "client_name",
+    "report_month",
+    "narrative",
+}
 
 
 def _notify(text: str) -> None:
@@ -89,6 +102,113 @@ def _partial_suppression_alert(
         action_required="Resolve failed sources and rerun before report delivery.",
         metadata={"event_code": event_code, "source_failures": source_failures},
     )
+
+
+def _report_from_checkpoint(payload: object) -> InsightReport | None:
+    """Restore only checkpoints that contain a complete, deliverable report."""
+    if not isinstance(payload, dict):
+        return None
+    if not _REPORT_CHECKPOINT_REQUIRED_FIELDS.issubset(payload):
+        return None
+    try:
+        report = InsightReport(**payload)
+    except (TypeError, ValueError):
+        return None
+    return report if _report_has_attribution_data(report) else None
+
+
+def _report_has_attribution_data(report: InsightReport) -> bool:
+    return bool(
+        report.report_month
+        and report.report_month != "N/A"
+        and (report.total_pipeline > 0 or report.collected_revenue > 0)
+    )
+
+
+def _load_or_generate_report(
+    *,
+    checkpointer,
+    completed_steps: set[str],
+    run_id: str,
+    agency_id: str,
+    client_id: str,
+    attribution_model: str,
+) -> InsightReport:
+    report = None
+    if "generate_report" in completed_steps:
+        logger.info(f"[Agency] Resuming — restoring generated report for {client_id}")
+        report = _report_from_checkpoint(
+            checkpointer.get_step_result(run_id, client_id, "generate_report")
+        )
+        if report is None:
+            logger.warning(
+                "[Agency] Legacy or invalid report checkpoint; regenerating | "
+                "run=%s client=%s",
+                run_id,
+                client_id,
+            )
+
+    if report is None:
+        checkpointer.start_step(run_id, agency_id, client_id, "generate_report")
+        report = generate_insight_report(
+            client_id,
+            attribution_model=attribution_model,
+            run_id=run_id,
+        )
+        if not _report_has_attribution_data(report):
+            raise RuntimeError(
+                "Report generation produced no attribution data; delivery blocked."
+            )
+        checkpointer.complete_step(
+            run_id,
+            agency_id,
+            client_id,
+            "generate_report",
+            report.to_dict(),
+        )
+    return report
+
+
+def _governance_blocks_live_delivery(review: dict, *, dry_run: bool) -> bool:
+    """Fail closed unless governance says the human-approved run is review-ready."""
+    if dry_run:
+        return False
+    return bool(
+        review.get("review_failed")
+        or review.get("critical_issues")
+        or review.get("decision") != _GOVERNANCE_READY_DECISION
+    )
+
+
+def _governance_block_reasons(review: dict) -> list[str]:
+    reasons = list(review.get("critical_issues") or [])
+    if not reasons:
+        reasons = list(review.get("warnings") or [])
+    if not reasons:
+        reasons = [f"Governance decision: {review.get('decision', 'UNKNOWN')}"]
+    return reasons
+
+
+def _utc_sql_timestamp(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
+def _report_outcome_status(
+    *,
+    can_deliver: bool,
+    delivery_proven: bool,
+) -> str:
+    if delivery_proven:
+        return "delivered"
+    if not can_deliver:
+        return "suppressed"
+    return "generated"
+
+
+def _delivery_was_proven(checkpoint: object) -> bool:
+    return bool(isinstance(checkpoint, dict) and checkpoint.get("delivered") is True)
 
 
 def _build_union_all(agency: AgencyConfig) -> str:
@@ -142,7 +262,12 @@ def run_agency_benchmark_sql(agency: AgencyConfig, *, fail_fast: bool = False) -
         logger.warning(f"[Agency] Benchmark SQL failed (non-fatal): {exc}")
 
 
-def run_client_attribution_sql(client_id: str, attribution_model: str) -> None:
+def run_client_attribution_sql(
+    client_id: str,
+    attribution_model: str,
+    *,
+    run_started_at: datetime,
+) -> None:
     """Refresh model-specific closed-revenue attribution tables for a client."""
     config = get_client(client_id)
     sql_path = Path(_root) / "transforms" / "closed_revenue_attribution.sql"
@@ -150,6 +275,8 @@ def run_client_attribution_sql(client_id: str, attribution_model: str) -> None:
     for stmt in sql.format(
         schema=config.databricks_schema,
         attribution_model=normalize_model(attribution_model),
+        lookback_days=int(config.lookback_days),
+        run_started_at=_utc_sql_timestamp(run_started_at),
     ).split(";"):
         stmt = stmt.strip()
         if stmt:
@@ -242,6 +369,10 @@ def run_agency_pipeline(
                         run_id=run_id,
                         attribution_model=selected_model,
                     )
+                    ingest_result = {
+                        **ingest_result,
+                        "ingest_started_at": started_at.isoformat(),
+                    }
                     checkpointer.complete_step(
                         run_id, agency_id, client_id, "ingest", ingest_result
                     )
@@ -256,45 +387,45 @@ def run_agency_pipeline(
 
                 # 2. Refresh attribution outputs for the selected model
                 if "attribution_sql" not in completed_steps:
+                    ingest_started_at = ingest_result.get("ingest_started_at")
+                    if not ingest_started_at:
+                        raise RuntimeError(
+                            "Ingest checkpoint lacks its freshness boundary; "
+                            "start a new run before refreshing attribution."
+                        )
                     checkpointer.start_step(
                         run_id, agency_id, client_id, "attribution_sql"
                     )
-                    run_client_attribution_sql(client_id, selected_model)
+                    run_client_attribution_sql(
+                        client_id,
+                        selected_model,
+                        run_started_at=datetime.fromisoformat(ingest_started_at),
+                    )
                     checkpointer.complete_step(
                         run_id, agency_id, client_id, "attribution_sql"
                     )
 
                 # 3. Generate report from refreshed attributed revenue
-                if "generate_report" not in completed_steps:
-                    checkpointer.start_step(
-                        run_id, agency_id, client_id, "generate_report"
-                    )
-                    report = generate_insight_report(
-                        client_id,
-                        attribution_model=selected_model,
-                        run_id=run_id,
-                    )
-                    checkpointer.complete_step(
-                        run_id,
-                        agency_id,
-                        client_id,
-                        "generate_report",
-                        report.to_dict(),
-                    )
-                else:
-                    logger.info(
-                        f"[Agency] Resuming — restoring generated report for {client_id}"
-                    )
-                    report = InsightReport(
-                        **checkpointer.get_step_result(
-                            run_id, client_id, "generate_report"
-                        )
-                    )
-
-                if report.report_month == "N/A":
-                    raise RuntimeError(
-                        "Report generation produced no attribution data; delivery blocked."
-                    )
+                report = _load_or_generate_report(
+                    checkpointer=checkpointer,
+                    completed_steps=completed_steps,
+                    run_id=run_id,
+                    agency_id=agency_id,
+                    client_id=client_id,
+                    attribution_model=selected_model,
+                )
+                report_record = {
+                    **report.to_dict(),
+                    "agency_id": agency_id,
+                    "run_id": run_id,
+                }
+                delivery_checkpoint = (
+                    checkpointer.get_step_result(run_id, client_id, "email_sent")
+                    if "email_sent" in completed_steps
+                    else {}
+                )
+                delivery_proven = _delivery_was_proven(delivery_checkpoint)
+                write_insight_report({**report_record, "status": "generated"})
 
                 # 3b. Governance review (critical findings block live delivery)
                 governance_review = {
@@ -373,19 +504,22 @@ def run_agency_pipeline(
                     ).lower()
                     == "true"
                 )
-                governance_blocks_delivery = (
-                    bool(governance_review["critical_issues"]) and not dry_run
+                governance_blocks_delivery = _governance_blocks_live_delivery(
+                    governance_review, dry_run=dry_run
                 )
                 can_deliver = (
                     ingest_status != "partial" or allow_partial_delivery
                 ) and not governance_blocks_delivery
                 if not can_deliver:
                     if governance_blocks_delivery:
+                        governance_reasons = _governance_block_reasons(
+                            governance_review
+                        )
                         suppression_alert = OperatorAlert(
                             severity="critical",
                             category="report_governance_suppressed",
                             title="REPORT_GOVERNANCE_DELIVERY_SUPPRESSED",
-                            message="; ".join(governance_review["critical_issues"][:5]),
+                            message="; ".join(governance_reasons[:5]),
                             client_id=client_id,
                             agency_id=agency_id,
                             run_id=run_id,
@@ -419,7 +553,15 @@ def run_agency_pipeline(
                             delivery_key,
                         )
                         checkpointer.complete_step(
-                            run_id, agency_id, client_id, "email_sent"
+                            run_id,
+                            agency_id,
+                            client_id,
+                            "email_sent",
+                            {
+                                "delivered": False,
+                                "reason": "duplicate_suppressed",
+                                "delivery_key": delivery_key,
+                            },
                         )
                         delivery_idempotent_skip = True
                     else:
@@ -441,6 +583,7 @@ def run_agency_pipeline(
                             claim.release()
                             raise
                         if email_sent:
+                            delivery_proven = True
                             try:
                                 claim.complete()
                             except Exception as claim_exc:
@@ -452,7 +595,14 @@ def run_agency_pipeline(
                                     claim_exc,
                                 )
                             checkpointer.complete_step(
-                                run_id, agency_id, client_id, "email_sent"
+                                run_id,
+                                agency_id,
+                                client_id,
+                                "email_sent",
+                                {
+                                    "delivered": True,
+                                    "delivery_key": delivery_key,
+                                },
                             )
                             logger.info(
                                 "[Agency] Report sent to %s | key=%s",
@@ -462,8 +612,15 @@ def run_agency_pipeline(
                 elif dry_run:
                     logger.info(f"[Agency] dry_run — skipping email for {client_id}")
 
-                checkpointer.complete_step(
-                    run_id, agency_id, client_id, "pipeline_complete"
+                report_status = _report_outcome_status(
+                    can_deliver=can_deliver,
+                    delivery_proven=delivery_proven,
+                )
+                write_insight_report(
+                    {
+                        **report_record,
+                        "status": report_status,
+                    }
                 )
 
                 # Write pipeline summary to cross-run memory
@@ -487,46 +644,19 @@ def run_agency_pipeline(
 
                 if email_sent:
                     delivery_status = "📧 Report sent"
-                elif dry_run:
-                    delivery_status = "🔕 Dry run — email skipped"
+                elif delivery_proven:
+                    delivery_status = "📧 Delivery previously completed"
                 elif not can_deliver:
                     delivery_status = "⛔ Delivery blocked — partial ingest"
+                elif dry_run:
+                    delivery_status = "🔕 Dry run — email skipped"
                 elif delivery_idempotent_skip:
                     delivery_status = "Duplicate delivery suppressed"
                 elif "email_sent" in completed_steps:
-                    delivery_status = "📧 Delivery previously completed"
+                    delivery_status = "⚠️ Prior delivery was not proven"
                 else:
                     delivery_status = "⚠️ Report email was not sent"
 
-                _notify(
-                    f"✅ *{get_client(client_id).client_name}* complete\n"
-                    f"Pipeline: `${report.total_pipeline:,.0f}` · Top: `{report.top_channel}`\n"
-                    f"{delivery_status}"
-                )
-                results.append(
-                    {
-                        "client_id": client_id,
-                        "meta_rows": ingest_result.get("meta_rows", 0),
-                        "google_rows": ingest_result.get("google_rows", 0),
-                        "linkedin_rows": ingest_result.get("linkedin_rows", 0),
-                        "tiktok_rows": ingest_result.get("tiktok_rows", 0),
-                        "hubspot_rows": ingest_result.get("hubspot_rows", 0),
-                        "stripe_rows": ingest_result.get("stripe_rows", 0),
-                        "normalized_ad_rows": ingest_result.get(
-                            "normalized_ad_rows", 0
-                        ),
-                        "attribution_model": selected_model,
-                        "top_channel": report.top_channel,
-                        "total_pipeline": report.total_pipeline,
-                        "email_sent": email_sent,
-                        "status": (
-                            "partial"
-                            if ingest_status == "partial" or not can_deliver
-                            else "complete"
-                        ),
-                        "source_failures": source_failures,
-                    }
-                )
                 pipeline_status = (
                     "partial"
                     if ingest_status == "partial" or not can_deliver
@@ -552,11 +682,43 @@ def run_agency_pipeline(
                         ),
                         "total_pipeline": report.total_pipeline,
                         "top_channel": report.top_channel,
-                        "email_sent": email_sent,
+                        "email_sent": delivery_proven,
                         "warnings": json.dumps(source_failures, default=str),
                         "started_at": started_at,
                         "finished_at": datetime.now(timezone.utc),
                         "output_schema": get_client(client_id).databricks_schema,
+                    }
+                )
+                checkpointer.complete_step(
+                    run_id, agency_id, client_id, "pipeline_complete"
+                )
+                _notify(
+                    f"✅ *{get_client(client_id).client_name}* complete\n"
+                    f"Pipeline: `${report.total_pipeline:,.0f}` · Top: `{report.top_channel}`\n"
+                    f"{delivery_status}"
+                )
+                results.append(
+                    {
+                        "client_id": client_id,
+                        "meta_rows": ingest_result.get("meta_rows", 0),
+                        "google_rows": ingest_result.get("google_rows", 0),
+                        "linkedin_rows": ingest_result.get("linkedin_rows", 0),
+                        "tiktok_rows": ingest_result.get("tiktok_rows", 0),
+                        "hubspot_rows": ingest_result.get("hubspot_rows", 0),
+                        "stripe_rows": ingest_result.get("stripe_rows", 0),
+                        "normalized_ad_rows": ingest_result.get(
+                            "normalized_ad_rows", 0
+                        ),
+                        "attribution_model": selected_model,
+                        "top_channel": report.top_channel,
+                        "total_pipeline": report.total_pipeline,
+                        "email_sent": delivery_proven,
+                        "status": (
+                            "partial"
+                            if ingest_status == "partial" or not can_deliver
+                            else "complete"
+                        ),
+                        "source_failures": source_failures,
                     }
                 )
 

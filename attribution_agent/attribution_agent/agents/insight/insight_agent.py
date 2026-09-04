@@ -18,7 +18,7 @@ import json
 import logging
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -86,6 +86,18 @@ class InsightReport:
         }
 
 
+@dataclass(frozen=True)
+class _GovernedReportMetrics:
+    report_month: str
+    top_channel: str
+    total_pipeline: float
+    total_spend: float
+    overall_roi: float
+    collected_revenue: float
+    refund_rate: float
+    true_roi: float
+
+
 # ─── DATA FETCHER ─────────────────────────────────────────────
 
 
@@ -112,10 +124,11 @@ def _table_exists(cursor, table_name: str) -> bool:
 def _fetch_channel_table_rows(
     cursor, config: ClientConfig, table: str, has_payment_cols: bool
 ) -> list[dict]:
-    v2_cols = ", collected_revenue, refund_rate, true_roi, ltv_90day"
+    v2_cols = ", collected_revenue, refunded_revenue, refund_rate, true_roi, ltv_90day"
     if not has_payment_cols:
         v2_cols = (
             ", CAST(0.0 AS DOUBLE) AS collected_revenue"
+            ", CAST(0.0 AS DOUBLE) AS refunded_revenue"
             ", CAST(0.0 AS DOUBLE) AS refund_rate"
             ", CAST(0.0 AS DOUBLE) AS true_roi"
             ", CAST(0.0 AS DOUBLE) AS ltv_90day"
@@ -137,6 +150,11 @@ def _fetch_channel_table_rows(
             {v2_cols},
             'closed_revenue' AS analytics_state
         FROM {config.databricks_schema}.{table}
+        WHERE report_month = (
+            SELECT MAX(report_month)
+            FROM {config.databricks_schema}.{table}
+            WHERE pipeline_value > 0
+        )
         ORDER BY pipeline_value DESC, total_spend DESC
         """,
     )
@@ -180,6 +198,7 @@ def _fetch_attribution_result_rows(
             END AS cost_per_deal,
             MAX(computed_at) AS ingested_at,
             SUM(COALESCE(attributed_revenue, 0.0)) AS collected_revenue,
+            CAST(0.0 AS DOUBLE) AS refunded_revenue,
             CAST(0.0 AS DOUBLE) AS refund_rate,
             CASE WHEN SUM(COALESCE(spend, 0.0)) > 0
                  THEN SUM(COALESCE(attributed_revenue, 0.0))
@@ -221,11 +240,16 @@ def _fetch_ad_activity_rows(cursor, config: ClientConfig) -> list[dict]:
             CAST(NULL AS DOUBLE) AS cost_per_deal,
             MAX(ingested_at) AS ingested_at,
             CAST(0.0 AS DOUBLE) AS collected_revenue,
+            CAST(0.0 AS DOUBLE) AS refunded_revenue,
             CAST(0.0 AS DOUBLE) AS refund_rate,
             CAST(0.0 AS DOUBLE) AS true_roi,
             CAST(0.0 AS DOUBLE) AS ltv_90day,
             'ad_activity_without_closed_revenue' AS analytics_state
         FROM {config.databricks_schema}.ad_spend_normalized
+        WHERE DATE_FORMAT(date, 'yyyy-MM') = (
+            SELECT DATE_FORMAT(MAX(date), 'yyyy-MM')
+            FROM {config.databricks_schema}.ad_spend_normalized
+        )
         GROUP BY source_platform
         ORDER BY total_spend DESC
         """,
@@ -244,10 +268,12 @@ def _fetch_channel_performance(
             ("channel_performance_v2", True),
             ("channel_performance", False),
         ]
+        warehouse_table_found = False
         for table, has_payment_cols in readers:
             table_name = f"{config.databricks_schema}.{table}"
             if not _table_exists(cursor, table_name):
                 continue
+            warehouse_table_found = True
             rows = _fetch_channel_table_rows(cursor, config, table, has_payment_cols)
             if rows:
                 logger.info(
@@ -255,6 +281,15 @@ def _fetch_channel_performance(
                     f"{config.client_id} (source: {table})"
                 )
                 return rows
+
+        if warehouse_table_found:
+            rows = _fetch_ad_activity_rows(cursor, config)
+            if rows:
+                logger.info(
+                    f"[Insight] Fetched {len(rows)} spend-only rows for "
+                    f"{config.client_id}; no closed revenue available yet"
+                )
+            return rows
 
         rows = _fetch_attribution_result_rows(cursor, config, selected_model)
         if rows:
@@ -517,6 +552,44 @@ def _build_fallback_report(
 # ─── MAIN FUNCTION ────────────────────────────────────────────
 
 
+def _derive_governed_metrics(data: list[dict]) -> _GovernedReportMetrics:
+    """Derive report metrics only from the governed warehouse rows."""
+    total_pipeline = sum(float(row.get("pipeline_value") or 0.0) for row in data)
+    total_spend = sum(float(row.get("total_spend") or 0.0) for row in data)
+    collected_revenue = sum(float(row.get("collected_revenue") or 0.0) for row in data)
+    refunded_revenue = 0.0
+    for row in data:
+        if "refunded_revenue" in row:
+            refunded_revenue += float(row.get("refunded_revenue") or 0.0)
+            continue
+        net_revenue = float(row.get("collected_revenue") or 0.0)
+        rate = float(row.get("refund_rate") or 0.0)
+        if net_revenue > 0 and 0 < rate < 1:
+            refunded_revenue += net_revenue * rate / (1 - rate)
+    top_row = max(
+        data,
+        key=lambda row: (
+            float(row.get("pipeline_value") or 0.0),
+            float(row.get("total_spend") or 0.0),
+        ),
+    )
+
+    return _GovernedReportMetrics(
+        report_month=str(data[0].get("report_month") or ""),
+        top_channel=str(top_row.get("channel") or "Unknown"),
+        total_pipeline=total_pipeline,
+        total_spend=total_spend,
+        overall_roi=round(total_pipeline / total_spend, 2) if total_spend else 0.0,
+        collected_revenue=collected_revenue,
+        refund_rate=(
+            round(refunded_revenue / (collected_revenue + refunded_revenue), 4)
+            if collected_revenue + refunded_revenue
+            else 0.0
+        ),
+        true_roi=(round(collected_revenue / total_spend, 2) if total_spend else 0.0),
+    )
+
+
 def generate_insight_report(
     client_id: str,
     attribution_model: str | None = None,
@@ -601,24 +674,25 @@ def generate_insight_report(
             )
             claude_response = _build_fallback_report(config, data, selected_model)
 
-    # 4. Build report
-    report_month = data[0].get("report_month", "")
+    # 4. Build report. The model may author prose, but it is not a source of truth
+    # for report dimensions or metrics.
+    metrics = _derive_governed_metrics(data)
     report = InsightReport(
         client_id=client_id,
         client_name=config.client_name,
-        report_month=report_month,
+        report_month=metrics.report_month,
         narrative=claude_response.get("narrative", ""),
         key_findings=claude_response.get("key_findings", []),
-        top_channel=claude_response.get("top_channel", ""),
-        total_pipeline=claude_response.get("total_pipeline", 0.0),
-        total_spend=claude_response.get("total_spend", 0.0),
-        overall_roi=claude_response.get("overall_roi", 0.0),
-        collected_revenue=claude_response.get("collected_revenue", 0.0),
-        refund_rate=claude_response.get("refund_rate", 0.0),
-        true_roi=claude_response.get("true_roi", 0.0),
+        top_channel=metrics.top_channel,
+        total_pipeline=metrics.total_pipeline,
+        total_spend=metrics.total_spend,
+        overall_roi=metrics.overall_roi,
+        collected_revenue=metrics.collected_revenue,
+        refund_rate=metrics.refund_rate,
+        true_roi=metrics.true_roi,
         attribution_model=selected_model,
         data_version=data_version,
-        generated_at=datetime.utcnow().isoformat(),
+        generated_at=datetime.now(timezone.utc).isoformat(),
     )
 
     logger.info(f"[Insight] Report generated | top channel: {report.top_channel}")

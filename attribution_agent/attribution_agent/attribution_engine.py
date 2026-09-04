@@ -85,6 +85,14 @@ def _norm(value: object) -> str:
     return "" if text in ("nan", "none", "null") else text
 
 
+def _identifier(value: object) -> str:
+    """Return a stable external ID without lowercasing it."""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() in ("nan", "none", "null") else text
+
+
 def _stage_key(value: object) -> str:
     """Canonicalize a CRM stage for exact, false-positive-safe comparison."""
     return re.sub(r"[^a-z0-9]+", "", _norm(value))
@@ -105,10 +113,10 @@ def _platform_for(utm_source: str, utm_medium: str = "") -> str:
 
 
 def _as_datetime(value: object) -> datetime | None:
-    ts = pd.to_datetime(value, errors="coerce")
+    ts = pd.to_datetime(value, errors="coerce", utc=True)
     if ts is None or pd.isna(ts):
         return None
-    return ts.to_pydatetime()
+    return ts.tz_convert(None).to_pydatetime()
 
 
 # ── Conversion builders ──────────────────────────────────────────────────────
@@ -136,7 +144,7 @@ def conversions_from_hubspot(
         )
         if occurred_at is None:
             continue
-        deal_id = str(row.get("deal_id") or "")
+        deal_id = _identifier(row.get("deal_id"))
         conversions.append(
             Conversion(
                 conversion_id=f"hubspot:{deal_id}",
@@ -179,7 +187,10 @@ def conversions_from_stripe(df: pd.DataFrame, client_id: str) -> list[Conversion
                 occurred_at=occurred_at,
                 revenue=revenue,
                 email=_norm(row.get("customer_email")),
-                deal_id=str(row.get("deal_id") or ""),
+                deal_id=(
+                    _identifier(row.get("hubspot_deal_id"))
+                    or _identifier(row.get("deal_id"))
+                ),
                 revenue_source="stripe",
             )
         )
@@ -205,12 +216,17 @@ def reconcile_conversions(
     both retained so revenue totals stay complete.
     """
     by_deal: dict[str, Conversion] = {}
-    by_email: dict[str, Conversion] = {}
+    by_email_candidates: dict[str, list[Conversion]] = {}
     for hc in hubspot_convs:
         if hc.deal_id:
             by_deal[hc.deal_id] = hc
         if hc.email:
-            by_email.setdefault(hc.email, hc)
+            by_email_candidates.setdefault(hc.email, []).append(hc)
+    by_email = {
+        email: candidates[0]
+        for email, candidates in by_email_candidates.items()
+        if len(candidates) == 1
+    }
 
     reconciled: list[Conversion] = []
     consumed_hubspot: set[str] = set()
@@ -274,18 +290,23 @@ def build_journey(
     if not platform:
         return []
 
-    window_start = conversion.occurred_at - timedelta(days=lookback_days)
+    occurred_at = _as_datetime(conversion.occurred_at)
+    if occurred_at is None:
+        return []
+    window_start = occurred_at - timedelta(days=lookback_days)
     conv_campaign = _norm(conversion.utm_campaign)
 
     frame = ads.copy()
     frame = frame[_norm_series(frame.get("client_id")) == _norm(conversion.client_id)]
     frame = frame[_norm_series(frame.get("source_platform")) == platform]
-    dates = pd.to_datetime(frame.get("date"), errors="coerce")
-    frame = frame[(dates >= window_start) & (dates <= conversion.occurred_at)]
+    dates = pd.to_datetime(frame.get("date"), errors="coerce", utc=True).dt.tz_convert(
+        None
+    )
+    frame = frame[(dates >= window_start) & (dates <= occurred_at)]
     if frame.empty:
         return []
 
-    frame = frame.assign(_date=pd.to_datetime(frame["date"], errors="coerce"))
+    frame = frame.assign(_date=dates)
     frame["_campaign"] = frame.apply(
         lambda r: _norm(r.get("utm_campaign")) or _norm(r.get("campaign_name")), axis=1
     )

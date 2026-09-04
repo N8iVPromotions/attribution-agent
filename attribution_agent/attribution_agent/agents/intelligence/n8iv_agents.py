@@ -110,7 +110,11 @@ GOVERNANCE_SCHEMA: dict = {
     "properties": {
         "decision": {
             "type": "string",
-            "enum": ["READY FOR HUMAN REVIEW", "REVISE BEFORE HUMAN REVIEW"],
+            "enum": [
+                "READY FOR HUMAN REVIEW",
+                "REVISE BEFORE HUMAN REVIEW",
+                "BLOCKED — ESCALATION REQUIRED",
+            ],
         },
         "warnings": _str_array,
         "critical_issues": _str_array,
@@ -393,7 +397,8 @@ def run_governance_review(
             "unsupported certainty, attribution-vs-causality confusion, "
             "privacy concerns, and tone. "
             "Return ONLY a JSON object: "
-            '{"decision": "READY FOR HUMAN REVIEW|REVISE BEFORE HUMAN REVIEW", '
+            '{"decision": "READY FOR HUMAN REVIEW|REVISE BEFORE HUMAN REVIEW|'
+            'BLOCKED — ESCALATION REQUIRED", '
             '"warnings": ["...", "..."], "critical_issues": ["..."]}. '
             "No markdown, no backticks."
         )
@@ -411,11 +416,20 @@ def run_governance_review(
         result = _parse_json_response(raw)
         warnings = result.get("warnings", [])
         critical_issues = result.get("critical_issues", [])
+        decision = result.get("decision", "REVISE BEFORE HUMAN REVIEW")
+        allowed_decisions = set(GOVERNANCE_SCHEMA["properties"]["decision"]["enum"])
+        review_failed = decision not in allowed_decisions
+        if review_failed:
+            decision = "BLOCKED — ESCALATION REQUIRED"
+            critical_issues = [
+                *critical_issues,
+                "Governance reviewer returned an unsupported decision.",
+            ]
         result = {
-            "decision": result.get("decision", "REVISE BEFORE HUMAN REVIEW"),
+            "decision": decision,
             "warnings": warnings,
             "critical_issues": critical_issues,
-            "review_failed": False,
+            "review_failed": review_failed,
         }
         findings = warnings + critical_issues
         if findings:

@@ -148,6 +148,7 @@ class InsightReportResponse(BaseModel):
     run_id: str
     prompt_version: str
     model_id: str
+    status: str = "generated"
 
 
 # ── Approvals ─────────────────────────────────────────────────────────────────

@@ -733,20 +733,23 @@ def ingest_flow(
     meta_validated = step_validate_meta(meta_df, config)
     hubspot_validated = step_validate_hubspot(hubspot_df, config)
     stripe_validated = step_validate_stripe(stripe_df, config)
+    validated_meta_df = meta_validated[0]
+    validated_hubspot_df = hubspot_validated[0]
+    validated_stripe_df = stripe_validated[0]
 
     meta_rows = step_write_meta(meta_validated, config)
     hubspot_rows = step_write_hubspot(hubspot_validated, config)
     stripe_rows = step_write_stripe(stripe_validated, config)
     normalized_ads = build_normalized_ads(
-        meta_df, google_df, linkedin_df, tiktok_df, config
+        validated_meta_df, google_df, linkedin_df, tiktok_df, config
     )
     normalized_ad_rows = step_write_normalized_ads(normalized_ads, config)
 
     # Closed-loop join: attribute closed/won revenue back to ad touchpoints.
     attribution = step_build_attribution(
         normalized_ads,
-        hubspot_df,
-        stripe_df,
+        validated_hubspot_df,
+        validated_stripe_df,
         config,
         attribution_model=attribution_model,
     )

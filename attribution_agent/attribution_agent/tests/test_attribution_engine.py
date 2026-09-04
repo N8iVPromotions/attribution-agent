@@ -89,7 +89,7 @@ def _stripe():
                 "refund_amount": 0.0,
                 "created_at": "2026-05-16",
                 "customer_email": "buyer@acme.com",
-                "deal_id": "D1",
+                "hubspot_deal_id": "D1",
             },
             # Standalone checkout, no CRM record, no utm → unattributable
             {
@@ -99,7 +99,7 @@ def _stripe():
                 "refund_amount": 50.0,
                 "created_at": "2026-05-20",
                 "customer_email": "walkin@acme.com",
-                "deal_id": "",
+                "hubspot_deal_id": "",
             },
         ]
     )
@@ -139,12 +139,98 @@ def test_reconcile_dedupes_and_prefers_stripe_revenue():
     assert d1.utm_campaign == "spring_sale"  # inherited CRM identity
 
 
+def test_stripe_deal_id_beats_ambiguous_email_fallback():
+    hubspot = pd.concat(
+        [
+            _hubspot().iloc[[0]],
+            pd.DataFrame(
+                [
+                    {
+                        "deal_id": "D3",
+                        "deal_stage": "closedwon",
+                        "amount": 700.0,
+                        "close_date": "2026-05-18",
+                        "contact_email": "buyer@acme.com",
+                        "utm_source": "tiktok",
+                        "utm_campaign": "awareness",
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    stripe = _stripe().iloc[[0]].copy()
+
+    reconciled = reconcile_conversions(
+        conversions_from_hubspot(hubspot, CLIENT),
+        conversions_from_stripe(stripe, CLIENT),
+    )
+
+    paid = next(item for item in reconciled if item.revenue_source == "stripe+hubspot")
+    assert paid.deal_id == "D1"
+    assert paid.utm_campaign == "spring_sale"
+
+
+def test_ambiguous_email_without_deal_id_does_not_merge():
+    hubspot = pd.concat(
+        [
+            _hubspot().iloc[[0]],
+            pd.DataFrame(
+                [
+                    {
+                        "deal_id": "D3",
+                        "deal_stage": "closedwon",
+                        "amount": 700.0,
+                        "close_date": "2026-05-18",
+                        "contact_email": "buyer@acme.com",
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    stripe = _stripe().iloc[[0]].copy()
+    stripe.loc[:, "hubspot_deal_id"] = ""
+
+    reconciled = reconcile_conversions(
+        conversions_from_hubspot(hubspot, CLIENT),
+        conversions_from_stripe(stripe, CLIENT),
+    )
+
+    assert sorted(item.conversion_id for item in reconciled) == [
+        "hubspot:D1",
+        "hubspot:D3",
+        "stripe:P1",
+    ]
+
+
 def test_attribute_routes_revenue_to_matched_platform():
     hub = conversions_from_hubspot(_hubspot(), CLIENT)
     rows = attribute_conversions(hub, _ads(), "last_touch")
     meta_rows = rows[rows["source_platform"] == "meta"]
     assert pytest.approx(meta_rows["attributed_revenue"].sum()) == 2000.0
     assert (rows["source_platform"] == UNATTRIBUTED).sum() == 0
+
+
+@pytest.mark.parametrize(
+    ("close_date", "ad_date"),
+    [
+        ("2026-05-15T08:00:00Z", "2026-05-01"),
+        ("2026-05-15", "2026-05-01T00:00:00-07:00"),
+    ],
+)
+def test_attribution_normalizes_aware_and_naive_dates(close_date, ad_date):
+    hubspot = _hubspot().iloc[[0]].copy()
+    hubspot.loc[:, "close_date"] = close_date
+    ads = _ads().iloc[[0]].copy()
+    ads.loc[:, "date"] = ad_date
+
+    conversions = conversions_from_hubspot(hubspot, CLIENT)
+    rows = attribute_conversions(conversions, ads, "last_touch")
+
+    assert conversions[0].occurred_at.tzinfo is None
+    assert rows.iloc[0]["source_platform"] == "meta"
+    assert rows.iloc[0]["attributed_revenue"] == 2000.0
 
 
 def test_unattributed_bucket_for_unmatched_revenue():

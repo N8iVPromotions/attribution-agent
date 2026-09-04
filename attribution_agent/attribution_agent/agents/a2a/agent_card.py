@@ -108,7 +108,7 @@ AGENT_CARDS: dict[str, AgentCard] = {
     "governance-reviewer": AgentCard(
         agent_id="governance-reviewer",
         name="Governance Reviewer Agent",
-        description="Pre-send advisory check for evidence quality, privacy, and tone.",
+        description="Pre-send delivery gate for evidence quality, privacy, and tone.",
         input_schema={
             "type": "object",
             "properties": {

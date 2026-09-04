@@ -5,6 +5,7 @@ Runs via SQL Connector when local, Spark when inside Databricks.
 """
 
 from __future__ import annotations
+import json
 import logging
 import os
 import re
@@ -666,6 +667,7 @@ def ensure_audit_log_table() -> None:
 
 
 def ensure_insight_reports_table() -> None:
+    _run_sql(f"CREATE SCHEMA IF NOT EXISTS {_OPS_SCHEMA}")
     _run_sql(INSIGHT_REPORTS_DDL.format(ops_schema=_OPS_SCHEMA))
     logger.debug(f"[Databricks] insight_reports ready: {_OPS_SCHEMA}.insight_reports")
 
@@ -810,8 +812,18 @@ def ensure_ops_tables() -> None:
         _run_sql(
             f"ALTER TABLE {_OPS_SCHEMA}.pipeline_runs ADD COLUMNS (tiktok_rows BIGINT)"
         )
-    except Exception:
-        pass  # column already present
+    except Exception as exc:
+        error = str(exc).lower()
+        duplicate_column_markers = (
+            "already exists",
+            "column_already_exists",
+            "field_already_exists",
+            "fields_already_exists",
+            "duplicate column",
+        )
+        if not any(marker in error for marker in duplicate_column_markers):
+            raise
+        logger.debug("[Databricks] pipeline_runs.tiktok_rows already exists")
     _run_sql(TELEGRAM_EVENTS_DDL.format(ops_schema=_OPS_SCHEMA))
     _run_sql(OPERATOR_ALERTS_DDL.format(ops_schema=_OPS_SCHEMA))
     _run_sql(AUTH_USERS_DDL.format(ops_schema=_OPS_SCHEMA))
@@ -1472,6 +1484,80 @@ def fetch_recent_operator_alerts(
     except Exception as exc:
         logger.warning(f"[Databricks] Could not fetch operator alerts: {exc}")
         return []
+
+
+_INSIGHT_REPORT_STATUSES = {
+    "generated",
+    "suppressed",
+    "delivered",
+}
+
+
+def _insight_report_id(record: dict) -> str:
+    identity_fields = (
+        str(record.get("run_id") or "").strip(),
+        str(record.get("client_id") or "").strip(),
+        str(record.get("report_month") or "").strip(),
+        str(record.get("attribution_model") or "").strip(),
+    )
+    if not all(identity_fields):
+        raise ValueError(
+            "Insight report requires run_id, client_id, report_month, and "
+            "attribution_model"
+        )
+    identity = "arie-insight-report:" + ":".join(identity_fields)
+    return uuid.uuid5(uuid.NAMESPACE_URL, identity).hex
+
+
+def write_insight_report(record: dict) -> str:
+    """Persist one generated report with retry-safe Delta upsert semantics."""
+    status = str(record.get("status") or "").strip()
+    if status not in _INSIGHT_REPORT_STATUSES:
+        raise ValueError(f"Unsupported insight report status: {status!r}")
+
+    report_id = _insight_report_id(record)
+    generated_at = pd.to_datetime(
+        record.get("generated_at") or datetime.now(timezone.utc),
+        utc=True,
+        errors="raise",
+    )
+    row = {
+        "report_id": report_id,
+        "client_id": str(record.get("client_id") or ""),
+        "agency_id": str(record.get("agency_id") or ""),
+        "report_month": str(record.get("report_month") or ""),
+        "narrative": str(record.get("narrative") or ""),
+        "key_findings": json.dumps(record.get("key_findings") or [], default=str),
+        "top_channel": str(record.get("top_channel") or ""),
+        "total_pipeline": float(record.get("total_pipeline") or 0.0),
+        "total_spend": float(record.get("total_spend") or 0.0),
+        "overall_roi": float(record.get("overall_roi") or 0.0),
+        "collected_revenue": float(record.get("collected_revenue") or 0.0),
+        "refund_rate": float(record.get("refund_rate") or 0.0),
+        "true_roi": float(record.get("true_roi") or 0.0),
+        "attribution_model": str(record.get("attribution_model") or ""),
+        "generated_at": generated_at,
+        "run_id": str(record.get("run_id") or ""),
+        "prompt_version": str(record.get("prompt_version") or ""),
+        "model_id": str(record.get("model_id") or ""),
+        "input_tokens": int(record.get("input_tokens") or 0),
+        "output_tokens": int(record.get("output_tokens") or 0),
+        "cache_read_tokens": int(record.get("cache_read_tokens") or 0),
+        "status": status,
+    }
+    ensure_insight_reports_table()
+    _upsert_dataframe(
+        pd.DataFrame([row]),
+        _OPS_SCHEMA,
+        "insight_reports",
+        ["report_id"],
+    )
+    logger.info(
+        "[Databricks] Persisted insight report %s with status=%s",
+        report_id,
+        status,
+    )
+    return report_id
 
 
 def write_pipeline_run(record: dict) -> None:

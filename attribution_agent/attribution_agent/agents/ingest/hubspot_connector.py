@@ -342,10 +342,31 @@ def _safe_float(val: Any) -> float | None:
 
 
 def _safe_date(val: Any) -> pd.Timestamp | None:
+    """Parse HubSpot ISO timestamps and legacy epoch-millisecond values."""
+    if val is None or isinstance(val, bool):
+        return None
+
+    value = val
+    unit = None
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+        try:
+            value = int(value)
+            unit = "ms"
+        except ValueError:
+            pass
+    elif isinstance(value, (int, float)):
+        unit = "ms"
+
     try:
-        return pd.to_datetime(val, unit="ms") if val else None
+        parsed = pd.to_datetime(value, unit=unit, errors="coerce", utc=True)
     except Exception:
         return None
+    if not isinstance(parsed, pd.Timestamp) or pd.isna(parsed):
+        return None
+    return parsed.tz_convert(None)
 
 
 # ─── CONVENIENCE FUNCTION (called by Prefect flow) ────────────────────────────
