@@ -185,6 +185,90 @@ def test_warehouse_sql_uses_only_safely_normalized_configured_won_stages(
     assert "drop table sensitive" not in rendered
 
 
+def test_warehouse_migrates_cash_scorecard_before_name_aligned_insert(monkeypatch):
+    statements: list[str] = []
+    monkeypatch.setattr(
+        agency_flow,
+        "get_client",
+        lambda _client_id: SimpleNamespace(
+            databricks_schema="workspace.attribution_acme",
+            lookback_days=45,
+            reporting_currency="USD",
+            hubspot_closed_won_stage_ids=("closedwon",),
+        ),
+    )
+
+    monkeypatch.setattr(agency_flow, "_run_sql", statements.append)
+
+    agency_flow.run_client_attribution_sql(
+        "acme",
+        "last_touch",
+        run_started_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
+        report_period=agency_flow.resolve_report_period("2026-08"),
+    )
+
+    migration_index = next(
+        index
+        for index, statement in enumerate(statements)
+        if statement.startswith("ALTER TABLE")
+    )
+    insert_index = next(
+        index
+        for index, statement in enumerate(statements)
+        if statement.startswith(
+            "INSERT INTO workspace.attribution_acme.channel_performance_v2"
+        )
+    )
+    assert migration_index < insert_index
+    assert "ADD COLUMNS (refunded_revenue DOUBLE)" in statements[migration_index]
+    assert "BY NAME\nREPLACE WHERE" in statements[insert_index]
+
+
+def test_warehouse_schema_migration_ignores_existing_refund_column(monkeypatch):
+    def run_sql(_statement: str) -> None:
+        raise RuntimeError("[FIELDS_ALREADY_EXISTS] refunded_revenue already exists")
+
+    monkeypatch.setattr(agency_flow, "_run_sql", run_sql)
+
+    agency_flow._ensure_channel_performance_v2_schema("workspace.attribution_acme")
+
+
+def test_warehouse_schema_migration_fails_closed_on_unexpected_error(monkeypatch):
+    statements: list[str] = []
+    monkeypatch.setattr(
+        agency_flow,
+        "get_client",
+        lambda _client_id: SimpleNamespace(
+            databricks_schema="workspace.attribution_acme",
+            lookback_days=45,
+            reporting_currency="USD",
+            hubspot_closed_won_stage_ids=("closedwon",),
+        ),
+    )
+
+    def run_sql(statement: str) -> None:
+        statements.append(statement)
+        if statement.startswith("ALTER TABLE"):
+            raise RuntimeError("permission denied")
+
+    monkeypatch.setattr(agency_flow, "_run_sql", run_sql)
+
+    with pytest.raises(RuntimeError, match="permission denied"):
+        agency_flow.run_client_attribution_sql(
+            "acme",
+            "last_touch",
+            run_started_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
+            report_period=agency_flow.resolve_report_period("2026-08"),
+        )
+
+    assert not any(
+        statement.startswith(
+            "INSERT INTO workspace.attribution_acme.channel_performance_v2"
+        )
+        for statement in statements
+    )
+
+
 def test_ingest_checkpoint_binds_model_period_client_and_delivery_mode():
     payload = {
         "client_id": "client-a",

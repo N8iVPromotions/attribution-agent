@@ -131,7 +131,7 @@ def test_target_period_is_atomically_replaced_without_erasing_history():
         "'{report_month}'" in COMPACT_SQL
     )
     assert (
-        "insert into {schema}.channel_performance_v2 replace where report_month = "
+        "insert into {schema}.channel_performance_v2 by name replace where report_month = "
         "'{report_month}'" in COMPACT_SQL
     )
     assert (
@@ -160,7 +160,7 @@ def test_scorecard_uses_only_current_run_spend_inside_the_period():
 
 def test_tiktok_is_paid_social_and_cash_scorecard_uses_net_revenue():
     cash_performance = COMPACT_SQL.split(
-        "insert into {schema}.channel_performance_v2 replace where", 1
+        "insert into {schema}.channel_performance_v2 by name replace where", 1
     )[1]
 
     assert "hs_source_key = 'paid_social'" in COMPACT_SQL

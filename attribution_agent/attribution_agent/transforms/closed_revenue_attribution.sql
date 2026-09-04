@@ -411,7 +411,7 @@ CREATE TABLE IF NOT EXISTS {schema}.channel_performance_v2 (
 )
 USING DELTA;
 
-INSERT INTO {schema}.channel_performance_v2
+INSERT INTO {schema}.channel_performance_v2 BY NAME
 REPLACE WHERE report_month = '{report_month}'
 WITH attributed_cash_by_platform AS (
     SELECT
