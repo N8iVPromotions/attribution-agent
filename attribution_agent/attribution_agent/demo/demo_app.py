@@ -209,7 +209,7 @@ else:
             hide_index=True,
         )
         st.caption(
-            f"Attributed total: ${result.attributed_total:,.2f} of "
-            f"${deal.deal_amount:,.2f} — every marketing dollar mapped to a "
+            f"Attributed total: \\${result.attributed_total:,.2f} of "
+            f"\\${deal.deal_amount:,.2f} — every marketing dollar mapped to a "
             "closed deal."
         )
